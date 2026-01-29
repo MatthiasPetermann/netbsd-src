@@ -29,6 +29,10 @@
 #ifndef _SECMODEL_JAIL_JAIL_H_
 #define _SECMODEL_JAIL_JAIL_H_
 
+/*
+ * secmodel_jail enforces process visibility and signal delivery based on a
+ * jail id stored in credentials. Host root (jail id 0) bypasses these checks.
+ */
 #define SECMODEL_JAIL_ID   "org.netbsd.secmodel.jail"
 #define SECMODEL_JAIL_NAME "NetBSD Jail"
 
