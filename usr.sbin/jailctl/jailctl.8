@@ -1,0 +1,73 @@
+." $NetBSD$
+.\"-
+.\" Copyright (c) 2025
+.\" The NetBSD Foundation, Inc.
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+.\" ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+.\" TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+.\" PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+.\" BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.\"-
+.Dd September 22, 2025
+.Dt JAILCTL 8
+.Os
+.Sh NAME
+.Nm jailctl
+.Nd manage secmodel jail instances
+.Sh SYNOPSIS
+.Nm
+.Cm create
+.Ar root
+.Op command
+.Op Ar args ...
+.Nm
+.Cm destroy
+.Ar jail-id
+.Nm
+.Cm list
+.Sh DESCRIPTION
+The
+.Nm
+utility manages jails provided by the secmodel jail security model.
+Jails are process groups identified by a jail id.
+Processes in a jail can only signal or see other processes with the same
+jail id, while the host root user (jail id 0) can access all processes.
+.Pp
+The commands are as follows:
+.Bl -tag -width Ds
+.It Cm create Ar root Op command Op Ar args ...
+Create a new jail id, change the root directory to
+.Ar root ,
+enter the jail, and execute
+.Ar command .
+If no command is provided, an interactive shell is started.
+.It Cm destroy Ar jail-id
+Destroy a jail id that has no remaining processes.
+.It Cm list
+List active jail ids and their process counts.
+.El
+.Sh SEE ALSO
+.Xr chroot 2 ,
+.Xr secmodel 9 ,
+.Xr sysctl 8
+.Sh HISTORY
+The
+.Nm
+utility first appeared in NetBSD 10.0.

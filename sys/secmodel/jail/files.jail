@@ -1,0 +1,5 @@
+# $NetBSD$
+
+defflag secmodel_jail
+
+file	secmodel/jail/secmodel_jail.c	secmodel_jail

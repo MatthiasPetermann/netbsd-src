@@ -31,3 +31,8 @@ include "secmodel/overlay/files.overlay"
 # Multi-position keylock
 #
 include "secmodel/keylock/files.keylock"
+
+#
+# Jail isolation
+#
+include "secmodel/jail/files.jail"
