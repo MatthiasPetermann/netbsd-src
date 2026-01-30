@@ -27,7 +27,7 @@ INCS=	acct.h acl.h agpio.h aio.h ansi.h aout_mids.h ataio.h atomic.h \
 	hook.h idtype.h ieee754.h intr.h intrio.h inttypes.h ioccom.h ioctl.h \
 	ioctl_compat.h iostat.h ipc.h ipmi.h \
 	joystick.h \
-	kcore.h kcov.h kcpuset.h kgdb.h kmem.h ksem.h ksyms.h ktrace.h \
+	jail.h kcore.h kcov.h kcpuset.h kgdb.h kmem.h ksem.h ksyms.h ktrace.h \
 	localcount.h localedef.h lock.h lockf.h lua.h lwp.h lwpctl.h \
 	malloc.h mallocvar.h mbuf.h md4.h md5.h midiio.h \
 	mman.h module.h mount.h mqueue.h msg.h msgbuf.h mtio.h mutex.h \
