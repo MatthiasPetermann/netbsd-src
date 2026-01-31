@@ -1,6 +1,6 @@
 #	$NetBSD$
 
-PROG=\tjailctl
-MAN=\tjailctl.8
+PROG=jailctl
+MAN=jailctl.8
 
 .include <bsd.prog.mk>
