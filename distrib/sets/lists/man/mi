@@ -6132,6 +6132,7 @@
 ./usr/share/man/html8/isibootd.html		man-bootserver-htmlman	html
 ./usr/share/man/html8/iteconfig.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/iwictl.html		man-sysutil-htmlman	html
+./usr/share/man/html8/jailctl.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/kadmin.html		man-krb5-htmlman	kerberos,html
 ./usr/share/man/html8/kadmind.html		man-krb5-htmlman	kerberos,html
 ./usr/share/man/html8/kcm.html			man-krb5-htmlman	kerberos,html
@@ -9508,6 +9509,7 @@
 ./usr/share/man/man8/ispppcontrol.8		man-obsolete		obsolete
 ./usr/share/man/man8/iteconfig.8		man-sysutil-man		.man
 ./usr/share/man/man8/iwictl.8			man-sysutil-man		.man
+./usr/share/man/man8/jailctl.8			man-sysutil-man		.man
 ./usr/share/man/man8/kadmin.8			man-krb5-man		kerberos,.man
 ./usr/share/man/man8/kadmind.8			man-krb5-man		kerberos,.man
 ./usr/share/man/man8/kcm.8			man-krb5-man		kerberos,.man

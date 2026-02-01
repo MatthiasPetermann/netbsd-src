@@ -3371,6 +3371,7 @@
 ./usr/include/sys/iostat.h			comp-c-include
 ./usr/include/sys/ipc.h				comp-c-include
 ./usr/include/sys/ipmi.h			comp-c-include
+./usr/include/sys/jail.h			comp-c-include
 ./usr/include/sys/joystick.h			comp-c-include
 ./usr/include/sys/kcore.h			comp-c-include
 ./usr/include/sys/kcov.h			comp-c-include
