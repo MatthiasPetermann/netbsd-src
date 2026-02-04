@@ -39,12 +39,44 @@ __RCSID("$NetBSD$");
 #include <errno.h>
 #include <inttypes.h>
 #include <paths.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 static void	usage(void) __dead;
+
+static struct jail_info *
+jail_fetch_list(size_t *countp)
+{
+	struct jail_info *entries;
+	size_t len;
+
+	len = 0;
+	if (sysctlbyname("security.models.jail.list", NULL, &len,
+	    NULL, 0) == -1)
+		err(1, "list jails");
+
+	if (len == 0) {
+		*countp = 0;
+		return NULL;
+	}
+
+	if (len % sizeof(*entries) != 0)
+		errx(1, "unexpected jail list length");
+
+	entries = calloc(1, len);
+	if (entries == NULL)
+		err(1, "calloc");
+
+	if (sysctlbyname("security.models.jail.list", entries, &len,
+	    NULL, 0) == -1)
+		err(1, "list jails");
+
+	*countp = len / sizeof(*entries);
+	return entries;
+}
 
 static jailid_t
 jail_create(void)
@@ -83,30 +115,14 @@ static void
 jail_list(void)
 {
 	struct jail_info *entries;
-	size_t len, count, i;
+	size_t count, i;
 
-	len = 0;
-	if (sysctlbyname("security.models.jail.list", NULL, &len,
-	    NULL, 0) == -1)
-		err(1, "list jails");
-
-	if (len == 0) {
+	entries = jail_fetch_list(&count);
+	if (count == 0) {
 		printf("no jails\n");
 		return;
 	}
 
-	if (len % sizeof(*entries) != 0)
-		errx(1, "unexpected jail list length");
-
-	entries = calloc(1, len);
-	if (entries == NULL)
-		err(1, "calloc");
-
-	if (sysctlbyname("security.models.jail.list", entries, &len,
-	    NULL, 0) == -1)
-		err(1, "list jails");
-
-	count = len / sizeof(*entries);
 	printf("%-8s %-8s\n", "ID", "PROCS");
 	for (i = 0; i < count; i++)
 		printf("%-8" PRIu32 " %-8" PRIu32 "\n",
@@ -151,8 +167,12 @@ int
 main(int argc, char *argv[])
 {
 	jailid_t id;
+	struct jail_info *entries;
+	struct jail_info info;
 	const char *root;
 	const char *shell;
+	size_t count, i;
+	bool found;
 
 	if (argc < 2)
 		usage();
@@ -195,6 +215,49 @@ main(int argc, char *argv[])
 		return 0;
 	}
 
+	if (strcmp(argv[1], "attach") == 0) {
+		if (argc < 4)
+			usage();
+
+		id = parse_jailid(argv[2]);
+		root = argv[3];
+		found = false;
+
+		entries = jail_fetch_list(&count);
+		for (i = 0; i < count; i++) {
+			if (entries[i].ji_id == id) {
+				info = entries[i];
+				found = true;
+				break;
+			}
+		}
+		free(entries);
+
+		if (!found)
+			errx(1, "jail %" PRIu32 " not found", id);
+		if (info.ji_refcount == 0)
+			errx(1, "jail %" PRIu32 " has no running processes",
+			    id);
+
+		if (chdir(root) == -1 || chroot(".") == -1)
+			err(1, "%s", root);
+
+		if (chdir("/") == -1)
+			err(1, "/");
+
+		jail_enter(id);
+
+		if (argc > 4) {
+			execvp(argv[4], &argv[4]);
+			err(1, "%s", argv[4]);
+		}
+
+		if ((shell = getenv("SHELL")) == NULL)
+			shell = _PATH_BSHELL;
+		execlp(shell, shell, "-i", NULL);
+		err(1, "%s", shell);
+	}
+
 	if (strcmp(argv[1], "list") == 0) {
 		if (argc != 2)
 			usage();
@@ -212,8 +275,9 @@ usage(void)
 {
 	fprintf(stderr,
 	    "usage: %s create <root> [command [args...]]\n"
+	    "       %s attach <jail-id> <root> [command [args...]]\n"
 	    "       %s destroy <jail-id>\n"
 	    "       %s list\n",
-	    getprogname(), getprogname(), getprogname());
+	    getprogname(), getprogname(), getprogname(), getprogname());
 	exit(1);
 }
