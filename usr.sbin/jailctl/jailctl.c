@@ -168,7 +168,6 @@ main(int argc, char *argv[])
 {
 	jailid_t id;
 	struct jail_info *entries;
-	struct jail_info info;
 	const char *root;
 	const char *shell;
 	size_t count, i;
@@ -226,7 +225,6 @@ main(int argc, char *argv[])
 		entries = jail_fetch_list(&count);
 		for (i = 0; i < count; i++) {
 			if (entries[i].ji_id == id) {
-				info = entries[i];
 				found = true;
 				break;
 			}
