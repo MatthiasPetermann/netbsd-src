@@ -41,7 +41,7 @@
 .Cm destroy
 .Ar jail-id
 .Nm
-.Cm attach
+.Cm enter
 .Ar jail-id
 .Ar root
 .Op command
@@ -66,14 +66,13 @@ enter the jail, and execute
 If no command is provided, an interactive shell is started.
 .It Cm destroy Ar jail-id
 Destroy a jail id that has no remaining processes.
-.It Cm attach Ar jail-id Ar root Op command Op Ar args ...
-Enter an existing jail with id
+.It Cm enter Ar jail-id Ar root Op command Op Ar args ...
+Enter a jail with id
 .Ar jail-id ,
 change the root directory to
 .Ar root ,
 and execute
 .Ar command .
-The jail must already have running processes.
 If no command is provided, an interactive shell is started.
 .It Cm list
 List active jail ids and their process counts.
