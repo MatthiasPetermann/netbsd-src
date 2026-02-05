@@ -215,7 +215,7 @@ main(int argc, char *argv[])
 		return 0;
 	}
 
-	if (strcmp(argv[1], "attach") == 0) {
+	if (strcmp(argv[1], "enter") == 0) {
 		if (argc < 4)
 			usage();
 
@@ -235,9 +235,6 @@ main(int argc, char *argv[])
 
 		if (!found)
 			errx(1, "jail %" PRIu32 " not found", id);
-		if (info.ji_refcount == 0)
-			errx(1, "jail %" PRIu32 " has no running processes",
-			    id);
 
 		if (chdir(root) == -1 || chroot(".") == -1)
 			err(1, "%s", root);
@@ -275,7 +272,7 @@ usage(void)
 {
 	fprintf(stderr,
 	    "usage: %s create <root> [command [args...]]\n"
-	    "       %s attach <jail-id> <root> [command [args...]]\n"
+	    "       %s enter <jail-id> <root> [command [args...]]\n"
 	    "       %s destroy <jail-id>\n"
 	    "       %s list\n",
 	    getprogname(), getprogname(), getprogname(), getprogname());
