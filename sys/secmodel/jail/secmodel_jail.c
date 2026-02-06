@@ -306,6 +306,7 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 		}
 		mutex_exit(&jail_lock);
 	}
+	proc_crmod_leave(cred, NULL, false);
 
 	has_config = secmodel_jail_get_config(id, &config);
 	if (has_config && (config.jc_has_cpu_limit || config.jc_has_mem_limit)) {
@@ -316,32 +317,47 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 			lim.rlim_max = config.jc_cpu_limit;
 			error = dosetrlimit(l, p, RLIMIT_CPU, &lim);
 			if (error != 0)
-				goto out;
+				return error;
 		}
 		if (config.jc_has_mem_limit) {
 			lim.rlim_cur = config.jc_mem_limit;
 			lim.rlim_max = config.jc_mem_limit;
 			error = dosetrlimit(l, p, RLIMIT_AS, &lim);
 			if (error != 0)
-				goto out;
+				return error;
 		}
 	}
 
 	if (cur == id) {
-		error = 0;
-		goto out;
+		return 0;
 	}
 
+	proc_crmod_enter();
+	cred = p->p_cred;
+	cur = secmodel_jail_cred_id(cred);
+	if (!secmodel_jail_is_host_root(l->l_cred)) {
+		proc_crmod_leave(cred, NULL, false);
+		return EPERM;
+	}
+	if (cur != JAILID_HOST && cur != id) {
+		proc_crmod_leave(cred, NULL, false);
+		return EPERM;
+	}
+	if (id != JAILID_HOST) {
+		mutex_enter(&jail_lock);
+		if (secmodel_jail_lookup(id) == NULL) {
+			mutex_exit(&jail_lock);
+			proc_crmod_leave(cred, NULL, false);
+			return ENOENT;
+		}
+		mutex_exit(&jail_lock);
+	}
 	ncred = kauth_cred_alloc();
 	kauth_cred_clone(cred, ncred);
 	secmodel_jail_cred_setid(ncred, id);
 	proc_crmod_leave(ncred, cred, true);
 
 	return 0;
-
-out:
-	proc_crmod_leave(cred, NULL, false);
-	return error;
 }
 
 /*
