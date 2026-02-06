@@ -34,6 +34,9 @@
 .Sh SYNOPSIS
 .Nm
 .Cm create
+.Op Fl c Ar cpu-ms
+.Op Fl i Ar ipv4
+.Op Fl m Ar bytes
 .Ar root
 .Op command
 .Op Ar args ...
@@ -58,12 +61,23 @@ jail id, while the host root user (jail id 0) can access all processes.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Ar root Op command Op Ar args ...
+.It Cm create Op Fl c Ar cpu-ms Op Fl i Ar ipv4 Op Fl m Ar bytes Ar root \
+    Op command Op Ar args ...
 Create a new jail id, change the root directory to
 .Ar root ,
 enter the jail, and execute
 .Ar command .
 If no command is provided, an interactive shell is started.
+.Pp
+The optional flags set per-jail limits and bind restrictions:
+.Bl -tag -width Ds
+.It Fl c Ar cpu-ms
+Set a CPU time limit (in milliseconds) for processes in the jail.
+.It Fl i Ar ipv4
+Restrict IPv4 socket binds inside the jail to the specified address.
+.It Fl m Ar bytes
+Set a virtual memory limit (in bytes) for processes in the jail.
+.El
 .It Cm destroy Ar jail-id
 Destroy a jail id that has no remaining processes.
 .It Cm enter Ar jail-id Ar root Op command Op Ar args ...
