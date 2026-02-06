@@ -35,6 +35,7 @@ __RCSID("$NetBSD$");
 #include <sys/jail.h>
 #include <sys/sysctl.h>
 
+#include <arpa/inet.h>
 #include <err.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -79,18 +80,29 @@ jail_fetch_list(size_t *countp)
 }
 
 static jailid_t
-jail_create(void)
+jail_create(const struct jail_create *create)
 {
 	jailid_t id;
 	size_t len;
 	int one;
 
 	id = 0;
-	len = sizeof(id);
-	one = 1;
-	if (sysctlbyname("security.models.jail.create", &id, &len,
-	    &one, sizeof(one)) == -1)
-		err(1, "create jail");
+	if (create != NULL) {
+		struct jail_create req;
+
+		req = *create;
+		len = sizeof(req);
+		if (sysctlbyname("security.models.jail.create", &req, &len,
+		    &req, sizeof(req)) == -1)
+			err(1, "create jail");
+		id = req.jc_id;
+	} else {
+		len = sizeof(id);
+		one = 1;
+		if (sysctlbyname("security.models.jail.create", &id, &len,
+		    &one, sizeof(one)) == -1)
+			err(1, "create jail");
+	}
 
 	return id;
 }
@@ -177,11 +189,51 @@ main(int argc, char *argv[])
 		usage();
 
 	if (strcmp(argv[1], "create") == 0) {
-		if (argc < 3)
+		struct jail_create create;
+		char *endp;
+		uintmax_t num;
+		struct in_addr addr;
+		int ch;
+
+		memset(&create, 0, sizeof(create));
+		optind = 2;
+		while ((ch = getopt(argc, argv, "c:i:m:")) != -1) {
+			switch (ch) {
+			case 'c':
+				errno = 0;
+				num = strtoumax(optarg, &endp, 0);
+				if (errno != 0 || *endp != '\0')
+					errx(1, "invalid cpu limit: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_CPULIMIT;
+				create.jc_cpu_limit = num;
+				break;
+			case 'i':
+				if (inet_pton(AF_INET, optarg, &addr) != 1)
+					errx(1, "invalid IPv4 address: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_BIND4;
+				create.jc_bind4 = addr.s_addr;
+				break;
+			case 'm':
+				errno = 0;
+				num = strtoumax(optarg, &endp, 0);
+				if (errno != 0 || *endp != '\0')
+					errx(1, "invalid memory limit: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_MEMLIMIT;
+				create.jc_mem_limit = num;
+				break;
+			default:
+				usage();
+			}
+		}
+
+		if (optind >= argc)
 			usage();
 
-		root = argv[2];
-		id = jail_create();
+		root = argv[optind];
+		if (create.jc_flags != 0)
+			id = jail_create(&create);
+		else
+			id = jail_create(NULL);
 
 		if (chdir(root) == -1 || chroot(".") == -1)
 			err(1, "%s", root);
@@ -194,9 +246,9 @@ main(int argc, char *argv[])
 		printf("jail %" PRIu32 "\n", id);
 		fflush(stdout);
 
-		if (argc > 3) {
-			execvp(argv[3], &argv[3]);
-			err(1, "%s", argv[3]);
+		if (argc > optind + 1) {
+			execvp(argv[optind + 1], &argv[optind + 1]);
+			err(1, "%s", argv[optind + 1]);
 		}
 
 		if ((shell = getenv("SHELL")) == NULL)
@@ -269,7 +321,8 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create <root> [command [args...]]\n"
+	    "usage: %s create [-c cpu-ms] [-i ipv4] [-m bytes] <root> "
+	    "[command [args...]]\n"
 	    "       %s enter <jail-id> <root> [command [args...]]\n"
 	    "       %s destroy <jail-id>\n"
 	    "       %s list\n",
