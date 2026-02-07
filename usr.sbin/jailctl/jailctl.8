@@ -37,6 +37,7 @@
 .Op Fl c Ar cpu-ms
 .Op Fl i Ar ipv4
 .Op Fl m Ar bytes
+.Fl n Ar name
 .Ar root
 .Op command
 .Op Ar args ...
@@ -44,9 +45,11 @@
 .Cm destroy
 .Ar jail-id
 .Nm
-.Cm enter
-.Ar jail-id
-.Ar root
+.Cm attach
+.Ar jail-id | name
+.Nm
+.Cm exec
+.Ar jail-id | name
 .Op command
 .Op Ar args ...
 .Nm
@@ -61,13 +64,16 @@ jail id, while the host root user (jail id 0) can access all processes.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Op Fl c Ar cpu-ms Op Fl i Ar ipv4 Op Fl m Ar bytes Ar root \
+.It Cm create Op Fl c Ar cpu-ms Op Fl i Ar ipv4 Op Fl m Ar bytes Fl n Ar name Ar root \
     Op command Op Ar args ...
-Create a new jail id, change the root directory to
-.Ar root ,
-enter the jail, and execute
-.Ar command .
-If no command is provided, an interactive shell is started.
+Create a new jail id, assign it the unique
+.Ar name ,
+store jail name and root metadata in the kernel jail model, and start
+.Ar command
+in the background inside the jail.
+If no command is provided, an interactive shell is started in the background.
+The command can later be reached via
+.Cm attach .
 .Pp
 The optional flags set per-jail limits and bind restrictions:
 .Bl -tag -width Ds
@@ -80,16 +86,24 @@ Set a virtual memory limit (in bytes) for processes in the jail.
 .El
 .It Cm destroy Ar jail-id
 Destroy a jail id that has no remaining processes.
-.It Cm enter Ar jail-id Ar root Op command Op Ar args ...
-Enter a jail with id
-.Ar jail-id ,
-change the root directory to
-.Ar root ,
-and execute
+.It Cm attach Ar jail-id | name
+Attach the local terminal to the background command started with
+.Cm create
+for jail
+.Ar jail-id
+or
+.Ar name ,
+providing interactive stdin/stdout/stderr forwarding.
+.It Cm exec Ar jail-id | name Op command Op Ar args ...
+Enter a running jail selected by
+.Ar jail-id
+or
+.Ar name
+using the root stored in kernel jail metadata and execute
 .Ar command .
 If no command is provided, an interactive shell is started.
 .It Cm list
-List active jail ids and their process counts.
+List active jail ids, process counts, configured jail names, and roots.
 .El
 .Sh SEE ALSO
 .Xr chroot 2 ,
