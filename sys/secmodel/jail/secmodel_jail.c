@@ -67,6 +67,8 @@ static int	secmodel_jail_network_cb(kauth_cred_t, kauth_action_t,
  */
 struct jail_entry {
 	jailid_t je_id;
+	char je_name[JAIL_NAME_MAX + 1];
+	char je_root[JAIL_ROOT_MAX + 1];
 	bool je_has_cpu_limit;
 	bool je_has_mem_limit;
 	bool je_has_bind4;
@@ -153,6 +155,19 @@ secmodel_jail_lookup(jailid_t id)
 	return NULL;
 }
 
+static struct jail_entry *
+secmodel_jail_lookup_name(const char *name)
+{
+	struct jail_entry *entry;
+
+	LIST_FOREACH(entry, &jail_list, je_entry) {
+		if (strcmp(entry->je_name, name) == 0)
+			return entry;
+	}
+
+	return NULL;
+}
+
 static bool
 secmodel_jail_get_config(jailid_t id, struct jail_config *config)
 {
@@ -183,20 +198,32 @@ secmodel_jail_get_config(jailid_t id, struct jail_config *config)
  * for the host. Returns the new id to the caller.
  */
 static int
-secmodel_jail_create(const struct jail_config *config, jailid_t *idp)
+secmodel_jail_create(const struct jail_create *create,
+    const struct jail_config *config, jailid_t *idp)
 {
 	struct jail_entry *entry;
 	jailid_t id;
 
 	mutex_enter(&jail_lock);
+	if (create != NULL && create->jc_name[0] != '\0' &&
+	    secmodel_jail_lookup_name(create->jc_name) != NULL) {
+		mutex_exit(&jail_lock);
+		return EEXIST;
+	}
+
 	if (jail_next_id == 0) {
 		mutex_exit(&jail_lock);
 		return EOVERFLOW;
 	}
 
 	id = jail_next_id++;
+
 	entry = kmem_zalloc(sizeof(*entry), KM_SLEEP);
 	entry->je_id = id;
+	if (create != NULL) {
+		strlcpy(entry->je_name, create->jc_name, sizeof(entry->je_name));
+		strlcpy(entry->je_root, create->jc_root, sizeof(entry->je_root));
+	}
 	if (config != NULL) {
 		entry->je_has_cpu_limit = config->jc_has_cpu_limit;
 		entry->je_has_mem_limit = config->jc_has_mem_limit;
@@ -422,7 +449,17 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 		return EINVAL;
 	}
 
-	error = secmodel_jail_create(configp, &id);
+	if (newlen == sizeof(create)) {
+		if (create.jc_name[0] == '\0' || create.jc_root[0] == '\0')
+			return EINVAL;
+		if (memchr(create.jc_name, '\n', sizeof(create.jc_name)) != NULL ||
+		    memchr(create.jc_root, '\n', sizeof(create.jc_root)) != NULL)
+			return EINVAL;
+		error = secmodel_jail_create(&create, configp, &id);
+	} else {
+		error = secmodel_jail_create(NULL, configp, &id);
+	}
+
 	if (error != 0)
 		return error;
 
@@ -547,6 +584,10 @@ secmodel_jail_sysctl_list(SYSCTLFN_ARGS)
 	LIST_FOREACH(entry, &jail_list, je_entry) {
 		entries[i].ji_id = entry->je_id;
 		entries[i].ji_refcount = 0;
+		strlcpy(entries[i].ji_name, entry->je_name,
+		    sizeof(entries[i].ji_name));
+		strlcpy(entries[i].ji_root, entry->je_root,
+		    sizeof(entries[i].ji_root));
 		i++;
 	}
 	mutex_exit(&jail_lock);

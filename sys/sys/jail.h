@@ -33,6 +33,9 @@
 
 typedef uint32_t jailid_t;
 
+#define JAIL_NAME_MAX 63
+#define JAIL_ROOT_MAX 255
+
 #define JAILID_HOST 0
 
 #define JAIL_CREATE_MEMLIMIT	0x00000001
@@ -45,11 +48,15 @@ struct jail_create {
 	uint64_t jc_mem_limit;
 	uint64_t jc_cpu_limit;
 	uint32_t jc_bind4;
+	char jc_name[JAIL_NAME_MAX + 1];
+	char jc_root[JAIL_ROOT_MAX + 1];
 };
 
 struct jail_info {
 	jailid_t ji_id;
 	uint32_t ji_refcount;
+	char ji_name[JAIL_NAME_MAX + 1];
+	char ji_root[JAIL_ROOT_MAX + 1];
 };
 
 #endif /* !_SYS_JAIL_H_ */
