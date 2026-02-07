@@ -1,0 +1,31 @@
+# Sample /etc/jailmgr.conf
+
+RELEASE=10.0
+MACHINE_ARCH=amd64
+NETBSD_MIRROR="https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets"
+
+JAIL_BASE_DIR=/var/jailmgr/base
+JAIL_DATA_DIR=/var/jailmgr/jails
+JAIL_RELEASE_DIR=/var/jailmgr/releases
+
+# Interface where jail IP aliases should be configured.
+# lo0 is usually easiest for host-local access to 10.0.0.x jail endpoints.
+JAIL_HOST_IF=lo0
+
+# Format: "name:IPv4 name2:IPv4 ..."
+JAIL_LIST="jail1:10.0.0.1 jail2:10.0.0.2"
+
+# User to create inside each jail (if not already present in master.passwd)
+JAIL_DEFAULT_USER=user
+
+# Optional NPF integration for forwarding host interface ports to jails.
+NPF_ENABLE=NO
+NPF_EXT_IF=wm0
+NPF_CONF_SNIPPET=/etc/npf-jailmgr.conf
+NPF_AUTO_RELOAD=NO
+
+# Format: "name:host_port:jail_port name2:host_port:jail_port ..."
+# Example forwards:
+# - wm0:2221 -> 10.0.0.1:22 (jail1)
+# - wm0:2222 -> 10.0.0.2:22 (jail2)
+NPF_RDR_LIST="jail1:2221:22 jail2:2222:22"
