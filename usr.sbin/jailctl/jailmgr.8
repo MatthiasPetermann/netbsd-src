@@ -1,0 +1,116 @@
+." $NetBSD$
+.Dd February 8, 2026
+.Dt JAILMGR 8
+.Os
+.Sh NAME
+.Nm jailmgr
+.Nd provision and manage multiple jailctl jails
+.Sh SYNOPSIS
+.Nm
+.Ar command
+.Op Ar args ...
+.Sh DESCRIPTION
+The
+.Nm
+utility is a shell-script helper around
+.Xr jailctl 8
+for provisioning and operating multiple jails.
+It supports a shared read-only base layer and per-jail writable overlays,
+and can optionally configure host-side loopback aliases and NPF forwarding
+snippets.
+.Pp
+By default,
+.Nm
+reads
+.Pa /etc/jailmgr.conf .
+A different configuration file can be selected with the
+.Ev JAILMGR_CONF
+environment variable.
+.Sh COMMANDS
+.Bl -tag -width "prepare-jail name ip"
+.It Cm fetch-sets
+Download
+.Pa base.tgz
+and
+.Pa etc.tgz
+from
+.Ev NETBSD_MIRROR
+into the configured release directory.
+.It Cm build-base
+Extract
+.Pa base.tgz
+into the configured shared base layer directory.
+.It Cm prepare-jail Ar name Ar ip
+Create per-jail directories and metadata for
+.Ar name
+at IPv4 address
+.Ar ip .
+.It Cm prepare-all
+Run
+.Cm prepare-jail
+for each entry in
+.Ev JAIL_LIST .
+.It Cm host-net-up
+Add host-side IPv4 aliases for all entries in
+.Ev JAIL_LIST
+on
+.Ev JAIL_HOST_IF .
+.It Cm host-net-down
+Remove host-side IPv4 aliases for all entries in
+.Ev JAIL_LIST
+from
+.Ev JAIL_HOST_IF .
+.It Cm start-jail Ar name Ar ip
+Mount the jail filesystem layout for
+.Ar name
+and start it through
+.Xr jailctl 8 .
+.It Cm start-all
+Call
+.Cm host-net-up
+and start all jails listed in
+.Ev JAIL_LIST .
+.It Cm stop-jail Ar name
+Destroy the jail named
+.Ar name
+and unmount its filesystem layout.
+.It Cm stop-all
+Stop and unmount all jails listed in
+.Ev JAIL_LIST .
+.It Cm npf-sync
+Generate or update the NPF rule snippet described by
+.Ev NPF_CONF_SNIPPET
+from
+.Ev NPF_RDR_LIST .
+.It Cm status
+Show
+.Xr jailctl 8
+status and mount information.
+.It Cm gen-rc Op Ar path
+Emit an
+.Xr rc.d 8
+wrapper script.
+If
+.Ar path
+is omitted,
+.Pa /etc/rc.d/jailmgr
+is used.
+.El
+.Sh FILES
+.Bl -tag -width "/usr/share/examples/jailctl/jailmgr.conf.sample"
+.It Pa /etc/jailmgr.conf
+Default configuration file.
+.It Pa /usr/share/examples/jailctl/jailmgr.conf.sample
+Sample configuration file.
+.It Pa /usr/share/examples/jailctl/README.jailmgr
+Usage notes.
+.El
+.Sh SEE ALSO
+.Xr jailctl 8 ,
+.Xr npf.conf 5 ,
+.Xr rc.d 8
+.Sh HISTORY
+The
+.Nm
+script and manual page appeared in
+.Nx 10.0 .

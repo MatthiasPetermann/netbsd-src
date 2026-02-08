@@ -37,6 +37,7 @@ __RCSID("$NetBSD$");
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/ioctl.h>
 
 #include <arpa/inet.h>
 #include <err.h>
@@ -57,13 +58,11 @@ __RCSID("$NetBSD$");
 
 #define JAILCTL_STATEDIR "/var/run/jailctl"
 #define JAILCTL_CMD_MAX 511
+#define JAILCTL_DETACH_KEY 0x1d	/* Ctrl-] */
 
 struct jail_context {
 	jailid_t	id;
 	char		command[JAILCTL_CMD_MAX + 1];
-	int		stdin_fd;
-	int		stdout_fd;
-	int		stderr_fd;
 	char		sockpath[PATH_MAX];
 };
 
@@ -224,9 +223,8 @@ context_save(const struct jail_context *ctx)
 	if (fp == NULL)
 		err(1, "%s", path);
 
-	if (fprintf(fp, "command=%s\nstdin=%d\nstdout=%d\nstderr=%d\nsock=%s\n",
-	    ctx->command, ctx->stdin_fd,
-	    ctx->stdout_fd, ctx->stderr_fd, ctx->sockpath) < 0)
+	if (fprintf(fp, "command=%s\nsock=%s\n",
+	    ctx->command, ctx->sockpath) < 0)
 		err(1, "write %s", path);
 
 	if (fclose(fp) == EOF)
@@ -261,12 +259,6 @@ context_load(jailid_t id, struct jail_context *ctx)
 
 		if (strcmp(line, "command") == 0)
 			strlcpy(ctx->command, eq, sizeof(ctx->command));
-		else if (strcmp(line, "stdin") == 0)
-			ctx->stdin_fd = atoi(eq);
-		else if (strcmp(line, "stdout") == 0)
-			ctx->stdout_fd = atoi(eq);
-		else if (strcmp(line, "stderr") == 0)
-			ctx->stderr_fd = atoi(eq);
 		else if (strcmp(line, "sock") == 0)
 			strlcpy(ctx->sockpath, eq, sizeof(ctx->sockpath));
 	}
@@ -466,6 +458,10 @@ jail_spawn_detached(jailid_t id, const char *root, const struct jail_context *ct
 		err(1, "fork");
 	if (child == 0) {
 		close(mfd);
+		if (setsid() == -1)
+			err(1, "setsid");
+		if (ioctl(sfd, TIOCSCTTY, 0) == -1)
+			err(1, "TIOCSCTTY");
 		if (dup2(sfd, STDIN_FILENO) == -1 ||
 		    dup2(sfd, STDOUT_FILENO) == -1 ||
 		    dup2(sfd, STDERR_FILENO) == -1)
@@ -530,8 +526,21 @@ jail_attach(const struct jail_context *ctx)
 			break;
 
 		if (io[0].revents & POLLIN) {
+			ssize_t i;
+
 			n = read(STDIN_FILENO, buf, sizeof(buf));
-			if (n <= 0 || write(fd, buf, (size_t)n) == -1)
+			if (n <= 0)
+				break;
+
+			for (i = 0; i < n; i++) {
+				if ((unsigned char)buf[i] == JAILCTL_DETACH_KEY)
+					break;
+			}
+
+			if (i > 0 && write(fd, buf, (size_t)i) == -1)
+				break;
+
+			if (i < n)
 				break;
 		}
 
@@ -563,20 +572,6 @@ getnum(const char *str, uintmax_t *num)
 		return -1;
 
 	return 0;
-}
-
-static jailid_t
-parse_jailid(const char *arg)
-{
-	uintmax_t num;
-
-	if (getnum(arg, &num) == -1)
-		errx(1, "invalid jail id: %s", arg);
-
-	if (num > UINT32_MAX)
-		errx(1, "jail id out of range: %s", arg);
-
-	return (jailid_t)num;
 }
 
 static jailid_t
@@ -667,9 +662,6 @@ main(int argc, char *argv[])
 
 		memset(&ctx, 0, sizeof(ctx));
 		ctx.id = id;
-		ctx.stdin_fd = STDIN_FILENO;
-		ctx.stdout_fd = STDOUT_FILENO;
-		ctx.stderr_fd = STDERR_FILENO;
 		if (argc > optind + 1) {
 			build_command_line(argc - (optind + 1), &argv[optind + 1],
 			    cmdbuf, sizeof(cmdbuf));
@@ -692,7 +684,7 @@ main(int argc, char *argv[])
 		if (argc != 3)
 			usage();
 
-		id = parse_jailid(argv[2]);
+		id = resolve_jail_target(argv[2], &ji);
 		jail_destroy(id);
 		context_delete(id);
 		return 0;
@@ -738,7 +730,7 @@ usage(void)
 	    "[command [args...]]\n"
 	    "       %s attach <jail-id|name>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
-	    "       %s destroy <jail-id>\n"
+	    "       %s destroy <jail-id|name>\n"
 	    "       %s list\n",
 	    getprogname(), getprogname(), getprogname(), getprogname(),
 	    getprogname());
