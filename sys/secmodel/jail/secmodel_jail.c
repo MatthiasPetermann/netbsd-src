@@ -32,6 +32,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/kauth.h>
+#include <sys/kernel.h>
 #include <sys/module.h>
 #include <sys/sysctl.h>
 #include <sys/mutex.h>
@@ -41,6 +42,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/systm.h>
+#include <sys/syslog.h>
 #include <sys/jail.h>
 #include <sys/time.h>
 
@@ -76,6 +78,11 @@ static void	secmodel_jail_usage(jailid_t, uint64_t *, uint64_t *);
 static bool	secmodel_jail_over_limit(jailid_t, const struct jail_config *,
 		    struct proc *);
 static int	secmodel_jail_enforce_memlimit(struct proc *, size_t);
+static void	secmodel_jail_log_veto(const char *, jailid_t,
+		    const struct jail_config *, uint64_t, uint64_t);
+
+static struct timeval secmodel_jail_veto_log_last;
+static const struct timeval secmodel_jail_veto_log_interval = { 5, 0 };
 
 /*
  * Each jail is tracked by an entry in a global list. The entry only stores the
@@ -374,8 +381,13 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 	}
 
 	if (has_config && jail_resource_mode == JAIL_RESOURCE_AGGREGATE &&
-	    secmodel_jail_over_limit(id, &config, cur == id ? NULL : p))
+	    secmodel_jail_over_limit(id, &config, cur == id ? NULL : p)) {
+		uint64_t cpu_ms = 0, mem_bytes = 0;
+
+		secmodel_jail_usage(id, &cpu_ms, &mem_bytes);
+		secmodel_jail_log_veto("enter", id, &config, cpu_ms, mem_bytes);
 		return EAGAIN;
+	}
 
 	if (cur == id) {
 		return 0;
@@ -464,9 +476,19 @@ static bool
 secmodel_jail_over_limit(jailid_t id, const struct jail_config *config,
     struct proc *newproc)
 {
+	uint64_t cpu_ms;
 	uint64_t mem_bytes;
 
-	secmodel_jail_usage(id, NULL, &mem_bytes);
+	/*
+	 * Evaluate limits against a jail-wide aggregate snapshot.  This is
+	 * intentionally done in terms of per-process accounting data so that
+	 * all enforcement points (enter/fork/grow) use the same policy.
+	 *
+	 * CPU is admission-oriented in aggregate mode: once over the jail
+	 * aggregate limit, enter/fork can be denied, but existing runnable
+	 * members are not asynchronously signalled from this path.
+	 */
+	secmodel_jail_usage(id, &cpu_ms, &mem_bytes);
 
 	if (newproc != NULL) {
 		mutex_enter(newproc->p_lock);
@@ -481,6 +503,26 @@ secmodel_jail_over_limit(jailid_t id, const struct jail_config *config,
 		return true;
 
 	return false;
+}
+
+
+
+static void
+secmodel_jail_log_veto(const char *where, jailid_t id,
+    const struct jail_config *config, uint64_t cpu_ms, uint64_t mem_bytes)
+{
+
+	if (!ratecheck(&secmodel_jail_veto_log_last,
+	    &secmodel_jail_veto_log_interval))
+		return;
+
+	log(LOG_INFO,
+	    "secmodel_jail: resource veto at %s for jail id=%u "
+	    "(cpu=%jums%s, mem=%juB%s)\n",
+	    where, id, (uintmax_t)cpu_ms,
+	    config->jc_has_cpu_limit ? "" : ", no cpu limit",
+	    (uintmax_t)mem_bytes,
+	    config->jc_has_mem_limit ? "" : ", no mem limit");
 }
 
 
@@ -505,8 +547,11 @@ secmodel_jail_enforce_memlimit(struct proc *p, size_t grow)
 		return 0;
 
 	secmodel_jail_usage(id, NULL, &mem_bytes);
-	if (mem_bytes + (uint64_t)grow > config.jc_mem_limit)
+	if (mem_bytes + (uint64_t)grow > config.jc_mem_limit) {
+		secmodel_jail_log_veto("uvm_grow", id, &config, 0,
+		    mem_bytes + (uint64_t)grow);
 		return ENOMEM;
+	}
 
 	return 0;
 }
@@ -590,6 +635,10 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 		return error;
 
 	if (newlen == sizeof(create)) {
+		log(LOG_INFO,
+		    "secmodel_jail: created jail id=%u name=\"%s\" root=\"%s\" by pid=%d euid=%u\n",
+		    id, create.jc_name, create.jc_root, l->l_proc->p_pid,
+		    kauth_cred_geteuid(l->l_cred));
 		create.jc_id = id;
 		if (oldp == NULL) {
 			*oldlenp = sizeof(create);
@@ -600,6 +649,10 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 		*oldlenp = sizeof(create);
 		return sysctl_copyout(l, &create, oldp, sizeof(create));
 	}
+
+	log(LOG_INFO,
+	    "secmodel_jail: created jail id=%u by pid=%d euid=%u\n",
+	    id, l->l_proc->p_pid, kauth_cred_geteuid(l->l_cred));
 
 	if (oldp == NULL) {
 		*oldlenp = 0;
@@ -643,7 +696,15 @@ secmodel_jail_sysctl_destroy(SYSCTLFN_ARGS)
 	if (secmodel_jail_has_processes(id))
 		return EBUSY;
 
-	return secmodel_jail_destroy(id);
+	error = secmodel_jail_destroy(id);
+	if (error != 0)
+		return error;
+
+	log(LOG_INFO,
+	    "secmodel_jail: destroyed jail id=%u by pid=%d euid=%u\n",
+	    id, l->l_proc->p_pid, kauth_cred_geteuid(l->l_cred));
+
+	return 0;
 }
 
 /*
@@ -793,6 +854,11 @@ secmodel_jail_sysctl_resource_mode(SYSCTLFN_ARGS)
 	if (mode != JAIL_RESOURCE_RLIMIT && mode != JAIL_RESOURCE_AGGREGATE)
 		return EINVAL;
 
+	/*
+	 * Mode changes affect future checks.  Existing process RLIMIT values are
+	 * left untouched; RLIMIT mode applies limits when a process enters a jail,
+	 * while aggregate mode relies on jail-wide admission/memory-growth checks.
+	 */
 	jail_resource_mode = mode;
 	return 0;
 }
@@ -914,8 +980,13 @@ secmodel_jail_stop(void)
 /*
  * kauth(9) listener for process scope.
  *
- * Enforces that signals and process visibility are limited to the same jail,
- * except for host root which is allowed everywhere.
+ * Enforces jail-local process visibility/signal policy and, in aggregate
+ * resource mode, performs admission control for fork(2).
+ *
+ * Note that aggregate CPU enforcement is intentionally admission-based here:
+ * once a process is running, no per-tick jail-wide CPU throttling or kill
+ * action is performed by this model.  Runtime CPU signalling semantics are
+ * provided only by per-process RLIMIT_CPU in RLIMIT mode.
  */
 int
 secmodel_jail_process_cb(kauth_cred_t cred, kauth_action_t action,
@@ -941,8 +1012,14 @@ secmodel_jail_process_cb(kauth_cred_t cred, kauth_action_t action,
 			return KAUTH_RESULT_DEFER;
 		if (!config.jc_has_cpu_limit && !config.jc_has_mem_limit)
 			return KAUTH_RESULT_DEFER;
-		if (secmodel_jail_over_limit(id, &config, NULL))
+		if (secmodel_jail_over_limit(id, &config, NULL)) {
+			uint64_t cpu_ms = 0, mem_bytes = 0;
+
+			secmodel_jail_usage(id, &cpu_ms, &mem_bytes);
+			secmodel_jail_log_veto("fork", id, &config, cpu_ms,
+			    mem_bytes);
 			return KAUTH_RESULT_DENY;
+		}
 		return KAUTH_RESULT_DEFER;
 	case KAUTH_PROCESS_CANSEE:
 	case KAUTH_PROCESS_SIGNAL:
@@ -1048,9 +1125,12 @@ secmodel_jail_modcmd(modcmd_t cmd, void *arg)
 
 		secmodel_jail_init();
 		secmodel_jail_start();
+		log(LOG_INFO, "secmodel_jail: loaded (resource_mode=%d)\n",
+		    jail_resource_mode);
 		break;
 
 	case MODULE_CMD_FINI:
+		log(LOG_INFO, "secmodel_jail: unloading\n");
 		secmodel_jail_stop();
 
 		error = secmodel_deregister(jail_sm);
