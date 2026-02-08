@@ -694,7 +694,7 @@ void			uvm_cpu_attach(struct cpu_info *);
  * UVM owns the call sites, while secmodel_jail (or another consumer) owns
  * the policy decision and can return non-zero to reject the growth.
  */
-int			(*uvm_proc_jail_memlimit_check)(struct proc *, size_t);
+extern int		(*uvm_proc_jail_memlimit_check)(struct proc *, size_t);
 
 
 /* uvm_init.c */
