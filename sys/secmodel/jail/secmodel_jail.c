@@ -62,6 +62,8 @@ static kauth_listener_t l_network;
 static secmodel_t jail_sm;
 static kauth_key_t jail_key;
 
+struct jail_config;
+
 enum jail_resource_mode {
 	JAIL_RESOURCE_RLIMIT = 0,
 	JAIL_RESOURCE_AGGREGATE = 1,
