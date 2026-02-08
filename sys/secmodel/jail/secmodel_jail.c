@@ -42,8 +42,11 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/socket.h>
 #include <sys/systm.h>
 #include <sys/jail.h>
+#include <sys/time.h>
 
 #include <netinet/in.h>
+
+#include <uvm/uvm_extern.h>
 
 #include <secmodel/secmodel.h>
 #include <secmodel/jail/jail.h>
@@ -57,8 +60,22 @@ static kauth_listener_t l_network;
 static secmodel_t jail_sm;
 static kauth_key_t jail_key;
 
+enum jail_resource_mode {
+	JAIL_RESOURCE_RLIMIT = 0,
+	JAIL_RESOURCE_AGGREGATE = 1,
+};
+
+static int jail_resource_mode = JAIL_RESOURCE_AGGREGATE;
+
 static int	secmodel_jail_network_cb(kauth_cred_t, kauth_action_t,
 		    void *, void *, void *, void *, void *);
+static int	secmodel_jail_sysctl_resource_mode(SYSCTLFN_ARGS);
+static uint64_t	secmodel_jail_proc_as_bytes(struct proc *);
+static uint64_t	secmodel_jail_proc_cpu_ms(struct proc *);
+static void	secmodel_jail_usage(jailid_t, uint64_t *, uint64_t *);
+static bool	secmodel_jail_over_limit(jailid_t, const struct jail_config *,
+		    struct proc *);
+static int	secmodel_jail_enforce_memlimit(struct proc *, size_t);
 
 /*
  * Each jail is tracked by an entry in a global list. The entry only stores the
@@ -336,7 +353,8 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 	proc_crmod_leave(cred, NULL, false);
 
 	has_config = secmodel_jail_get_config(id, &config);
-	if (has_config && (config.jc_has_cpu_limit || config.jc_has_mem_limit)) {
+	if (has_config && jail_resource_mode == JAIL_RESOURCE_RLIMIT &&
+	    (config.jc_has_cpu_limit || config.jc_has_mem_limit)) {
 		struct rlimit lim;
 
 		if (config.jc_has_cpu_limit) {
@@ -354,6 +372,10 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 				return error;
 		}
 	}
+
+	if (has_config && jail_resource_mode == JAIL_RESOURCE_AGGREGATE &&
+	    secmodel_jail_over_limit(id, &config, cur == id ? NULL : p))
+		return EAGAIN;
 
 	if (cur == id) {
 		return 0;
@@ -386,6 +408,110 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 
 	return 0;
 }
+
+
+static uint64_t
+secmodel_jail_proc_as_bytes(struct proc *p)
+{
+	struct vmspace *vm;
+
+	KASSERT(mutex_owned(p->p_lock));
+
+	vm = p->p_vmspace;
+	if (vm == NULL)
+		return 0;
+
+	return (uint64_t)vm->vm_map.size;
+}
+
+static uint64_t
+secmodel_jail_proc_cpu_ms(struct proc *p)
+{
+	struct timeval tv;
+
+	KASSERT(mutex_owned(p->p_lock));
+	bintime2timeval(&p->p_rtime, &tv);
+
+	return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+}
+
+static void
+secmodel_jail_usage(jailid_t id, uint64_t *cpu_ms, uint64_t *mem_bytes)
+{
+	struct proc *p;
+
+	if (cpu_ms != NULL)
+		*cpu_ms = 0;
+	if (mem_bytes != NULL)
+		*mem_bytes = 0;
+
+	mutex_enter(&proc_lock);
+	PROCLIST_FOREACH(p, &allproc) {
+		if (secmodel_jail_cred_id(p->p_cred) != id)
+			continue;
+
+		mutex_enter(p->p_lock);
+		if (cpu_ms != NULL)
+			*cpu_ms += secmodel_jail_proc_cpu_ms(p);
+		if (mem_bytes != NULL)
+			*mem_bytes += secmodel_jail_proc_as_bytes(p);
+		mutex_exit(p->p_lock);
+	}
+	mutex_exit(&proc_lock);
+}
+
+static bool
+secmodel_jail_over_limit(jailid_t id, const struct jail_config *config,
+    struct proc *newproc)
+{
+	uint64_t mem_bytes;
+
+	secmodel_jail_usage(id, NULL, &mem_bytes);
+
+	if (newproc != NULL) {
+		mutex_enter(newproc->p_lock);
+		cpu_ms += secmodel_jail_proc_cpu_ms(newproc);
+		mem_bytes += secmodel_jail_proc_as_bytes(newproc);
+		mutex_exit(newproc->p_lock);
+	}
+
+	if (config->jc_has_cpu_limit && cpu_ms >= config->jc_cpu_limit)
+		return true;
+	if (config->jc_has_mem_limit && mem_bytes >= config->jc_mem_limit)
+		return true;
+
+	return false;
+}
+
+
+static int
+secmodel_jail_enforce_memlimit(struct proc *p, size_t grow)
+{
+	struct jail_config config;
+	jailid_t id;
+	uint64_t mem_bytes;
+
+	if (p == NULL || grow == 0)
+		return 0;
+	if (jail_resource_mode != JAIL_RESOURCE_AGGREGATE)
+		return 0;
+
+	mutex_enter(p->p_lock);
+	id = secmodel_jail_cred_id(p->p_cred);
+	mutex_exit(p->p_lock);
+	if (id == JAILID_HOST)
+		return 0;
+	if (!secmodel_jail_get_config(id, &config) || !config.jc_has_mem_limit)
+		return 0;
+
+	secmodel_jail_usage(id, NULL, &mem_bytes);
+	if (mem_bytes + (uint64_t)grow > config.jc_mem_limit)
+		return ENOMEM;
+
+	return 0;
+}
+
+
 
 /*
  * sysctl handler for security.models.jail.create
@@ -645,6 +771,32 @@ secmodel_jail_sysctl_list(SYSCTLFN_ARGS)
 	return error;
 }
 
+static int
+secmodel_jail_sysctl_resource_mode(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	int mode;
+	int error;
+
+	if (!secmodel_jail_is_host_root(l->l_cred))
+		return EPERM;
+
+	mode = jail_resource_mode;
+	node = *rnode;
+	node.sysctl_data = &mode;
+	node.sysctl_size = sizeof(mode);
+
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+
+	if (mode != JAIL_RESOURCE_RLIMIT && mode != JAIL_RESOURCE_AGGREGATE)
+		return EINVAL;
+
+	jail_resource_mode = mode;
+	return 0;
+}
+
 /*
  * Create the sysctl tree for jail controls under security.models.jail.
  */
@@ -698,6 +850,14 @@ SYSCTL_SETUP(sysctl_security_jail_setup, "secmodel_jail sysctl")
 	       SYSCTL_DESCR("List active jail ids"),
 	       secmodel_jail_sysctl_list, 0, NULL, 0,
 	       CTL_CREATE, CTL_EOL);
+
+	sysctl_createv(clog, 0, &rnode, NULL,
+	       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
+	       CTLTYPE_INT, "resource_mode",
+	       SYSCTL_DESCR("Resource limit mode: 0=rlimit per-process, "
+	       "1=aggregate per-jail"),
+	       secmodel_jail_sysctl_resource_mode, 0, NULL, 0,
+	       CTL_CREATE, CTL_EOL);
 }
 
 /*
@@ -723,6 +883,7 @@ secmodel_jail_start(void)
 	    secmodel_jail_cred_cb, NULL);
 	l_network = kauth_listen_scope(KAUTH_SCOPE_NETWORK,
 	    secmodel_jail_network_cb, NULL);
+	uvm_proc_jail_memlimit_check = secmodel_jail_enforce_memlimit;
 }
 
 /*
@@ -732,6 +893,9 @@ void
 secmodel_jail_stop(void)
 {
 	struct jail_entry *entry;
+
+	if (uvm_proc_jail_memlimit_check == secmodel_jail_enforce_memlimit)
+		uvm_proc_jail_memlimit_check = NULL;
 
 	kauth_unlisten_scope(l_process);
 	kauth_unlisten_scope(l_cred);
@@ -758,6 +922,8 @@ secmodel_jail_process_cb(kauth_cred_t cred, kauth_action_t action,
     void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
 {
 	struct proc *p;
+	struct jail_config config;
+	jailid_t id;
 
 	(void)cookie;
 	(void)arg1;
@@ -765,6 +931,19 @@ secmodel_jail_process_cb(kauth_cred_t cred, kauth_action_t action,
 	(void)arg3;
 
 	switch (action) {
+	case KAUTH_PROCESS_FORK:
+		if (jail_resource_mode != JAIL_RESOURCE_AGGREGATE)
+			return KAUTH_RESULT_DEFER;
+		if (secmodel_jail_is_host_root(cred))
+			return KAUTH_RESULT_DEFER;
+		id = secmodel_jail_cred_id(cred);
+		if (!secmodel_jail_get_config(id, &config))
+			return KAUTH_RESULT_DEFER;
+		if (!config.jc_has_cpu_limit && !config.jc_has_mem_limit)
+			return KAUTH_RESULT_DEFER;
+		if (secmodel_jail_over_limit(id, &config, NULL))
+			return KAUTH_RESULT_DENY;
+		return KAUTH_RESULT_DEFER;
 	case KAUTH_PROCESS_CANSEE:
 	case KAUTH_PROCESS_SIGNAL:
 		p = arg0;

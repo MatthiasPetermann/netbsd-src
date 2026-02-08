@@ -689,6 +689,7 @@ void			uvm_lwp_setuarea(lwp_t *, vaddr_t);
 int			uvm_vslock(struct vmspace *, void *, size_t, vm_prot_t);
 void			uvm_vsunlock(struct vmspace *, void *, size_t);
 void			uvm_cpu_attach(struct cpu_info *);
+int			(*uvm_proc_jail_memlimit_check)(struct proc *, size_t);
 
 
 /* uvm_init.c */

@@ -89,6 +89,8 @@ __KERNEL_RCSID(0, "$NetBSD: uvm_glue.c,v 1.181 2020/06/14 21:41:42 ad Exp $");
 #include <uvm/uvm_pdpolicy.h>
 #include <uvm/uvm_pgflcache.h>
 
+int	(*uvm_proc_jail_memlimit_check)(struct proc *, size_t) = NULL;
+
 /*
  * uvm_kernacc: test if kernel can access a memory region.
  *

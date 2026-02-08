@@ -921,6 +921,10 @@ uvm_mmap(struct vm_map *map, vaddr_t *addr, vsize_t size, vm_prot_t prot,
 	    curproc->p_rlimit[RLIMIT_AS].rlim_cur))
 		return ENOMEM;
 
+	if (!VM_MAP_IS_KERNEL(map) && uvm_proc_jail_memlimit_check != NULL &&
+	    uvm_proc_jail_memlimit_check(curproc, size) != 0)
+		return ENOMEM;
+
 	/*
 	 * handle anon vs. non-anon mappings.   for non-anon mappings attach
 	 * to underlying vm object.
