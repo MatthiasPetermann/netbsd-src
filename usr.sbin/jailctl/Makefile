@@ -1,7 +1,7 @@
 #	$NetBSD$
 
-PROG=jailctl
-MAN=jailctl.8
+PROG=	jailctl
+MAN=	jailctl.8
 
 DPADD+=	${LIBUTIL}
 LDADD+=	-lutil

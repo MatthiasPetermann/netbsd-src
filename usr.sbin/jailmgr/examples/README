@@ -12,7 +12,7 @@ New: The script also configures host-side IP aliases automatically
 1. Copy the helper script:
 
    ```sh
-   install -m 0755 jailmgr /usr/local/sbin/jailmgr
+   install -m 0755 jailmgr /usr/sbin/jailmgr
    ```
 
 2. Create `/etc/jailmgr.conf` from the sample and customize.
@@ -20,15 +20,15 @@ New: The script also configures host-side IP aliases automatically
 3. Download sets and build the base layer:
 
    ```sh
-   /usr/local/sbin/jailmgr fetch-sets
-   /usr/local/sbin/jailmgr build-base
+   /usr/sbin/jailmgr fetch-sets
+   /usr/sbin/jailmgr build-base
    ```
 
 4. Prepare and start all jails (adds aliases on `JAIL_HOST_IF`, default `lo0`):
 
    ```sh
-   /usr/local/sbin/jailmgr prepare-all
-   /usr/local/sbin/jailmgr start-all
+   /usr/sbin/jailmgr prepare-all
+   /usr/sbin/jailmgr start-all
    ```
 
 5. Verify SSH reachability from the host:
@@ -42,7 +42,7 @@ New: The script also configures host-side IP aliases automatically
 If `NPF_ENABLE=YES`, run:
 
 ```sh
-/usr/local/sbin/jailmgr npf-sync
+/usr/sbin/jailmgr npf-sync
 ```
 
 This writes `NPF_CONF_SNIPPET` with `rdr` rules based on `NPF_RDR_LIST`.
@@ -58,6 +58,6 @@ Include that snippet from `/etc/npf.conf` and optionally set
 - A sample `rc.d` wrapper can be generated with:
 
   ```sh
-  /usr/local/sbin/jailmgr gen-rc /etc/rc.d/jailmgr
+  /usr/sbin/jailmgr gen-rc /etc/rc.d/jailmgr
   echo 'jailmgr=YES' >> /etc/rc.conf
   ```

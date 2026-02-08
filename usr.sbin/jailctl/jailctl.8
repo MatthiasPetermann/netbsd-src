@@ -43,7 +43,7 @@
 .Op Ar args ...
 .Nm
 .Cm destroy
-.Ar jail-id
+.Ar jail-id | name
 .Nm
 .Cm attach
 .Ar jail-id | name
@@ -84,8 +84,12 @@ Restrict IPv4 socket binds inside the jail to the specified address.
 .It Fl m Ar bytes
 Set a virtual memory limit (in bytes) for processes in the jail.
 .El
-.It Cm destroy Ar jail-id
-Destroy a jail id that has no remaining processes.
+.It Cm destroy Ar jail-id | name
+Destroy a jail selected by
+.Ar jail-id
+or
+.Ar name
+that has no remaining processes.
 .It Cm attach Ar jail-id | name
 Attach the local terminal to the background command started with
 .Cm create
@@ -94,6 +98,9 @@ for jail
 or
 .Ar name ,
 providing interactive stdin/stdout/stderr forwarding.
+When attached from a terminal, type
+.Ic Ctrl-]
+to detach without terminating the jailed process.
 .It Cm exec Ar jail-id | name Op command Op Ar args ...
 Enter a running jail selected by
 .Ar jail-id
