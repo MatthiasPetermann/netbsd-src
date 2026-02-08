@@ -102,6 +102,10 @@ sys_obreak(struct lwp *l, const struct sys_obreak_args *uap, register_t *retval)
 		vm_prot_t maxprot;
 		
 		grow = nbreak - obreak;
+		/*
+		 * Keep sbrk() growth consistent with mmap() by consulting the
+		 * optional jail aggregate-memory callback before extending data.
+		 */
 		if (uvm_proc_jail_memlimit_check != NULL &&
 		    uvm_proc_jail_memlimit_check(p, grow) != 0) {
 			mutex_exit(&p->p_auxlock);
@@ -178,6 +182,9 @@ uvm_grow(struct proc *p, vaddr_t sp)
 		vsize_t grow;
 
 		grow = ctob(nss - vm->vm_ssize);
+		/*
+		 * Apply the same jail growth policy to automatic stack expansion.
+		 */
 		if (uvm_proc_jail_memlimit_check != NULL &&
 		    uvm_proc_jail_memlimit_check(p, grow) != 0)
 			return (0);

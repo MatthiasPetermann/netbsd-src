@@ -921,6 +921,11 @@ uvm_mmap(struct vm_map *map, vaddr_t *addr, vsize_t size, vm_prot_t prot,
 	    curproc->p_rlimit[RLIMIT_AS].rlim_cur))
 		return ENOMEM;
 
+	/*
+	 * Give jail policy a chance to veto user-space growth before mapping.
+	 * The callback is optional and defaults to NULL when no jail model
+	 * has registered aggregate memory accounting enforcement.
+	 */
 	if (!VM_MAP_IS_KERNEL(map) && uvm_proc_jail_memlimit_check != NULL &&
 	    uvm_proc_jail_memlimit_check(curproc, size) != 0)
 		return ENOMEM;
