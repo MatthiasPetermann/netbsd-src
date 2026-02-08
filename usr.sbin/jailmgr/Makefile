@@ -3,7 +3,9 @@
 MAN=	jailmgr.8
 SCRIPTS=	jailmgr
 
-FILES+=	examples/README examples/jailmgr.conf.sample
+.PATH:	${.CURDIR}/examples
+
+FILES+=	README jailmgr.conf.sample
 FILESDIR=	/usr/share/examples/jailmgr
 
 .include <bsd.prog.mk>
