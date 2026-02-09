@@ -91,7 +91,12 @@ Run
 and then start all jails in
 .Ev JAIL_LIST .
 .It Cm stop-jail Ar name
-Destroy one jail by name through
+Request graceful shutdown for processes in the jail named
+.Ar name ,
+terminate any remaining jail processes and the corresponding
+.Xr jailctl 8
+monitor process if needed,
+then destroy the jail by name through
 .Xr jailctl 8
 and unmount its root composition.
 .It Cm stop-all

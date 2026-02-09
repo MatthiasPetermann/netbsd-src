@@ -34,10 +34,6 @@ __RCSID("$NetBSD$");
 #include <sys/types.h>
 #include <sys/jail.h>
 #include <sys/sysctl.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
-#include <sys/ioctl.h>
 
 #include <arpa/inet.h>
 #include <err.h>
@@ -51,36 +47,26 @@ __RCSID("$NetBSD$");
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <termios.h>
+#include <syslog.h>
 #include <unistd.h>
-#include <util.h>
 #include <sys/wait.h>
 
-#define JAILCTL_STATEDIR "/var/run/jailctl"
-#define JAILCTL_CMD_MAX 511
-#define JAILCTL_DETACH_KEY 0x1d	/* Ctrl-] */
-
-struct jail_context {
-	jailid_t	id;
-	char		command[JAILCTL_CMD_MAX + 1];
-	char		sockpath[PATH_MAX];
-};
+#define JAILCTL_LOG_MAX 511
+#define JAILCTL_TAG_MAX 63
 
 static void	usage(void) __dead;
 
-static void	jail_attach(const struct jail_context *);
 static void	jail_exec(jailid_t, const char *, char *[]);
-static void	jail_run_manager(const struct jail_context *, int, pid_t);
-static void	jail_spawn_detached(jailid_t, const char *, const struct jail_context *, char *[]);
-static void	path_context(jailid_t, char *, size_t);
-static void	path_socket(jailid_t, char *, size_t);
+static void	jail_run_monitor(jailid_t, const char *, const char *, int, int,
+		    pid_t, int);
+static void	jail_spawn_detached(jailid_t, const char *, const char *,
+		    const char *, char *[], int);
+static int	parse_log_facility(const char *);
 static void	sanitize_field(const char *, char *, size_t);
-static bool	context_load(jailid_t, struct jail_context *);
 static bool	jail_lookup_by_name(const char *, struct jail_info *);
 static bool	jail_lookup_by_id(jailid_t, struct jail_info *);
-static bool	context_save(const struct jail_context *);
-static void	context_delete(jailid_t);
-static void	build_command_line(int, char *[], char *, size_t);
+static void	log_stream_data(int, const char *, jailid_t, const char *,
+		    char *, size_t *, const char *, size_t);
 static jailid_t	resolve_jail_target(const char *, struct jail_info *);
 
 static struct jail_info *
@@ -182,20 +168,6 @@ jail_list(void)
 }
 
 static void
-path_context(jailid_t id, char *path, size_t sz)
-{
-
-	(void)snprintf(path, sz, "%s/%" PRIu32 ".ctx", JAILCTL_STATEDIR, id);
-}
-
-static void
-path_socket(jailid_t id, char *path, size_t sz)
-{
-
-	(void)snprintf(path, sz, "%s/%" PRIu32 ".sock", JAILCTL_STATEDIR, id);
-}
-
-static void
 sanitize_field(const char *src, char *dst, size_t dsz)
 {
 	size_t i, j;
@@ -207,64 +179,6 @@ sanitize_field(const char *src, char *dst, size_t dsz)
 			dst[j++] = src[i];
 	}
 	dst[j] = '\0';
-}
-
-static bool
-context_save(const struct jail_context *ctx)
-{
-	char path[PATH_MAX];
-	FILE *fp;
-
-	if (mkdir(JAILCTL_STATEDIR, 0700) == -1 && errno != EEXIST)
-		err(1, "mkdir %s", JAILCTL_STATEDIR);
-
-	path_context(ctx->id, path, sizeof(path));
-	fp = fopen(path, "w");
-	if (fp == NULL)
-		err(1, "%s", path);
-
-	if (fprintf(fp, "command=%s\nsock=%s\n",
-	    ctx->command, ctx->sockpath) < 0)
-		err(1, "write %s", path);
-
-	if (fclose(fp) == EOF)
-		err(1, "close %s", path);
-
-	return true;
-}
-
-static bool
-context_load(jailid_t id, struct jail_context *ctx)
-{
-	char path[PATH_MAX], line[PATH_MAX + JAILCTL_CMD_MAX + 32];
-	FILE *fp;
-
-	memset(ctx, 0, sizeof(*ctx));
-	ctx->id = id;
-	path_context(id, path, sizeof(path));
-	fp = fopen(path, "r");
-	if (fp == NULL)
-		return false;
-
-	while (fgets(line, sizeof(line), fp) != NULL) {
-		char *eq, *nl;
-
-		eq = strchr(line, '=');
-		if (eq == NULL)
-			continue;
-		*eq++ = '\0';
-		nl = strchr(eq, '\n');
-		if (nl != NULL)
-			*nl = '\0';
-
-		if (strcmp(line, "command") == 0)
-			strlcpy(ctx->command, eq, sizeof(ctx->command));
-		else if (strcmp(line, "sock") == 0)
-			strlcpy(ctx->sockpath, eq, sizeof(ctx->sockpath));
-	}
-
-	(void)fclose(fp);
-	return ctx->sockpath[0] != '\0';
 }
 
 static bool
@@ -304,45 +218,6 @@ jail_lookup_by_name(const char *name, struct jail_info *jip)
 }
 
 static void
-context_delete(jailid_t id)
-{
-	char path[PATH_MAX], sock[PATH_MAX];
-
-	path_context(id, path, sizeof(path));
-	if (unlink(path) == -1 && errno != ENOENT)
-		warn("unlink %s", path);
-
-	path_socket(id, sock, sizeof(sock));
-	if (unlink(sock) == -1 && errno != ENOENT)
-		warn("unlink %s", sock);
-}
-
-static void
-build_command_line(int argc, char *argv[], char *dst, size_t dsz)
-{
-	size_t used;
-	int i;
-
-	if (argc <= 0) {
-		dst[0] = '\0';
-		return;
-	}
-
-	used = 0;
-	for (i = 0; i < argc; i++) {
-		int n;
-
-		n = snprintf(dst + used, dsz - used, "%s%s",
-		    i == 0 ? "" : " ", argv[i]);
-		if (n < 0 || (size_t)n >= dsz - used)
-			break;
-		used += (size_t)n;
-	}
-
-	dst[dsz - 1] = '\0';
-}
-
-static void
 jail_exec(jailid_t id, const char *root, char *cmd[])
 {
 	const char *shell;
@@ -367,193 +242,208 @@ jail_exec(jailid_t id, const char *root, char *cmd[])
 }
 
 static void
-jail_run_manager(const struct jail_context *ctx, int pty_master, pid_t child)
+log_stream_data(int priority, const char *stream, jailid_t id, const char *name,
+    char *linebuf, size_t *usedp, const char *chunk, size_t chunklen)
 {
-	int server, client;
-	struct sockaddr_un sun;
+	size_t used;
+	size_t i;
 
-	server = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (server == -1)
-		err(1, "socket");
-
-	memset(&sun, 0, sizeof(sun));
-	sun.sun_family = AF_UNIX;
-	strlcpy(sun.sun_path, ctx->sockpath, sizeof(sun.sun_path));
-	unlink(ctx->sockpath);
-
-	if (bind(server, (struct sockaddr *)&sun, sizeof(sun)) == -1)
-		err(1, "bind %s", ctx->sockpath);
-	if (listen(server, 1) == -1)
-		err(1, "listen %s", ctx->sockpath);
-
-	for (;;) {
-		struct pollfd pfd;
-		int rv, status;
-
-		if (waitpid(child, &status, WNOHANG) == child)
-			break;
-
-		pfd.fd = server;
-		pfd.events = POLLIN;
-		rv = poll(&pfd, 1, 500);
-		if (rv <= 0)
+	used = *usedp;
+	for (i = 0; i < chunklen; i++) {
+		if (chunk[i] == '\n') {
+			syslog(priority, "jail=%s jid=%" PRIu32 " %s: %.*s",
+			    name, id, stream, (int)used, linebuf);
+			used = 0;
 			continue;
+		}
+		if (used + 1 >= JAILCTL_LOG_MAX) {
+			syslog(priority, "jail=%s jid=%" PRIu32 " %s: %.*s",
+			    name, id, stream, (int)used, linebuf);
+			used = 0;
+		}
+		linebuf[used++] = chunk[i];
+	}
 
-		client = accept(server, NULL, NULL);
-		if (client == -1)
-			continue;
+	*usedp = used;
+}
 
-		for (;;) {
-			struct pollfd io[2];
-			char buf[4096];
-			ssize_t n;
+static void
+jail_run_monitor(jailid_t id, const char *name, const char *logtag,
+    int outfd, int errfd,
+    pid_t child, int facility)
+{
+	char outline[JAILCTL_LOG_MAX];
+	char errline[JAILCTL_LOG_MAX];
+	size_t outused, errused;
+	bool outopen, erropen;
+	int status;
 
-			io[0].fd = client;
-			io[0].events = POLLIN;
-			io[1].fd = pty_master;
-			io[1].events = POLLIN;
+	setproctitle("jailctl monitor jail=%s jid=%" PRIu32, name, id);
+	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
 
-			rv = poll(io, 2, 500);
-			if (rv == -1 && errno == EINTR)
-				continue;
-			if (rv <= 0) {
-				if (waitpid(child, &status, WNOHANG) == child)
-					goto out;
-				continue;
-			}
+	outused = 0;
+	errused = 0;
+	outopen = true;
+	erropen = true;
 
-			if (io[0].revents & POLLIN) {
-				n = read(client, buf, sizeof(buf));
-				if (n <= 0 || write(pty_master, buf, (size_t)n) == -1)
-					break;
-			}
+	while (outopen || erropen) {
+		struct pollfd pfd[2];
+		int nfd, rv, i;
 
-			if (io[1].revents & POLLIN) {
-				n = read(pty_master, buf, sizeof(buf));
-				if (n <= 0 || write(client, buf, (size_t)n) == -1)
-					break;
-			}
+		nfd = 0;
+		if (outopen) {
+			pfd[nfd].fd = outfd;
+			pfd[nfd].events = POLLIN;
+			nfd++;
+		}
+		if (erropen) {
+			pfd[nfd].fd = errfd;
+			pfd[nfd].events = POLLIN;
+			nfd++;
 		}
 
-		close(client);
+		rv = poll(pfd, (nfds_t)nfd, 500);
+		if (rv < 0) {
+			if (errno == EINTR)
+				continue;
+			warn("poll");
+			break;
+		}
+		if (rv == 0)
+			continue;
+
+		for (i = 0; i < nfd; i++) {
+			char buf[512];
+			ssize_t n;
+
+			if ((pfd[i].revents & POLLIN) == 0)
+				continue;
+
+			n = read(pfd[i].fd, buf, sizeof(buf));
+			if (n == 0) {
+				if (pfd[i].fd == outfd)
+					outopen = false;
+				else
+					erropen = false;
+				close(pfd[i].fd);
+				continue;
+			}
+			if (n < 0) {
+				if (errno == EINTR)
+					continue;
+				warn("read");
+				if (pfd[i].fd == outfd)
+					outopen = false;
+				else
+					erropen = false;
+				close(pfd[i].fd);
+				continue;
+			}
+
+			if (pfd[i].fd == outfd)
+				log_stream_data(LOG_INFO, "stdout", id, name,
+				    outline, &outused, buf, (size_t)n);
+			else
+				log_stream_data(LOG_ERR, "stderr", id, name,
+				    errline, &errused, buf, (size_t)n);
+		}
 	}
-out:
-	close(server);
-	close(pty_master);
-	context_delete(ctx->id);
+
+	if (outused > 0)
+		syslog(LOG_INFO, "jail=%s jid=%" PRIu32 " stdout: %.*s",
+		    name, id, (int)outused, outline);
+	if (errused > 0)
+		syslog(LOG_ERR, "jail=%s jid=%" PRIu32 " stderr: %.*s",
+		    name, id, (int)errused, errline);
+
+	if (waitpid(child, &status, 0) == -1)
+		warn("waitpid %jd", (intmax_t)child);
+
+	closelog();
 	_exit(0);
 }
 
 static void
-jail_spawn_detached(jailid_t id, const char *root, const struct jail_context *ctx, char *cmd[])
+jail_spawn_detached(jailid_t id, const char *root, const char *name,
+    const char *logtag, char *cmd[], int facility)
 {
-	int mfd, sfd;
+	int outpipe[2], errpipe[2], devnull;
 	pid_t child, mgr;
 
-	if (openpty(&mfd, &sfd, NULL, NULL, NULL) == -1)
-		err(1, "openpty");
+	if (pipe(outpipe) == -1 || pipe(errpipe) == -1)
+		err(1, "pipe");
 
 	child = fork();
 	if (child == -1)
 		err(1, "fork");
 	if (child == 0) {
-		close(mfd);
+		close(outpipe[0]);
+		close(errpipe[0]);
 		if (setsid() == -1)
 			err(1, "setsid");
-		if (ioctl(sfd, TIOCSCTTY, 0) == -1)
-			err(1, "TIOCSCTTY");
-		if (dup2(sfd, STDIN_FILENO) == -1 ||
-		    dup2(sfd, STDOUT_FILENO) == -1 ||
-		    dup2(sfd, STDERR_FILENO) == -1)
+		devnull = open(_PATH_DEVNULL, O_RDONLY);
+		if (devnull == -1)
+			err(1, "%s", _PATH_DEVNULL);
+		if (dup2(devnull, STDIN_FILENO) == -1 ||
+		    dup2(outpipe[1], STDOUT_FILENO) == -1 ||
+		    dup2(errpipe[1], STDERR_FILENO) == -1)
 			err(1, "dup2");
-		if (sfd > STDERR_FILENO)
-			close(sfd);
+		if (devnull > STDERR_FILENO)
+			close(devnull);
+		close(outpipe[1]);
+		close(errpipe[1]);
 		jail_exec(id, root, cmd);
 	}
 
-	close(sfd);
+	close(outpipe[1]);
+	close(errpipe[1]);
 
 	mgr = fork();
 	if (mgr == -1)
 		err(1, "fork");
 	if (mgr == 0)
-		jail_run_manager(ctx, mfd, child);
+		jail_run_monitor(id, name, logtag, outpipe[0], errpipe[0], child,
+		    facility);
 
-	close(mfd);
+	close(outpipe[0]);
+	close(errpipe[0]);
 	printf("jail %" PRIu32 "\n", id);
 }
 
-static void
-jail_attach(const struct jail_context *ctx)
+static int
+parse_log_facility(const char *name)
 {
-	int fd, rv;
-	struct sockaddr_un sun;
-	struct termios oldt, raw;
-	bool tty;
+	struct {
+		const char *name;
+		int facility;
+	} facs[] = {
+		{ "auth", LOG_AUTH },
+		{ "authpriv", LOG_AUTHPRIV },
+		{ "daemon", LOG_DAEMON },
+		{ "kern", LOG_KERN },
+		{ "lpr", LOG_LPR },
+		{ "mail", LOG_MAIL },
+		{ "news", LOG_NEWS },
+		{ "syslog", LOG_SYSLOG },
+		{ "user", LOG_USER },
+		{ "uucp", LOG_UUCP },
+		{ "local0", LOG_LOCAL0 },
+		{ "local1", LOG_LOCAL1 },
+		{ "local2", LOG_LOCAL2 },
+		{ "local3", LOG_LOCAL3 },
+		{ "local4", LOG_LOCAL4 },
+		{ "local5", LOG_LOCAL5 },
+		{ "local6", LOG_LOCAL6 },
+		{ "local7", LOG_LOCAL7 },
+	};
+	size_t i;
 
-	fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (fd == -1)
-		err(1, "socket");
-
-	memset(&sun, 0, sizeof(sun));
-	sun.sun_family = AF_UNIX;
-	strlcpy(sun.sun_path, ctx->sockpath, sizeof(sun.sun_path));
-
-	if (connect(fd, (struct sockaddr *)&sun, sizeof(sun)) == -1)
-		err(1, "connect %s", ctx->sockpath);
-
-	tty = isatty(STDIN_FILENO);
-	if (tty && tcgetattr(STDIN_FILENO, &oldt) == 0) {
-		raw = oldt;
-		cfmakeraw(&raw);
-		(void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+	for (i = 0; i < __arraycount(facs); i++) {
+		if (strcmp(name, facs[i].name) == 0)
+			return facs[i].facility;
 	}
 
-	for (;;) {
-		struct pollfd io[2];
-		char buf[4096];
-		ssize_t n;
-
-		io[0].fd = STDIN_FILENO;
-		io[0].events = POLLIN;
-		io[1].fd = fd;
-		io[1].events = POLLIN;
-
-		rv = poll(io, 2, -1);
-		if (rv == -1 && errno == EINTR)
-			continue;
-		if (rv <= 0)
-			break;
-
-		if (io[0].revents & POLLIN) {
-			ssize_t i;
-
-			n = read(STDIN_FILENO, buf, sizeof(buf));
-			if (n <= 0)
-				break;
-
-			for (i = 0; i < n; i++) {
-				if ((unsigned char)buf[i] == JAILCTL_DETACH_KEY)
-					break;
-			}
-
-			if (i > 0 && write(fd, buf, (size_t)i) == -1)
-				break;
-
-			if (i < n)
-				break;
-		}
-
-		if (io[1].revents & POLLIN) {
-			n = read(fd, buf, sizeof(buf));
-			if (n <= 0 || write(STDOUT_FILENO, buf, (size_t)n) == -1)
-				break;
-		}
-	}
-
-	if (tty)
-		(void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
-	close(fd);
+	errx(1, "invalid log facility: %s", name);
 }
 
 static int
@@ -597,9 +487,6 @@ main(int argc, char *argv[])
 	jailid_t id;
 	const char *root;
 	const char *name;
-	const char *shell;
-	char cmdbuf[JAILCTL_CMD_MAX + 1];
-	struct jail_context ctx;
 	struct jail_info ji;
 
 	if (argc < 2)
@@ -610,12 +497,15 @@ main(int argc, char *argv[])
 		char *endp;
 		uintmax_t num;
 		struct in_addr addr;
-		int ch;
+		int ch, facility;
+		char logtag[JAILCTL_TAG_MAX + 1];
 
 		memset(&create, 0, sizeof(create));
 		name = NULL;
+		facility = LOG_DAEMON;
+		strlcpy(logtag, "jailctl", sizeof(logtag));
 		optind = 2;
-		while ((ch = getopt(argc, argv, "c:i:m:n:")) != -1) {
+		while ((ch = getopt(argc, argv, "c:f:i:m:n:t:")) != -1) {
 			switch (ch) {
 			case 'c':
 				errno = 0;
@@ -624,6 +514,9 @@ main(int argc, char *argv[])
 					errx(1, "invalid cpu limit: %s", optarg);
 				create.jc_flags |= JAIL_CREATE_CPULIMIT;
 				create.jc_cpu_limit = num;
+				break;
+			case 'f':
+				facility = parse_log_facility(optarg);
 				break;
 			case 'i':
 				if (inet_pton(AF_INET, optarg, &addr) != 1)
@@ -641,6 +534,11 @@ main(int argc, char *argv[])
 				break;
 			case 'n':
 				name = optarg;
+				break;
+			case 't':
+				sanitize_field(optarg, logtag, sizeof(logtag));
+				if (logtag[0] == '\0')
+					errx(1, "invalid log tag");
 				break;
 			default:
 				usage();
@@ -660,23 +558,8 @@ main(int argc, char *argv[])
 		sanitize_field(root, create.jc_root, sizeof(create.jc_root));
 		id = jail_create(&create);
 
-		memset(&ctx, 0, sizeof(ctx));
-		ctx.id = id;
-		if (argc > optind + 1) {
-			build_command_line(argc - (optind + 1), &argv[optind + 1],
-			    cmdbuf, sizeof(cmdbuf));
-			sanitize_field(cmdbuf, cmdbuf, sizeof(cmdbuf));
-		} else {
-			if ((shell = getenv("SHELL")) == NULL)
-				shell = _PATH_BSHELL;
-			sanitize_field(shell, cmdbuf, sizeof(cmdbuf));
-		}
-		strlcpy(ctx.command, cmdbuf, sizeof(ctx.command));
-		path_socket(id, ctx.sockpath, sizeof(ctx.sockpath));
-		(void)context_save(&ctx);
-
-		jail_spawn_detached(id, create.jc_root, &ctx,
-		    argc > optind + 1 ? &argv[optind + 1] : NULL);
+		jail_spawn_detached(id, create.jc_root, create.jc_name, logtag,
+		    argc > optind + 1 ? &argv[optind + 1] : NULL, facility);
 		return 0;
 	}
 
@@ -686,7 +569,6 @@ main(int argc, char *argv[])
 
 		id = resolve_jail_target(argv[2], &ji);
 		jail_destroy(id);
-		context_delete(id);
 		return 0;
 	}
 
@@ -697,17 +579,6 @@ main(int argc, char *argv[])
 		id = resolve_jail_target(argv[2], &ji);
 
 		jail_exec(id, ji.ji_root, argc > 3 ? &argv[3] : NULL);
-	}
-
-	if (strcmp(argv[1], "attach") == 0) {
-		if (argc != 3)
-			usage();
-
-		id = resolve_jail_target(argv[2], &ji);
-		if (!context_load(id, &ctx))
-			errx(1, "context for jail %" PRIu32 " not found", id);
-		jail_attach(&ctx);
-		return 0;
 	}
 
 	if (strcmp(argv[1], "list") == 0) {
@@ -726,13 +597,11 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-c cpu-ms] [-i ipv4] [-m bytes] -n name <root> "
+	    "usage: %s create [-c cpu-ms] [-f facility] [-t tag] [-i ipv4] [-m bytes] -n name <root> "
 	    "[command [args...]]\n"
-	    "       %s attach <jail-id|name>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
 	    "       %s list\n",
-	    getprogname(), getprogname(), getprogname(), getprogname(),
-	    getprogname());
+	    getprogname(), getprogname(), getprogname(), getprogname());
 	exit(1);
 }
