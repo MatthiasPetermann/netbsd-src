@@ -71,9 +71,12 @@ Call
 and start all jails listed in
 .Ev JAIL_LIST .
 .It Cm stop-jail Ar name
-Destroy the jail named
-.Ar name
-and unmount its filesystem layout.
+Request graceful shutdown for processes in the jail named
+.Ar name ,
+terminate any remaining jail processes and the corresponding
+.Xr jailctl 8
+monitor process if needed,
+then destroy the jail and unmount its filesystem layout.
 .It Cm stop-all
 Stop and unmount all jails listed in
 .Ev JAIL_LIST .

@@ -35,6 +35,7 @@
 .Nm
 .Cm create
 .Op Fl c Ar cpu-ms
+.Op Fl f Ar facility
 .Op Fl i Ar ipv4
 .Op Fl m Ar bytes
 .Fl n Ar name
@@ -43,9 +44,6 @@
 .Op Ar args ...
 .Nm
 .Cm destroy
-.Ar jail-id | name
-.Nm
-.Cm attach
 .Ar jail-id | name
 .Nm
 .Cm exec
@@ -64,7 +62,7 @@ jail id, while the host root user (jail id 0) can access all processes.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Op Fl c Ar cpu-ms Op Fl i Ar ipv4 Op Fl m Ar bytes Fl n Ar name Ar root \
+.It Cm create Op Fl c Ar cpu-ms Op Fl f Ar facility Op Fl i Ar ipv4 Op Fl m Ar bytes Fl n Ar name Ar root \
     Op command Op Ar args ...
 Create a new jail id, assign it the unique
 .Ar name ,
@@ -72,35 +70,45 @@ store jail name and root metadata in the kernel jail model, and start
 .Ar command
 in the background inside the jail.
 If no command is provided, an interactive shell is started in the background.
-The command can later be reached via
-.Cm attach .
+The jailed command's standard output and standard error are forwarded to
+host syslog.
 .Pp
 The optional flags set per-jail limits and bind restrictions:
 .Bl -tag -width Ds
 .It Fl c Ar cpu-ms
 Set a CPU time limit (in milliseconds) for processes in the jail.
+.It Fl f Ar facility
+Set the syslog facility used when forwarding output from the jailed command.
+Supported values are
+.Dq auth ,
+.Dq authpriv ,
+.Dq daemon ,
+.Dq kern ,
+.Dq lpr ,
+.Dq mail ,
+.Dq news ,
+.Dq syslog ,
+.Dq user ,
+.Dq uucp ,
+and
+.Dq local0
+through
+.Dq local7 .
 .It Fl i Ar ipv4
 Restrict IPv4 socket binds inside the jail to the specified address.
 .It Fl m Ar bytes
 Set a virtual memory limit (in bytes) for processes in the jail.
 .El
+.Pp
+The background monitor process is shown in process listings as
+.Dq jailctl monitor jail=<name> jid=<id>
+to distinguish it from one-shot create invocations.
 .It Cm destroy Ar jail-id | name
 Destroy a jail selected by
 .Ar jail-id
 or
 .Ar name
 that has no remaining processes.
-.It Cm attach Ar jail-id | name
-Attach the local terminal to the background command started with
-.Cm create
-for jail
-.Ar jail-id
-or
-.Ar name ,
-providing interactive stdin/stdout/stderr forwarding.
-When attached from a terminal, type
-.Ic Ctrl-]
-to detach without terminating the jailed process.
 .It Cm exec Ar jail-id | name Op command Op Ar args ...
 Enter a running jail selected by
 .Ar jail-id
