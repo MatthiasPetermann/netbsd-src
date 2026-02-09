@@ -61,7 +61,7 @@ Commands:
   host-net-down                  Remove host aliases for all jail IPs
   start-jail <name> <ip>         Mount jail root and start jail via jailctl
   start-all                      Alias host IPs and start all jails listed in JAIL_LIST
-  stop-jail <name>               Destroy one jail and unmount root
+  stop-jail <name>               Gracefully stop one jail, then destroy and unmount root
   stop-all                       Stop all jails listed in JAIL_LIST
   npf-sync                       Generate/update NPF rdr snippet from NPF_RDR_LIST
   status                         Show jailctl list and mount status
@@ -80,12 +80,52 @@ need_root() {
 }
 
 require_tools() {
-	for t in jailctl tar mount umount ifconfig; do
+	for t in jailctl tar mount umount ifconfig ps; do
 		command -v "${t}" >/dev/null 2>&1 || {
 			echo "missing required tool: ${t}" >&2
 			exit 1
 		}
 	done
+}
+
+jail_pids() {
+	jid=$1
+	ps -axo pid=,jid= | awk -v j="${jid}" '$2==j{print $1}'
+}
+
+jail_monitor_pid() {
+	name=$1
+	jid=$2
+	ps -axo pid=,command= | awk -v n="${name}" -v j="${jid}" '
+		$0 ~ "jailctl monitor jail=" n " jid=" j { print $1; exit }
+	'
+}
+
+stop_jail_processes() {
+	name=$1
+	jid=$2
+	monitor_pid=$(jail_monitor_pid "${name}" "${jid}" || true)
+
+	# Best effort inside-jail shutdown hook.
+	jailctl exec "${jid}" /bin/sh -c 'if [ -x /etc/rc.shutdown ]; then /etc/rc.shutdown; fi' >/dev/null 2>&1 || true
+
+	for sig in TERM KILL; do
+		pids=$(jail_pids "${jid}" | tr '\n' ' ')
+		[ -n "${pids}" ] || break
+		# shellcheck disable=SC2086
+		kill -${sig} ${pids} >/dev/null 2>&1 || true
+		for _ in 1 2 3 4 5; do
+			sleep 1
+			pids=$(jail_pids "${jid}" | tr '\n' ' ')
+			[ -z "${pids}" ] && break
+		done
+	done
+
+	if [ -n "${monitor_pid}" ]; then
+		kill -TERM "${monitor_pid}" >/dev/null 2>&1 || true
+		sleep 1
+		kill -KILL "${monitor_pid}" >/dev/null 2>&1 || true
+	fi
 }
 
 fetch_sets() {
@@ -320,6 +360,7 @@ stop_jail() {
 
 	if jail_exists "${name}"; then
 		jid=$(jailctl list | awk -v n="${name}" '$3==n{print $1}')
+		stop_jail_processes "${name}" "${jid}"
 		jailctl destroy "${jid}"
 		echo "Destroyed jail ${name} (jid ${jid})"
 	fi
