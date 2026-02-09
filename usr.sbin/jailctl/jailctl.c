@@ -319,16 +319,24 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 		for (i = 0; i < nfd; i++) {
 			char buf[512];
 			ssize_t n;
+			bool *openp;
 
-			if ((pfd[i].revents & POLLIN) == 0)
+			openp = pfd[i].fd == outfd ? &outopen : &erropen;
+
+			if (*openp == false)
 				continue;
+
+			if ((pfd[i].revents & POLLIN) == 0) {
+				if ((pfd[i].revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
+					*openp = false;
+					close(pfd[i].fd);
+				}
+				continue;
+			}
 
 			n = read(pfd[i].fd, buf, sizeof(buf));
 			if (n == 0) {
-				if (pfd[i].fd == outfd)
-					outopen = false;
-				else
-					erropen = false;
+				*openp = false;
 				close(pfd[i].fd);
 				continue;
 			}
@@ -336,10 +344,7 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 				if (errno == EINTR)
 					continue;
 				warn("read");
-				if (pfd[i].fd == outfd)
-					outopen = false;
-				else
-					erropen = false;
+				*openp = false;
 				close(pfd[i].fd);
 				continue;
 			}
