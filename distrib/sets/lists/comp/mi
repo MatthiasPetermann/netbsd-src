@@ -20964,6 +20964,7 @@
 ./usr/share/man/html9/secmodel_deregister.html	comp-sys-htmlman	html
 ./usr/share/man/html9/secmodel_eval.html	comp-sys-htmlman	html
 ./usr/share/man/html9/secmodel_extensions.html	comp-sys-htmlman	html
+./usr/share/man/html9/secmodel_jail.html	comp-sys-htmlman	html
 ./usr/share/man/html9/secmodel_overlay.html	comp-sys-htmlman	html
 ./usr/share/man/html9/secmodel_register.html	comp-sys-htmlman	html
 ./usr/share/man/html9/secmodel_securelevel.html comp-sys-htmlman	html
@@ -29501,6 +29502,7 @@
 ./usr/share/man/man9/secmodel_deregister.9	comp-sys-man		.man
 ./usr/share/man/man9/secmodel_eval.9		comp-sys-man		.man
 ./usr/share/man/man9/secmodel_extensions.9	comp-sys-man		.man
+./usr/share/man/man9/secmodel_jail.9		comp-sys-man		.man
 ./usr/share/man/man9/secmodel_overlay.9		comp-sys-man		.man
 ./usr/share/man/man9/secmodel_register.9	comp-sys-man		.man
 ./usr/share/man/man9/secmodel_securelevel.9	comp-sys-man		.man
