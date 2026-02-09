@@ -36,6 +36,7 @@
 .Cm create
 .Op Fl c Ar cpu-ms
 .Op Fl f Ar facility
+.Op Fl t Ar tag
 .Op Fl i Ar ipv4
 .Op Fl m Ar bytes
 .Fl n Ar name
@@ -62,7 +63,7 @@ jail id, while the host root user (jail id 0) can access all processes.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Op Fl c Ar cpu-ms Op Fl f Ar facility Op Fl i Ar ipv4 Op Fl m Ar bytes Fl n Ar name Ar root \
+.It Cm create Op Fl c Ar cpu-ms Op Fl f Ar facility Op Fl t Ar tag Op Fl i Ar ipv4 Op Fl m Ar bytes Fl n Ar name Ar root \
     Op command Op Ar args ...
 Create a new jail id, assign it the unique
 .Ar name ,
@@ -94,6 +95,11 @@ and
 .Dq local0
 through
 .Dq local7 .
+.It Fl t Ar tag
+Set the syslog tag used for forwarded jailed-command output.
+If omitted,
+.Dq jailctl
+is used.
 .It Fl i Ar ipv4
 Restrict IPv4 socket binds inside the jail to the specified address.
 .It Fl m Ar bytes

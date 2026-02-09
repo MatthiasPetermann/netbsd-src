@@ -52,12 +52,15 @@ __RCSID("$NetBSD$");
 #include <sys/wait.h>
 
 #define JAILCTL_LOG_MAX 511
+#define JAILCTL_TAG_MAX 63
 
 static void	usage(void) __dead;
 
 static void	jail_exec(jailid_t, const char *, char *[]);
-static void	jail_run_monitor(jailid_t, const char *, int, int, pid_t, int);
-static void	jail_spawn_detached(jailid_t, const char *, const char *, char *[], int);
+static void	jail_run_monitor(jailid_t, const char *, const char *, int, int,
+		    pid_t, int);
+static void	jail_spawn_detached(jailid_t, const char *, const char *,
+		    const char *, char *[], int);
 static int	parse_log_facility(const char *);
 static void	sanitize_field(const char *, char *, size_t);
 static bool	jail_lookup_by_name(const char *, struct jail_info *);
@@ -265,7 +268,8 @@ log_stream_data(int priority, const char *stream, jailid_t id, const char *name,
 }
 
 static void
-jail_run_monitor(jailid_t id, const char *name, int outfd, int errfd,
+jail_run_monitor(jailid_t id, const char *name, const char *logtag,
+    int outfd, int errfd,
     pid_t child, int facility)
 {
 	char outline[JAILCTL_LOG_MAX];
@@ -275,7 +279,7 @@ jail_run_monitor(jailid_t id, const char *name, int outfd, int errfd,
 	int status;
 
 	setproctitle("jailctl monitor jail=%s jid=%" PRIu32, name, id);
-	openlog("jailctl", LOG_PID | LOG_NDELAY, facility);
+	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
 
 	outused = 0;
 	errused = 0;
@@ -361,7 +365,7 @@ jail_run_monitor(jailid_t id, const char *name, int outfd, int errfd,
 
 static void
 jail_spawn_detached(jailid_t id, const char *root, const char *name,
-    char *cmd[], int facility)
+    const char *logtag, char *cmd[], int facility)
 {
 	int outpipe[2], errpipe[2], devnull;
 	pid_t child, mgr;
@@ -398,7 +402,8 @@ jail_spawn_detached(jailid_t id, const char *root, const char *name,
 	if (mgr == -1)
 		err(1, "fork");
 	if (mgr == 0)
-		jail_run_monitor(id, name, outpipe[0], errpipe[0], child, facility);
+		jail_run_monitor(id, name, logtag, outpipe[0], errpipe[0], child,
+		    facility);
 
 	close(outpipe[0]);
 	close(errpipe[0]);
@@ -493,12 +498,14 @@ main(int argc, char *argv[])
 		uintmax_t num;
 		struct in_addr addr;
 		int ch, facility;
+		char logtag[JAILCTL_TAG_MAX + 1];
 
 		memset(&create, 0, sizeof(create));
 		name = NULL;
 		facility = LOG_DAEMON;
+		strlcpy(logtag, "jailctl", sizeof(logtag));
 		optind = 2;
-		while ((ch = getopt(argc, argv, "c:f:i:m:n:")) != -1) {
+		while ((ch = getopt(argc, argv, "c:f:i:m:n:t:")) != -1) {
 			switch (ch) {
 			case 'c':
 				errno = 0;
@@ -528,6 +535,11 @@ main(int argc, char *argv[])
 			case 'n':
 				name = optarg;
 				break;
+			case 't':
+				sanitize_field(optarg, logtag, sizeof(logtag));
+				if (logtag[0] == '\0')
+					errx(1, "invalid log tag");
+				break;
 			default:
 				usage();
 			}
@@ -546,7 +558,7 @@ main(int argc, char *argv[])
 		sanitize_field(root, create.jc_root, sizeof(create.jc_root));
 		id = jail_create(&create);
 
-		jail_spawn_detached(id, create.jc_root, create.jc_name,
+		jail_spawn_detached(id, create.jc_root, create.jc_name, logtag,
 		    argc > optind + 1 ? &argv[optind + 1] : NULL, facility);
 		return 0;
 	}
@@ -585,7 +597,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-c cpu-ms] [-f facility] [-i ipv4] [-m bytes] -n name <root> "
+	    "usage: %s create [-c cpu-ms] [-f facility] [-t tag] [-i ipv4] [-m bytes] -n name <root> "
 	    "[command [args...]]\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
