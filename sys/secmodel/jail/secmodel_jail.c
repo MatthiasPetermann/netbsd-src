@@ -69,11 +69,14 @@ enum jail_resource_mode {
 	JAIL_RESOURCE_AGGREGATE = 1,
 };
 
+#define	JAIL_CPU_MS_PER_SEC	1000ULL
+
 static int jail_resource_mode = JAIL_RESOURCE_AGGREGATE;
 
 static int	secmodel_jail_network_cb(kauth_cred_t, kauth_action_t,
 		    void *, void *, void *, void *, void *);
 static int	secmodel_jail_sysctl_resource_mode(SYSCTLFN_ARGS);
+static rlim_t	secmodel_jail_cpu_ms_to_rlimit(uint64_t);
 static uint64_t	secmodel_jail_proc_as_bytes(struct proc *);
 static uint64_t	secmodel_jail_proc_cpu_ms(struct proc *);
 static void	secmodel_jail_usage(jailid_t, uint64_t *, uint64_t *);
@@ -367,8 +370,9 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 		struct rlimit lim;
 
 		if (config.jc_has_cpu_limit) {
-			lim.rlim_cur = config.jc_cpu_limit;
-			lim.rlim_max = config.jc_cpu_limit;
+			lim.rlim_cur =
+			    secmodel_jail_cpu_ms_to_rlimit(config.jc_cpu_limit);
+			lim.rlim_max = lim.rlim_cur;
 			error = dosetrlimit(l, p, RLIMIT_CPU, &lim);
 			if (error != 0)
 				return error;
@@ -447,6 +451,21 @@ secmodel_jail_proc_cpu_ms(struct proc *p)
 	bintime2timeval(&p->p_rtime, &tv);
 
 	return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+}
+
+static rlim_t
+secmodel_jail_cpu_ms_to_rlimit(uint64_t cpu_ms)
+{
+	uint64_t secs;
+
+	if (cpu_ms == 0)
+		return 0;
+
+	secs = (cpu_ms + (JAIL_CPU_MS_PER_SEC - 1)) / JAIL_CPU_MS_PER_SEC;
+	if (secs > (uint64_t)RLIM_INFINITY)
+		return RLIM_INFINITY;
+
+	return (rlim_t)secs;
 }
 
 static void
