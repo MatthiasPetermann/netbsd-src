@@ -45,4 +45,5 @@ int secmodel_jail_process_cb(kauth_cred_t, kauth_action_t, void *,
 int secmodel_jail_cred_cb(kauth_cred_t, kauth_action_t, void *,
     void *, void *, void *, void *);
 
+
 #endif /* !_SECMODEL_JAIL_JAIL_H_ */
