@@ -74,6 +74,10 @@ When a process enters a jail, configured limits are applied via
 and
 .Dv RLIMIT_AS
 for that process.
+Because
+.Dv RLIMIT_CPU
+is second-granular, CPU limits configured in milliseconds are rounded up to
+the next whole second when translated for this mode.
 .It 1
 Aggregate per-jail enforcement.
 The model computes jail-wide usage by summing per-process accounting, and
