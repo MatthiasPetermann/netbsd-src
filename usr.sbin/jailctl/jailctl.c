@@ -617,7 +617,9 @@ main(int argc, char *argv[])
 	}
 
 	if (strcmp(argv[1], "start") == 0) {
-		char *default_cmd[] = { _PATH_BSHELL, "/etc/rc", NULL };
+		char *default_cmd[] = {
+		    __UNCONST(_PATH_BSHELL), __UNCONST("/etc/rc"), NULL
+		};
 		char **cmd;
 		int ch, priority;
 		char logtag[JAILCTL_TAG_MAX + 1];
