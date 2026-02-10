@@ -560,19 +560,27 @@ main(int argc, char *argv[])
 
 	if (strcmp(argv[1], "create") == 0) {
 		struct jail_create create;
+		char *default_cmd[] = { _PATH_BSHELL, "/etc/rc", NULL };
+		char **cmd;
 		char *endp;
 		uintmax_t num;
 		struct in_addr addr;
 		int ch, priority;
+		bool idle;
 		char logtag[JAILCTL_TAG_MAX + 1];
 
 		memset(&create, 0, sizeof(create));
+		cmd = NULL;
+		idle = false;
 		name = NULL;
 		priority = LOG_DAEMON | LOG_NOTICE;
 		strlcpy(logtag, "jailctl", sizeof(logtag));
 		optind = 2;
-		while ((ch = getopt(argc, argv, "c:i:m:n:p:t:")) != -1) {
+		while ((ch = getopt(argc, argv, "Ic:i:m:n:p:t:")) != -1) {
 			switch (ch) {
+			case 'I':
+				idle = true;
+				break;
 			case 'c':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
@@ -620,13 +628,19 @@ main(int argc, char *argv[])
 			errx(1, "name already exists: %s", name);
 
 		root = argv[optind];
+		if (idle && argc > optind + 1)
+			errx(1, "-I cannot be used with an explicit command");
+		if (argc > optind + 1)
+			cmd = &argv[optind + 1];
+		else if (!idle)
+			cmd = default_cmd;
 		sanitize_field(name, create.jc_name, sizeof(create.jc_name));
 		sanitize_field(root, create.jc_root, sizeof(create.jc_root));
 		id = jail_create(&create);
 
-		if (argc > optind + 1) {
+		if (cmd != NULL) {
 			jail_spawn_detached(id, create.jc_root, create.jc_name, logtag,
-			    &argv[optind + 1], LOG_FAC(priority),
+			    cmd, LOG_FAC(priority),
 			    LOG_PRI(priority));
 		} else {
 			printf("jail %" PRIu32 "\n", id);
@@ -668,7 +682,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-c cpu-ms] [-p pri] [-t tag] [-i ipv4] [-m bytes] -n name <root> "
+	    "usage: %s create [-I] [-c cpu-ms] [-p pri] [-t tag] [-i ipv4] [-m bytes] -n name <root> "
 	    "[command [args...]]\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"

@@ -34,6 +34,7 @@
 .Sh SYNOPSIS
 .Nm
 .Cm create
+.Op Fl I
 .Op Fl c Ar cpu-ms
 .Op Fl p Ar pri
 .Op Fl t Ar tag
@@ -63,14 +64,19 @@ jail id, while the host root user (jail id 0) can access all processes.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Op Fl c Ar cpu-ms Op Fl p Ar pri Op Fl t Ar tag Op Fl i Ar ipv4 Op Fl m Ar bytes Fl n Ar name Ar root \
+.It Cm create Op Fl I Op Fl c Ar cpu-ms Op Fl p Ar pri Op Fl t Ar tag Op Fl i Ar ipv4 Op Fl m Ar bytes Fl n Ar name Ar root \
     Op command Op Ar args ...
 Create a new jail id, assign it the unique
 .Ar name ,
 store jail name and root metadata in the kernel jail model, and start
 .Ar command
 in the background inside the jail.
-If no command is provided, an interactive shell is started in the background.
+If no command is provided,
+.Pa /bin/sh /etc/rc
+is started in the background by default.
+With
+.Fl I ,
+the jail is created without starting any process.
 The jailed command's standard output and standard error are forwarded to
 host syslog.
 .Pp
@@ -78,6 +84,10 @@ The optional flags set per-jail limits and bind restrictions:
 .Bl -tag -width Ds
 .It Fl c Ar cpu-ms
 Set a CPU time limit (in milliseconds) for processes in the jail.
+.It Fl I
+Create the jail and print its id without starting a command.
+This option cannot be combined with an explicit
+.Ar command .
 .It Fl p Ar pri
 Set the syslog priority used for forwarded output, compatible with
 .Xr logger 1 :
