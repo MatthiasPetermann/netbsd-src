@@ -365,7 +365,7 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 		syslog(stderr_level, "jail=%s jid=%" PRIu32 " stderr: %.*s",
 		    name, id, (int)errused, errline);
 
-	if (waitpid(child, &status, 0) == -1)
+	if (waitpid(child, &status, 0) == -1 && errno != ECHILD)
 		warn("waitpid %jd", (intmax_t)child);
 
 	closelog();
@@ -382,40 +382,42 @@ jail_spawn_detached(jailid_t id, const char *root, const char *name,
 	if (pipe(outpipe) == -1 || pipe(errpipe) == -1)
 		err(1, "pipe");
 
-	child = fork();
-	if (child == -1)
-		err(1, "fork");
-	if (child == 0) {
-		close(outpipe[0]);
-		close(errpipe[0]);
-		if (setsid() == -1)
-			err(1, "setsid");
-		devnull = open(_PATH_DEVNULL, O_RDONLY);
-		if (devnull == -1)
-			err(1, "%s", _PATH_DEVNULL);
-		if (dup2(devnull, STDIN_FILENO) == -1 ||
-		    dup2(outpipe[1], STDOUT_FILENO) == -1 ||
-		    dup2(errpipe[1], STDERR_FILENO) == -1)
-			err(1, "dup2");
-		if (devnull > STDERR_FILENO)
-			close(devnull);
-		close(outpipe[1]);
-		close(errpipe[1]);
-		jail_exec(id, root, cmd);
-	}
-
-	close(outpipe[1]);
-	close(errpipe[1]);
-
 	mgr = fork();
 	if (mgr == -1)
 		err(1, "fork");
-	if (mgr == 0)
+	if (mgr == 0) {
+		child = fork();
+		if (child == -1)
+			err(1, "fork");
+		if (child == 0) {
+			close(outpipe[0]);
+			close(errpipe[0]);
+			if (setsid() == -1)
+				err(1, "setsid");
+			devnull = open(_PATH_DEVNULL, O_RDONLY);
+			if (devnull == -1)
+				err(1, "%s", _PATH_DEVNULL);
+			if (dup2(devnull, STDIN_FILENO) == -1 ||
+			    dup2(outpipe[1], STDOUT_FILENO) == -1 ||
+			    dup2(errpipe[1], STDERR_FILENO) == -1)
+				err(1, "dup2");
+			if (devnull > STDERR_FILENO)
+				close(devnull);
+			close(outpipe[1]);
+			close(errpipe[1]);
+			jail_exec(id, root, cmd);
+		}
+
+		close(outpipe[1]);
+		close(errpipe[1]);
 		jail_run_monitor(id, name, logtag, outpipe[0], errpipe[0], child,
 		    facility, stdout_level);
+	}
 
 	close(outpipe[0]);
+	close(outpipe[1]);
 	close(errpipe[0]);
+	close(errpipe[1]);
 	printf("jail %" PRIu32 "\n", id);
 }
 
@@ -622,9 +624,13 @@ main(int argc, char *argv[])
 		sanitize_field(root, create.jc_root, sizeof(create.jc_root));
 		id = jail_create(&create);
 
-		jail_spawn_detached(id, create.jc_root, create.jc_name, logtag,
-		    argc > optind + 1 ? &argv[optind + 1] : NULL,
-		    LOG_FAC(priority), LOG_PRI(priority));
+		if (argc > optind + 1) {
+			jail_spawn_detached(id, create.jc_root, create.jc_name, logtag,
+			    &argv[optind + 1], LOG_FAC(priority),
+			    LOG_PRI(priority));
+		} else {
+			printf("jail %" PRIu32 "\n", id);
+		}
 		return 0;
 	}
 
