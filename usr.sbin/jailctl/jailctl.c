@@ -560,27 +560,16 @@ main(int argc, char *argv[])
 
 	if (strcmp(argv[1], "create") == 0) {
 		struct jail_create create;
-		char *default_cmd[] = { _PATH_BSHELL, "/etc/rc", NULL };
-		char **cmd;
 		char *endp;
 		uintmax_t num;
 		struct in_addr addr;
-		int ch, priority;
-		bool idle;
-		char logtag[JAILCTL_TAG_MAX + 1];
+		int ch;
 
 		memset(&create, 0, sizeof(create));
-		cmd = NULL;
-		idle = false;
 		name = NULL;
-		priority = LOG_DAEMON | LOG_NOTICE;
-		strlcpy(logtag, "jailctl", sizeof(logtag));
 		optind = 2;
-		while ((ch = getopt(argc, argv, "Ic:i:m:n:p:t:")) != -1) {
+		while ((ch = getopt(argc, argv, "c:i:m:n:")) != -1) {
 			switch (ch) {
-			case 'I':
-				idle = true;
-				break;
 			case 'c':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
@@ -588,9 +577,6 @@ main(int argc, char *argv[])
 					errx(1, "invalid cpu limit: %s", optarg);
 				create.jc_flags |= JAIL_CREATE_CPULIMIT;
 				create.jc_cpu_limit = num;
-				break;
-			case 'p':
-				priority = parse_log_priority(optarg);
 				break;
 			case 'i':
 				if (inet_pton(AF_INET, optarg, &addr) != 1)
@@ -609,6 +595,42 @@ main(int argc, char *argv[])
 			case 'n':
 				name = optarg;
 				break;
+			default:
+				usage();
+			}
+		}
+
+		if (optind >= argc || name == NULL || argc != optind + 1)
+			usage();
+		if (strlen(name) > JAIL_NAME_MAX)
+			errx(1, "name too long");
+
+		if (jail_lookup_by_name(name, &ji))
+			errx(1, "name already exists: %s", name);
+
+		root = argv[optind];
+		sanitize_field(name, create.jc_name, sizeof(create.jc_name));
+		sanitize_field(root, create.jc_root, sizeof(create.jc_root));
+		id = jail_create(&create);
+		printf("jail %" PRIu32 "\n", id);
+		return 0;
+	}
+
+	if (strcmp(argv[1], "start") == 0) {
+		char *default_cmd[] = { _PATH_BSHELL, "/etc/rc", NULL };
+		char **cmd;
+		int ch, priority;
+		char logtag[JAILCTL_TAG_MAX + 1];
+
+		cmd = NULL;
+		priority = LOG_DAEMON | LOG_NOTICE;
+		strlcpy(logtag, "jailctl", sizeof(logtag));
+		optind = 2;
+		while ((ch = getopt(argc, argv, "p:t:")) != -1) {
+			switch (ch) {
+			case 'p':
+				priority = parse_log_priority(optarg);
+				break;
 			case 't':
 				sanitize_field(optarg, logtag, sizeof(logtag));
 				if (logtag[0] == '\0')
@@ -619,32 +641,17 @@ main(int argc, char *argv[])
 			}
 		}
 
-		if (optind >= argc || name == NULL)
+		if (optind >= argc)
 			usage();
-		if (strlen(name) > JAIL_NAME_MAX)
-			errx(1, "name too long");
 
-		if (jail_lookup_by_name(name, &ji))
-			errx(1, "name already exists: %s", name);
-
-		root = argv[optind];
-		if (idle && argc > optind + 1)
-			errx(1, "-I cannot be used with an explicit command");
-		if (argc > optind + 1)
-			cmd = &argv[optind + 1];
-		else if (!idle)
+		id = resolve_jail_target(argv[optind++], &ji);
+		if (optind < argc)
+			cmd = &argv[optind];
+		else
 			cmd = default_cmd;
-		sanitize_field(name, create.jc_name, sizeof(create.jc_name));
-		sanitize_field(root, create.jc_root, sizeof(create.jc_root));
-		id = jail_create(&create);
 
-		if (cmd != NULL) {
-			jail_spawn_detached(id, create.jc_root, create.jc_name, logtag,
-			    cmd, LOG_FAC(priority),
-			    LOG_PRI(priority));
-		} else {
-			printf("jail %" PRIu32 "\n", id);
-		}
+		jail_spawn_detached(id, ji.ji_root, ji.ji_name, logtag, cmd,
+		    LOG_FAC(priority), LOG_PRI(priority));
 		return 0;
 	}
 
@@ -682,11 +689,12 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-I] [-c cpu-ms] [-p pri] [-t tag] [-i ipv4] [-m bytes] -n name <root> "
-	    "[command [args...]]\n"
+	    "usage: %s create [-c cpu-ms] [-i ipv4] [-m bytes] -n name <root>\n"
+	    "       %s start [-p pri] [-t tag] <jail-id|name> [command [args...]]\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
 	    "       %s list\n",
-	    getprogname(), getprogname(), getprogname(), getprogname());
+	    getprogname(), getprogname(), getprogname(), getprogname(),
+	    getprogname());
 	exit(1);
 }

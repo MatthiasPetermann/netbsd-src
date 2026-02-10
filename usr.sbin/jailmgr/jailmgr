@@ -349,7 +349,8 @@ start_jail() {
 		return
 	fi
 
-	jailctl create -n "${name}" -i "${ip}" "${ROOT_DIR}" /bin/sh /etc/rc
+	jailctl create -n "${name}" -i "${ip}" "${ROOT_DIR}"
+	jailctl start "${name}" /bin/sh /etc/rc
 	echo "Started jail ${name} at ${ip}"
 }
 
