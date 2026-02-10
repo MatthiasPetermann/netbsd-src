@@ -2,6 +2,9 @@
 
 RELEASE=10.0
 MACHINE_ARCH=amd64
+
+# Optional override. If unset/empty, jailmgr derives:
+# https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets
 NETBSD_MIRROR="https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets"
 
 JAIL_BASE_DIR=/var/jailmgr/base
