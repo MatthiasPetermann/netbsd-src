@@ -43,11 +43,13 @@ __RCSID("$NetBSD$");
 #include <limits.h>
 #include <poll.h>
 #include <paths.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -70,6 +72,15 @@ static bool	jail_lookup_by_id(jailid_t, struct jail_info *);
 static void	log_stream_data(int, const char *, jailid_t, const char *,
 		    char *, size_t *, const char *, size_t);
 static jailid_t	resolve_jail_target(const char *, struct jail_info *);
+
+static volatile sig_atomic_t monitor_shutdown_requested;
+
+static void
+monitor_signal_handler(int signo)
+{
+	(void)signo;
+	monitor_shutdown_requested = 1;
+}
 
 static struct jail_info *
 jail_fetch_list(size_t *countp)
@@ -274,16 +285,36 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
     int outfd, int errfd,
     pid_t child, int facility, int stdout_level)
 {
+	const int kill_grace_ms = 5000;
 	char outline[JAILCTL_LOG_MAX];
 	char errline[JAILCTL_LOG_MAX];
+	struct sigaction sa;
+	struct timespec now;
+	struct timespec shutdown_deadline;
 	size_t outused, errused;
 	bool outopen, erropen;
+	bool sent_sigterm, sent_sigkill;
+	bool have_deadline;
 	int stderr_level;
 	int status;
 
 	setproctitle("jailctl supervise jail=%s jid=%" PRIu32, name, id);
 	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
 	stderr_level = stdout_level < LOG_ERR ? stdout_level : LOG_ERR;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = monitor_signal_handler;
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(SIGTERM, &sa, NULL) == -1 ||
+	    sigaction(SIGINT, &sa, NULL) == -1 ||
+	    sigaction(SIGHUP, &sa, NULL) == -1 ||
+	    sigaction(SIGQUIT, &sa, NULL) == -1)
+		err(1, "sigaction");
+
+	monitor_shutdown_requested = 0;
+	sent_sigterm = false;
+	sent_sigkill = false;
+	have_deadline = false;
 
 	outused = 0;
 	errused = 0;
@@ -292,7 +323,50 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 
 	while (outopen || erropen) {
 		struct pollfd pfd[2];
-		int nfd, rv, i;
+		int nfd, rv, i, timeout_ms;
+
+		if (monitor_shutdown_requested && !sent_sigterm) {
+			if (kill(-child, SIGTERM) == -1 && errno != ESRCH)
+				warn("kill(SIGTERM, -%jd)", (intmax_t)child);
+			sent_sigterm = true;
+			if (clock_gettime(CLOCK_MONOTONIC, &shutdown_deadline) == -1)
+				err(1, "clock_gettime");
+			shutdown_deadline.tv_sec += kill_grace_ms / 1000;
+			shutdown_deadline.tv_nsec += (kill_grace_ms % 1000) * 1000000L;
+			if (shutdown_deadline.tv_nsec >= 1000000000L) {
+				shutdown_deadline.tv_sec++;
+				shutdown_deadline.tv_nsec -= 1000000000L;
+			}
+			have_deadline = true;
+		}
+
+		timeout_ms = 500;
+		if (have_deadline && !sent_sigkill) {
+			if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+				err(1, "clock_gettime");
+			if (now.tv_sec > shutdown_deadline.tv_sec ||
+			    (now.tv_sec == shutdown_deadline.tv_sec &&
+			    now.tv_nsec >= shutdown_deadline.tv_nsec)) {
+				if (kill(-child, SIGKILL) == -1 && errno != ESRCH)
+					warn("kill(SIGKILL, -%jd)", (intmax_t)child);
+				sent_sigkill = true;
+				timeout_ms = 0;
+			} else {
+				long sec, nsec;
+
+				sec = shutdown_deadline.tv_sec - now.tv_sec;
+				nsec = shutdown_deadline.tv_nsec - now.tv_nsec;
+				if (nsec < 0) {
+					sec--;
+					nsec += 1000000000L;
+				}
+				timeout_ms = (int)(sec * 1000 + nsec / 1000000L);
+				if (timeout_ms < 0)
+					timeout_ms = 0;
+				if (timeout_ms > 500)
+					timeout_ms = 500;
+			}
+		}
 
 		nfd = 0;
 		if (outopen) {
@@ -306,7 +380,7 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 			nfd++;
 		}
 
-		rv = poll(pfd, (nfds_t)nfd, 500);
+		rv = poll(pfd, (nfds_t)nfd, timeout_ms);
 		if (rv < 0) {
 			if (errno == EINTR)
 				continue;
