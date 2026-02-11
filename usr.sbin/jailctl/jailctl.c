@@ -281,7 +281,7 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 	int stderr_level;
 	int status;
 
-	setproctitle("jailctl monitor jail=%s jid=%" PRIu32, name, id);
+	setproctitle("jailctl supervise jail=%s jid=%" PRIu32, name, id);
 	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
 	stderr_level = stdout_level < LOG_ERR ? stdout_level : LOG_ERR;
 
@@ -616,15 +616,11 @@ main(int argc, char *argv[])
 		return 0;
 	}
 
-	if (strcmp(argv[1], "start") == 0) {
-		char *default_cmd[] = {
-		    __UNCONST(_PATH_BSHELL), __UNCONST("/etc/rc"), NULL
-		};
+	if (strcmp(argv[1], "supervise") == 0) {
 		char **cmd;
 		int ch, priority;
 		char logtag[JAILCTL_TAG_MAX + 1];
 
-		cmd = NULL;
 		priority = LOG_DAEMON | LOG_NOTICE;
 		strlcpy(logtag, "jailctl", sizeof(logtag));
 		optind = 2;
@@ -647,10 +643,9 @@ main(int argc, char *argv[])
 			usage();
 
 		id = resolve_jail_target(argv[optind++], &ji);
-		if (optind < argc)
-			cmd = &argv[optind];
-		else
-			cmd = default_cmd;
+		if (optind >= argc)
+			errx(1, "supervise requires command [args...]");
+		cmd = &argv[optind];
 
 		jail_spawn_detached(id, ji.ji_root, ji.ji_name, logtag, cmd,
 		    LOG_FAC(priority), LOG_PRI(priority));
@@ -692,7 +687,7 @@ usage(void)
 {
 	fprintf(stderr,
 	    "usage: %s create [-c cpu-ms] [-i ipv4] [-m bytes] -n name <root>\n"
-	    "       %s start [-p pri] [-t tag] <jail-id|name> [command [args...]]\n"
+	    "       %s supervise [-p pri] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
 	    "       %s list\n",

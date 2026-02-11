@@ -40,11 +40,11 @@
 .Fl n Ar name
 .Ar root
 .Nm
-.Cm start
+.Cm supervise
 .Op Fl p Ar pri
 .Op Fl t Ar tag
 .Ar jail-id | name
-.Op command
+.Ar command
 .Op Ar args ...
 .Nm
 .Cm destroy
@@ -82,18 +82,15 @@ Restrict IPv4 socket binds inside the jail to the specified address.
 .It Fl m Ar bytes
 Set a virtual memory limit (in bytes) for processes in the jail.
 .El
-.It Cm start Op Fl p Ar pri Op Fl t Ar tag Ar jail-id | name Op command Op Ar args ...
+.It Cm supervise Op Fl p Ar pri Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
 Start a command in an existing jail selected by
 .Ar jail-id
 or
 .Ar name .
-If no command is provided,
-.Pa /bin/sh /etc/rc
-is started in the background.
 The started command's standard output and standard error are forwarded to
-host syslog by a background monitor process.
+host syslog by a background supervisor process.
 .Pp
-The optional flags control monitor logging:
+The optional flags control supervisor logging:
 .Bl -tag -width Ds
 .It Fl p Ar pri
 Set the syslog priority used for forwarded output, compatible with
@@ -111,9 +108,9 @@ If omitted,
 is used.
 .El
 .Pp
-The background monitor process is shown in process listings as
-.Dq jailctl monitor jail=<name> jid=<id>
-to distinguish it from one-shot start invocations.
+The background supervisor process is shown in process listings as
+.Dq jailctl supervise jail=<name> jid=<id>
+to distinguish it from one-shot supervise invocations.
 .It Cm destroy Ar jail-id | name
 Destroy a jail selected by
 .Ar jail-id
