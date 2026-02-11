@@ -54,7 +54,7 @@ Include that snippet from `/etc/npf.conf` and optionally set
 - The host must route `10.0.0.0/24` appropriately (loopback aliases are handled
   automatically by this script).
 - `jailctl create -i <ip>` enforces IPv4 bind restriction inside each jail.
-- `jailmgr start-jail` uses `jailctl create` followed by `jailctl start`.
+- `jailmgr start-jail` uses `jailctl create` followed by `jailctl supervise`.
 - By default, `fetch-sets` derives the set URL from `RELEASE` and
   `MACHINE_ARCH` as
   `https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets`.

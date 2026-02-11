@@ -63,7 +63,7 @@ Commands:
   prepare-all                    Prepare all jails listed in JAIL_LIST
   host-net-up                    Add host aliases (default on JAIL_HOST_IF=lo0) for all jail IPs
   host-net-down                  Remove host aliases for all jail IPs
-  start-jail <name> <ip>         Mount jail root and start jail via jailctl
+  start-jail <name> <ip>         Mount jail root and supervise jail via jailctl
   start-all                      Alias host IPs and start all jails listed in JAIL_LIST
   stop-jail <name>               Gracefully stop one jail, then destroy and unmount root
   stop-all                       Stop all jails listed in JAIL_LIST
@@ -101,7 +101,7 @@ jail_monitor_pid() {
 	name=$1
 	jid=$2
 	ps -axo pid=,command= | awk -v n="${name}" -v j="${jid}" '
-		$0 ~ "jailctl monitor jail=" n " jid=" j { print $1; exit }
+		$0 ~ "jailctl supervise jail=" n " jid=" j { print $1; exit }
 	'
 }
 
@@ -354,7 +354,7 @@ start_jail() {
 	fi
 
 	jailctl create -n "${name}" -i "${ip}" "${ROOT_DIR}"
-	jailctl start "${name}" /bin/sh /etc/rc
+	jailctl supervise "${name}" /bin/sh /etc/rc
 	echo "Started jail ${name} at ${ip}"
 }
 
