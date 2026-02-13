@@ -69,7 +69,7 @@ Commands:
   host-net-down                  Remove host aliases for all jail IPs
   start <name> [ip]              Mount jail root and supervise jail via jailctl
   start --all                    Alias host IPs and start all configured jails
-  stop <name>                    Gracefully stop one jail, then destroy and unmount root
+  stop <name>                    Stop one jail by terminating its jailctl supervisor
   stop --all                     Stop all configured jails
   npf-sync                       Generate/update NPF rdr snippet from NPF_RDR_LIST
   status                         Show jailctl list and mount status
@@ -97,11 +97,6 @@ require_tools() {
 	done
 }
 
-jail_pids() {
-	jid=$1
-	ps -axo pid=,jid= | awk -v j="${jid}" '$2==j{print $1}'
-}
-
 jail_monitor_pid() {
 	name=$1
 	jid=$2
@@ -115,26 +110,11 @@ stop_jail_processes() {
 	jid=$2
 	monitor_pid=$(jail_monitor_pid "${name}" "${jid}" || true)
 
-	# Best effort inside-jail shutdown hook.
-	jailctl exec "${jid}" /bin/sh -c 'if [ -x /etc/rc.shutdown ]; then /etc/rc.shutdown; fi' >/dev/null 2>&1 || true
+	[ -n "${monitor_pid}" ] || return
 
-	for sig in TERM KILL; do
-		pids=$(jail_pids "${jid}" | tr '\n' ' ')
-		[ -n "${pids}" ] || break
-		# shellcheck disable=SC2086
-		kill -${sig} ${pids} >/dev/null 2>&1 || true
-		for _ in 1 2 3 4 5; do
-			sleep 1
-			pids=$(jail_pids "${jid}" | tr '\n' ' ')
-			[ -z "${pids}" ] && break
-		done
-	done
-
-	if [ -n "${monitor_pid}" ]; then
-		kill -TERM "${monitor_pid}" >/dev/null 2>&1 || true
-		sleep 1
-		kill -KILL "${monitor_pid}" >/dev/null 2>&1 || true
-	fi
+	kill -TERM "${monitor_pid}" >/dev/null 2>&1 || true
+	sleep 1
+	kill -KILL "${monitor_pid}" >/dev/null 2>&1 || true
 }
 
 fetch_sets() {
