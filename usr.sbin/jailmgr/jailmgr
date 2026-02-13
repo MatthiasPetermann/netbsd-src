@@ -3,7 +3,7 @@
 # Build and manage IP-bound jailctl jails with a shared read-only base layer.
 #
 # Layout:
-#   /var/jailmgr/releases/<release>/<arch>/{base,etc}.tgz
+#   /var/jailmgr/releases/<release>/<arch>/{base,etc}.tar.xz
 #   /var/jailmgr/base/<release>-<arch>/
 #   /var/jailmgr/jails/<name>/{root,etc,var,tmp,home}
 #
@@ -26,6 +26,8 @@ JAIL_DATA_DIR=/var/jailmgr/jails
 JAIL_RELEASE_DIR=/var/jailmgr/releases
 JAIL_LIST=
 JAIL_DEFAULT_USER=user
+# Required command (with args) to supervise inside each jail, e.g. "/bin/sh /etc/rc"
+JAIL_SUPERVISE_CMD=
 
 # Host-side alias interface for jail bind IPs.
 JAIL_HOST_IF=lo0
@@ -49,16 +51,16 @@ fi
 
 BASE_LAYER="${JAIL_BASE_DIR}/${RELEASE}-${MACHINE_ARCH}"
 SET_DIR="${JAIL_RELEASE_DIR}/${RELEASE}/${MACHINE_ARCH}"
-BASE_SET="${SET_DIR}/base.tgz"
-ETC_SET="${SET_DIR}/etc.tgz"
+BASE_SET="${SET_DIR}/base.tar.xz"
+ETC_SET="${SET_DIR}/etc.tar.xz"
 
 usage() {
 	cat <<USAGE
 Usage: $0 <command> [args]
 
 Commands:
-  fetch-sets                     Download base.tgz and etc.tgz from NETBSD_MIRROR
-  build-base                     Build shared base layer from base.tgz
+  fetch-sets                     Download base.tar.xz and etc.tar.xz from NETBSD_MIRROR
+  build-base                     Build shared base layer from base.tar.xz
   prepare-jail <name> <ip>       Create jail instance directories and etc/var/tmp/home
   prepare-all                    Prepare all jails listed in JAIL_LIST
   host-net-up                    Add host aliases (default on JAIL_HOST_IF=lo0) for all jail IPs
@@ -73,6 +75,7 @@ Commands:
 
 JAIL_LIST format in ${CONF_FILE}: "name:10.0.0.1 name2:10.0.0.2"
 NPF_RDR_LIST format: "name:2221:22 name2:2222:22"
+JAIL_SUPERVISE_CMD format: "/path/to/cmd arg1 arg2" (required)
 USAGE
 }
 
@@ -140,11 +143,11 @@ fetch_sets() {
 	fetch_url="${NETBSD_MIRROR%/}"
 
 	if command -v ftp >/dev/null 2>&1; then
-		ftp -V -o "${BASE_SET}" "${fetch_url}/base.tgz"
-		ftp -V -o "${ETC_SET}" "${fetch_url}/etc.tgz"
+		ftp -V -o "${BASE_SET}" "${fetch_url}/base.tar.xz"
+		ftp -V -o "${ETC_SET}" "${fetch_url}/etc.tar.xz"
 	elif command -v curl >/dev/null 2>&1; then
-		curl -fL -o "${BASE_SET}" "${fetch_url}/base.tgz"
-		curl -fL -o "${ETC_SET}" "${fetch_url}/etc.tgz"
+		curl -fL -o "${BASE_SET}" "${fetch_url}/base.tar.xz"
+		curl -fL -o "${ETC_SET}" "${fetch_url}/etc.tar.xz"
 	else
 		echo "need ftp(1) or curl to fetch sets" >&2
 		exit 1
@@ -183,8 +186,9 @@ setup_etc() {
 	}
 
 	if [ ! -f "${ETC_DIR}/rc.conf" ]; then
-		tar -xzp -f "${ETC_SET}" -C "${ETC_DIR}"
+		tar -xzp -f "${ETC_SET}" -C "${JAIL_DIR}"
 	fi
+
 
 	mkdir -p "${ETC_DIR}/ssh"
 
@@ -196,6 +200,10 @@ setup_etc() {
 
 	if [ ! -f "${ETC_DIR}/master.passwd" ]; then
 		echo "warning: ${ETC_DIR}/master.passwd not found; user provisioning skipped" >&2
+		return
+	fi
+
+	if [ -z "${JAIL_DEFAULT_USER}" ]; then
 		return
 	fi
 
@@ -234,7 +242,10 @@ prepare_jail() {
 
 	jail_paths "${name}"
 	mkdir -p "${ROOT_DIR}" "${ETC_DIR}" "${VAR_DIR}" "${TMP_DIR}" "${HOME_DIR}" \
-		"${VAR_DIR}/run" "${VAR_DIR}/log" "${HOME_DIR}/${JAIL_DEFAULT_USER}"
+		"${VAR_DIR}/run" "${VAR_DIR}/log"
+	if [ -n "${JAIL_DEFAULT_USER}" ]; then
+		mkdir -p "${HOME_DIR}/${JAIL_DEFAULT_USER}"
+	fi
 	chmod 1777 "${TMP_DIR}"
 	setup_etc
 
@@ -337,6 +348,13 @@ npf_sync() {
 	fi
 }
 
+require_supervise_cmd() {
+	if [ -z "${JAIL_SUPERVISE_CMD}" ]; then
+		echo "JAIL_SUPERVISE_CMD must be set in ${CONF_FILE} (example: /bin/sh /etc/rc)" >&2
+		exit 1
+	fi
+}
+
 start_jail() {
 	need_root
 	require_tools
@@ -354,7 +372,10 @@ start_jail() {
 	fi
 
 	jailctl create -n "${name}" -i "${ip}" "${ROOT_DIR}"
-	jailctl supervise "${name}" /bin/sh /etc/rc
+	require_supervise_cmd
+	# shellcheck disable=SC2086
+	set -- ${JAIL_SUPERVISE_CMD}
+	jailctl supervise "${name}" "$@"
 	echo "Started jail ${name} at ${ip}"
 }
 

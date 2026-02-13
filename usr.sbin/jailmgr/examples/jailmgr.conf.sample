@@ -21,6 +21,10 @@ JAIL_LIST="jail1:10.0.0.1 jail2:10.0.0.2"
 # User to create inside each jail (if not already present in master.passwd)
 JAIL_DEFAULT_USER=user
 
+# Required: command (and optional args) to supervise in each jail.
+# Example starts the normal NetBSD in-jail boot sequence:
+JAIL_SUPERVISE_CMD="/bin/sh /etc/rc"
+
 # Optional NPF integration for forwarding host interface ports to jails.
 NPF_ENABLE=NO
 NPF_EXT_IF=wm0

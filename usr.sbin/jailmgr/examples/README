@@ -1,7 +1,7 @@
 # jailmgr (jailctl helper)
 
 `jailmgr` provisions and runs multiple IP-bound `jailctl` jails using
-one shared read-only base layer (from `base.tgz`) and per-jail writable
+one shared read-only base layer (from `base.tar.xz`) and per-jail writable
 state (`etc`, `var`, `tmp`, `home`).
 
 New: The script also configures host-side IP aliases automatically
@@ -15,7 +15,7 @@ New: The script also configures host-side IP aliases automatically
    install -m 0755 jailmgr /usr/sbin/jailmgr
    ```
 
-2. Create `/etc/jailmgr.conf` from the sample and customize.
+2. Create `/etc/jailmgr.conf` from the sample and customize (including required `JAIL_SUPERVISE_CMD`).
 
 3. Download sets and build the base layer:
 
