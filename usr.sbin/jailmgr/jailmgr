@@ -214,6 +214,9 @@ setup_etc() {
 }
 
 mount_jail_root() {
+	# Ensure mount targets exist in the base layer before mounting it read-only.
+	mkdir -p "${BASE_LAYER}/home"
+
 	if mount | awk -v p="on ${ROOT_DIR} " 'index($0,p){found=1} END{exit !found}'; then
 		return
 	fi
