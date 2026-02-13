@@ -94,11 +94,10 @@ and then start all jails found under
 with a
 .Pa jail.conf .
 .It Cm stop Ar name
-Request graceful shutdown for processes in the jail named
-.Ar name ,
-terminate any remaining jail processes and the corresponding
+Terminate the corresponding
 .Xr jailctl 8
-monitor process if needed,
+supervise process for the jail named
+.Ar name ,
 then destroy the jail by name through
 .Xr jailctl 8
 and unmount its root composition.
