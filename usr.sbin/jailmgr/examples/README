@@ -67,4 +67,4 @@ Include that snippet from `/etc/npf.conf` and optionally set
   echo 'jailmgr=YES' >> /etc/rc.conf
   ```
 
-- Local per-jail `/dev` setup is enabled by default (`JAIL_LOCAL_DEV=YES`) and can be tuned with `JAIL_DEV_SIZE` and `JAIL_DEVICES`.
+- Local per-jail `/dev` setup is enabled by default (`JAIL_LOCAL_DEV=YES`) and can be tuned with `JAIL_DEV_SIZE` and `JAIL_DEVICES` (default: `"std ptm"`).

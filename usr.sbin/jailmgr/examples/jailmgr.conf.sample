@@ -28,7 +28,7 @@ JAIL_SUPERVISE_CMD="/bin/sh /etc/rc"
 # Per-jail local /dev setup (tmpfs + MAKEDEV)
 JAIL_LOCAL_DEV=YES
 JAIL_DEV_SIZE=8m
-JAIL_DEVICES="console null zero tty ptm random urandom pty0 pty1 pty2 pty3"
+JAIL_DEVICES="std ptm"
 
 # Optional NPF integration for forwarding host interface ports to jails.
 NPF_ENABLE=NO
