@@ -29,6 +29,11 @@ JAIL_DEFAULT_USER=user
 # Required command (with args) to supervise inside each jail, e.g. "/bin/sh /etc/rc"
 JAIL_SUPERVISE_CMD=
 
+# Per-jail local /dev setup.
+JAIL_LOCAL_DEV=YES
+JAIL_DEV_SIZE=8m
+JAIL_DEVICES="console null zero tty ptm random urandom pty0 pty1 pty2 pty3"
+
 # Host-side alias interface for jail bind IPs.
 JAIL_HOST_IF=lo0
 
@@ -177,6 +182,31 @@ jail_paths() {
 	VAR_DIR="${JAIL_DIR}/var"
 	TMP_DIR="${JAIL_DIR}/tmp"
 	HOME_DIR="${JAIL_DIR}/home"
+	DEV_DIR="${JAIL_DIR}/dev"
+}
+
+setup_local_dev() {
+	if [ "${JAIL_LOCAL_DEV}" != "YES" ]; then
+		return
+	fi
+
+	mkdir -p "${ROOT_DIR}/dev"
+	if ! mount | awk -v p="on ${ROOT_DIR}/dev " 'index($0,p){found=1} END{exit !found}'; then
+		mount -t tmpfs -o "size=${JAIL_DEV_SIZE}" tmpfs "${ROOT_DIR}/dev"
+	fi
+
+	if [ -f "${ROOT_DIR}/dev/MAKEDEV" ]; then
+		:
+	elif [ -f /dev/MAKEDEV ]; then
+		cp /dev/MAKEDEV "${ROOT_DIR}/dev/MAKEDEV"
+		chmod 555 "${ROOT_DIR}/dev/MAKEDEV"
+	else
+		echo "warning: MAKEDEV not found; skipping /dev node creation" >&2
+		return
+	fi
+
+	# shellcheck disable=SC2086
+	(cd "${ROOT_DIR}/dev" && sh ./MAKEDEV ${JAIL_DEVICES})
 }
 
 setup_etc() {
@@ -226,10 +256,11 @@ mount_jail_root() {
 	mount -t null "${VAR_DIR}" "${ROOT_DIR}/var"
 	mount -t null "${TMP_DIR}" "${ROOT_DIR}/tmp"
 	mount -t null "${HOME_DIR}" "${ROOT_DIR}/home"
+	setup_local_dev
 }
 
 umount_jail_root() {
-	for d in home tmp var etc ""; do
+	for d in dev home tmp var etc ""; do
 		mp="${ROOT_DIR}${d:+/$d}"
 		if mount | awk -v p="on ${mp} " 'index($0,p){found=1} END{exit !found}'; then
 			umount "${mp}"
@@ -245,7 +276,7 @@ prepare_jail() {
 
 	jail_paths "${name}"
 	mkdir -p "${ROOT_DIR}" "${ETC_DIR}" "${VAR_DIR}" "${TMP_DIR}" "${HOME_DIR}" \
-		"${VAR_DIR}/run" "${VAR_DIR}/log"
+		"${DEV_DIR}" "${VAR_DIR}/run" "${VAR_DIR}/log"
 	if [ -n "${JAIL_DEFAULT_USER}" ]; then
 		mkdir -p "${HOME_DIR}/${JAIL_DEFAULT_USER}"
 	fi
