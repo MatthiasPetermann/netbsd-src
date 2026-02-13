@@ -67,10 +67,12 @@ Commands:
   prepare <name> <ip>            Create jail instance directories and persist jail.conf
   host-net-up                    Add host aliases (default on JAIL_HOST_IF=lo0) for all jail IPs
   host-net-down                  Remove host aliases for all jail IPs
-  start <name> [ip]              Mount jail root and supervise jail via jailctl
+  start <name>                   Mount jail root and supervise jail via jailctl
   start --all                    Alias host IPs and start all configured jails
   stop <name>                    Stop one jail by terminating its jailctl supervisor
   stop --all                     Stop all configured jails
+  restart <name>                 Stop and start one jail
+  restart --all                  Stop and start all configured jails
   npf-sync                       Generate/update NPF rdr snippet from NPF_RDR_LIST
   status                         Show jailctl list and mount status
   gen-rc [/etc/rc.d/jailmgr]    Emit rc.d wrapper script
@@ -138,6 +140,27 @@ fetch_sets() {
 	fi
 
 	echo "Downloaded sets to ${SET_DIR}"
+}
+
+ensure_secmodel_jail() {
+	need_root
+
+	if ! modstat | awk '
+		$0 ~ /(^|[[:space:]])secmodel_jail([[:space:]]|$)/ { found=1 }
+		END { exit !found }
+	'; then
+		modload secmodel_jail
+		echo "Loaded secmodel_jail module"
+	fi
+
+	if [ ! -f /etc/modules ]; then
+		: > /etc/modules
+	fi
+
+	if ! grep -Eq '^[[:space:]]*secmodel_jail([[:space:]]|$)' /etc/modules; then
+		echo "secmodel_jail" >> /etc/modules
+		echo "Added secmodel_jail to /etc/modules"
+	fi
 }
 
 build_base() {
@@ -427,11 +450,7 @@ start_jail() {
 	need_root
 	require_tools
 	name=$1
-	ip=${2:-}
 
-	if [ -n "${ip}" ]; then
-		prepare_jail "${name}" "${ip}"
-	fi
 	load_jail_conf "${name}"
 	ip=${JAIL_IPV4}
 	if [ -n "${JAIL_SUPERVISE_CMD_LOCAL:-}" ]; then
@@ -484,6 +503,18 @@ start_all() {
 
 stop_all() {
 	for_each_jail_conf stop_jail
+}
+
+restart_jail() {
+	name=$1
+
+	stop_jail "${name}"
+	start_jail "${name}"
+}
+
+restart_all() {
+	stop_all
+	start_all
 }
 
 status() {
@@ -542,6 +573,7 @@ RC
 cmd=${1:-}
 case "${cmd}" in
 	bootstrap)
+		ensure_secmodel_jail
 		fetch_sets
 		build_base
 		;;
@@ -560,8 +592,6 @@ case "${cmd}" in
 			start_all
 		elif [ $# -eq 2 ]; then
 			start_jail "$2"
-		elif [ $# -eq 3 ]; then
-			start_jail "$2" "$3"
 		else
 			usage
 			exit 1
@@ -572,6 +602,16 @@ case "${cmd}" in
 			stop_all
 		elif [ $# -eq 2 ]; then
 			stop_jail "$2"
+		else
+			usage
+			exit 1
+		fi
+		;;
+	restart)
+		if [ $# -eq 2 ] && [ "$2" = "--all" ]; then
+			restart_all
+		elif [ $# -eq 2 ]; then
+			restart_jail "$2"
 		else
 			usage
 			exit 1
