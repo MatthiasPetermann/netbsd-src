@@ -19,7 +19,7 @@ It is designed for setups that use:
 .Bl -bullet -compact
 .It
 a shared, read-only base filesystem extracted from
-.Pa base.tgz ,
+.Pa base.tar.xz ,
 .It
 per-jail writable directories for
 .Pa /etc ,
@@ -47,15 +47,15 @@ The following commands are supported:
 .Bl -tag -width "prepare-jail name ip"
 .It Cm fetch-sets
 Download
-.Pa base.tgz
+.Pa base.tar.xz
 and
-.Pa etc.tgz
+.Pa etc.tar.xz
 from
 .Ev NETBSD_MIRROR
 into the configured release directory.
 .It Cm build-base
 Extract
-.Pa base.tgz
+.Pa base.tar.xz
 into the configured shared base layer directory.
 .It Cm prepare-jail Ar name Ar ip
 Create directories and metadata for one jail:
@@ -66,7 +66,7 @@ Create directories and metadata for one jail:
 and
 .Pa home .
 If necessary,
-.Pa etc.tgz
+.Pa etc.tar.xz
 is extracted into the jail-local
 .Pa etc
 copy.
@@ -153,6 +153,11 @@ Whitespace-separated list of
 entries.
 .It Ev JAIL_DEFAULT_USER
 User account to ensure exists inside each prepared jail.
+.It Ev JAIL_SUPERVISE_CMD
+Required command (with optional arguments) passed to
+.Xr jailctl 8
+.Cm supervise
+after jail creation.
 .It Ev JAIL_HOST_IF
 Host interface for alias management (commonly
 .Dq lo0 ) .
