@@ -1,5 +1,5 @@
 ." $NetBSD$
-.Dd February 8, 2026
+.Dd February 13, 2026
 .Dt JAILMGR 8
 .Os
 .Sh NAME
@@ -45,20 +45,18 @@ environment variable.
 Most commands require superuser privileges.
 .Sh COMMANDS
 The following commands are supported:
-.Bl -tag -width "prepare-jail name ip"
-.It Cm fetch-sets
+.Bl -tag -width "prepare name ip"
+.It Cm bootstrap
 Download
 .Pa base.tar.xz
 and
 .Pa etc.tar.xz
 from
 .Ev NETBSD_MIRROR
-into the configured release directory.
-.It Cm build-base
-Extract
+and extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
-.It Cm prepare-jail Ar name Ar ip
+.It Cm prepare Ar name Ar ip
 Create directories and metadata for one jail:
 .Pa root ,
 .Pa etc ,
@@ -72,27 +70,30 @@ If necessary,
 is extracted into the jail-local
 .Pa etc
 copy.
-.It Cm prepare-all
-Run
-.Cm prepare-jail
-for all entries in
-.Ev JAIL_LIST .
+A jail-local shell configuration file is written to
+.Pa ${JAIL_DATA_DIR}/name/jail.conf .
 .It Cm host-net-up
-Add host-side IPv4 aliases for all jail addresses in
-.Ev JAIL_LIST
+Add host-side IPv4 aliases for all jails with a
+.Pa jail.conf
 on interface
 .Ev JAIL_HOST_IF .
 .It Cm host-net-down
 Remove those host-side IPv4 aliases.
-.It Cm start-jail Ar name Ar ip
+.It Cm start Ar name Op Ar ip
 Mount the composed jail root and start the jail with
 .Xr jailctl 8 .
-.It Cm start-all
+If
+.Ar ip
+is omitted, the value is loaded from
+.Pa jail.conf .
+.It Cm start Cm --all
 Run
 .Cm host-net-up
-and then start all jails in
-.Ev JAIL_LIST .
-.It Cm stop-jail Ar name
+and then start all jails found under
+.Ev JAIL_DATA_DIR
+with a
+.Pa jail.conf .
+.It Cm stop Ar name
 Request graceful shutdown for processes in the jail named
 .Ar name ,
 terminate any remaining jail processes and the corresponding
@@ -101,9 +102,11 @@ monitor process if needed,
 then destroy the jail by name through
 .Xr jailctl 8
 and unmount its root composition.
-.It Cm stop-all
-Stop and unmount all jails listed in
-.Ev JAIL_LIST .
+.It Cm stop Cm --all
+Stop and unmount all jails found under
+.Ev JAIL_DATA_DIR
+with a
+.Pa jail.conf .
 .It Cm npf-sync
 Generate (or update) an NPF redirection snippet from
 .Ev NPF_RDR_LIST
@@ -149,10 +152,6 @@ Directory containing extracted shared base layers.
 Directory containing per-jail writable state.
 .It Ev JAIL_RELEASE_DIR
 Directory containing downloaded set archives.
-.It Ev JAIL_LIST
-Whitespace-separated list of
-.Dq name:IPv4
-entries.
 .It Ev JAIL_DEFAULT_USER
 User account to ensure exists inside each prepared jail.
 .It Ev JAIL_SUPERVISE_CMD
@@ -160,6 +159,10 @@ Required command (with optional arguments) passed to
 .Xr jailctl 8
 .Cm supervise
 after jail creation.
+Jails may override this with
+.Ev JAIL_SUPERVISE_CMD_LOCAL
+in their
+.Pa jail.conf .
 .It Ev JAIL_HOST_IF
 Host interface for alias management (commonly
 .Dq lo0 ) .
@@ -211,10 +214,10 @@ Prepare and start all configured jails:
 .Bd -literal -offset indent
 # cp /usr/share/examples/jailmgr/jailmgr.conf.sample /etc/jailmgr.conf
 # vi /etc/jailmgr.conf
-# jailmgr fetch-sets
-# jailmgr build-base
-# jailmgr prepare-all
-# jailmgr start-all
+# jailmgr bootstrap
+# jailmgr prepare jail1 10.0.0.1
+# jailmgr prepare jail2 10.0.0.2
+# jailmgr start --all
 .Ed
 .Pp
 Generate NPF rules for configured port forwards:
