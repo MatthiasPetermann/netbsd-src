@@ -25,8 +25,9 @@ per-jail writable directories for
 .Pa /etc ,
 .Pa /var ,
 .Pa /tmp ,
-and
 .Pa /home ,
+and a jail-local
+.Pa /dev ,
 and
 .It
 IP-based jail naming and lifecycle management via
@@ -63,8 +64,9 @@ Create directories and metadata for one jail:
 .Pa etc ,
 .Pa var ,
 .Pa tmp ,
+.Pa home ,
 and
-.Pa home .
+.Pa dev .
 If necessary,
 .Pa etc.tar.xz
 is extracted into the jail-local
@@ -161,6 +163,23 @@ after jail creation.
 .It Ev JAIL_HOST_IF
 Host interface for alias management (commonly
 .Dq lo0 ) .
+.It Ev JAIL_LOCAL_DEV
+When set to
+.Dq YES
+(default), mount a jail-local tmpfs on
+.Pa /dev
+and populate a minimal device set with
+.Xr MAKEDEV 8 .
+.It Ev JAIL_DEV_SIZE
+Size argument used for the tmpfs mounted at jail-local
+.Pa /dev
+(default
+.Dq 8m ) .
+.It Ev JAIL_DEVICES
+Whitespace-separated list of
+.Xr MAKEDEV 8
+targets used to populate jail-local
+.Pa /dev .
 .It Ev NPF_ENABLE
 Enable NPF integration when set to
 .Dq YES .

@@ -2,7 +2,7 @@
 
 `jailmgr` provisions and runs multiple IP-bound `jailctl` jails using
 one shared read-only base layer (from `base.tar.xz`) and per-jail writable
-state (`etc`, `var`, `tmp`, `home`).
+state (`etc`, `var`, `tmp`, `home`) plus a local per-jail `/dev` mounted from tmpfs.
 
 New: The script also configures host-side IP aliases automatically
 (defaulting to `lo0`) and can optionally generate NPF forwarding rules.
@@ -66,3 +66,5 @@ Include that snippet from `/etc/npf.conf` and optionally set
   /usr/sbin/jailmgr gen-rc /etc/rc.d/jailmgr
   echo 'jailmgr=YES' >> /etc/rc.conf
   ```
+
+- Local per-jail `/dev` setup is enabled by default (`JAIL_LOCAL_DEV=YES`) and can be tuned with `JAIL_DEV_SIZE` and `JAIL_DEVICES`.
