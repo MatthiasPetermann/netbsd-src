@@ -53,7 +53,16 @@ and
 .Pa etc.tar.xz
 from
 .Ev NETBSD_MIRROR
-and extract
+after ensuring the
+.Li secmodel_jail
+kernel module is loaded,
+and persist
+.Li secmodel_jail
+in
+.Pa /etc/modules
+for future boots.
+Then
+extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
 .It Cm prepare Ar name Ar ip
@@ -79,12 +88,9 @@ on interface
 .Ev JAIL_HOST_IF .
 .It Cm host-net-down
 Remove those host-side IPv4 aliases.
-.It Cm start Ar name Op Ar ip
+.It Cm start Ar name
 Mount the composed jail root and start the jail with
-.Xr jailctl 8 .
-If
-.Ar ip
-is omitted, the value is loaded from
+.Xr jailctl 8 , using the IPv4 address stored in
 .Pa jail.conf .
 .It Cm start Cm --all
 Run
@@ -106,6 +112,20 @@ Stop and unmount all jails found under
 .Ev JAIL_DATA_DIR
 with a
 .Pa jail.conf .
+.It Cm restart Ar name
+Run
+.Cm stop
+for jail
+.Ar name
+and then
+.Cm start
+for the same jail, using the IPv4 address from
+.Pa jail.conf .
+.It Cm restart Cm --all
+Run
+.Cm stop Cm --all
+followed by
+.Cm start Cm --all .
 .It Cm npf-sync
 Generate (or update) an NPF redirection snippet from
 .Ev NPF_RDR_LIST
