@@ -153,13 +153,13 @@ ensure_secmodel_jail() {
 		echo "Loaded secmodel_jail module"
 	fi
 
-	if [ ! -f /etc/modules ]; then
-		: > /etc/modules
+	if [ ! -f /etc/modules.conf ]; then
+		: > /etc/modules.conf
 	fi
 
-	if ! grep -Eq '^[[:space:]]*secmodel_jail([[:space:]]|$)' /etc/modules; then
-		echo "secmodel_jail" >> /etc/modules
-		echo "Added secmodel_jail to /etc/modules"
+	if ! grep -Eq '^[[:space:]]*secmodel_jail([[:space:]]|$)' /etc/modules.conf; then
+		echo "secmodel_jail" >> /etc/modules.conf
+		echo "Added secmodel_jail to /etc/modules.conf"
 	fi
 }
 
