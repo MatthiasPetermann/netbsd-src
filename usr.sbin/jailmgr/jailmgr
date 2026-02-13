@@ -505,7 +505,7 @@ gen_rc() {
 
 name="jailmgr"
 rcvar=jailmgr
-command="/usr/local/sbin/jailmgr"
+command="/usr/sbin/jailmgr"
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
