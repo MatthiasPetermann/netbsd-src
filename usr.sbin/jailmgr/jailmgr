@@ -100,7 +100,7 @@ require_tools() {
 jail_monitor_pid() {
 	name=$1
 	jid=$2
-	ps -axo pid=,command= | awk -v n="${name}" -v j="${jid}" '
+	ps -axo pid,command | awk -v n="${name}" -v j="${jid}" '
 		$0 ~ "jailctl supervise jail=" n " jid=" j { print $1; exit }
 	'
 }
