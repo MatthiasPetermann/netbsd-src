@@ -20,15 +20,16 @@ New: The script also configures host-side IP aliases automatically
 3. Download sets and build the base layer:
 
    ```sh
-   /usr/sbin/jailmgr fetch-sets
-   /usr/sbin/jailmgr build-base
+   /usr/sbin/jailmgr bootstrap
    ```
 
-4. Prepare and start all jails (adds aliases on `JAIL_HOST_IF`, default `lo0`):
+4. Prepare jails (this writes `${JAIL_DATA_DIR}/<name>/jail.conf`) and start all jails
+   (adds aliases on `JAIL_HOST_IF`, default `lo0`):
 
    ```sh
-   /usr/sbin/jailmgr prepare-all
-   /usr/sbin/jailmgr start-all
+   /usr/sbin/jailmgr prepare jail1 10.0.0.1
+   /usr/sbin/jailmgr prepare jail2 10.0.0.2
+   /usr/sbin/jailmgr start --all
    ```
 
 5. Verify SSH reachability from the host:
@@ -54,8 +55,8 @@ Include that snippet from `/etc/npf.conf` and optionally set
 - The host must route `10.0.0.0/24` appropriately (loopback aliases are handled
   automatically by this script).
 - `jailctl create -i <ip>` enforces IPv4 bind restriction inside each jail.
-- `jailmgr start-jail` uses `jailctl create` followed by `jailctl supervise`.
-- By default, `fetch-sets` derives the set URL from `RELEASE` and
+- `jailmgr start` uses `jailctl create` followed by `jailctl supervise`.
+- By default, `bootstrap` derives the set URL from `RELEASE` and
   `MACHINE_ARCH` as
   `https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets`.
   You can override it with `NETBSD_MIRROR`.
