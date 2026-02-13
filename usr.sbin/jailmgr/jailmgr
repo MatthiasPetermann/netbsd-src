@@ -110,7 +110,9 @@ stop_jail_processes() {
 	jid=$2
 	monitor_pid=$(jail_monitor_pid "${name}" "${jid}" || true)
 
-	[ -n "${monitor_pid}" ] || return
+	# A jail can be alive without an active supervise process (e.g. it already
+	# exited). In that case we still want stop_jail() to continue with destroy.
+	[ -n "${monitor_pid}" ] || return 0
 
 	kill -TERM "${monitor_pid}" >/dev/null 2>&1 || true
 	sleep 1
@@ -450,7 +452,9 @@ start_jail() {
 	require_supervise_cmd
 	# shellcheck disable=SC2086
 	set -- ${JAIL_SUPERVISE_CMD}
-	jailctl supervise "${name}" "$@"
+	# Start under nohup so rc(8)/run_rc_command SIGHUP does not terminate
+	# the jailctl supervisor right after boot-time startup.
+	nohup jailctl supervise "${name}" "$@" >/dev/null 2>&1
 	echo "Started jail ${name} at ${ip}"
 }
 
