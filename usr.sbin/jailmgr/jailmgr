@@ -192,7 +192,7 @@ setup_local_dev() {
 
 	mkdir -p "${ROOT_DIR}/dev"
 	if ! mount | awk -v p="on ${ROOT_DIR}/dev " 'index($0,p){found=1} END{exit !found}'; then
-		mount -t tmpfs -o "size=${JAIL_DEV_SIZE}" tmpfs "${ROOT_DIR}/dev"
+		mount -t tmpfs -s "${JAIL_DEV_SIZE}" tmpfs "${ROOT_DIR}/dev"
 	fi
 
 	if [ -f "${ROOT_DIR}/dev/MAKEDEV" ]; then
