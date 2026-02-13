@@ -274,7 +274,7 @@ setup_etc() {
 
 	if ! awk -F: -v u="${JAIL_DEFAULT_USER}" '$1==u{found=1} END{exit !found}' "${ETC_DIR}/master.passwd"; then
 		echo "${JAIL_DEFAULT_USER}:*:1000:1000::0:0:Jail User:/home/${JAIL_DEFAULT_USER}:/bin/ksh" >> "${ETC_DIR}/master.passwd"
-		pwd_mkdb -d "${ETC_DIR}" "${ETC_DIR}/master.passwd"
+		pwd_mkdb -d "${JAIL_DIR}" "${ETC_DIR}/master.passwd"
 	fi
 }
 
