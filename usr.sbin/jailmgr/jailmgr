@@ -32,7 +32,7 @@ JAIL_SUPERVISE_CMD=
 # Per-jail local /dev setup.
 JAIL_LOCAL_DEV=YES
 JAIL_DEV_SIZE=8m
-JAIL_DEVICES="console null zero tty ptm random urandom pty0 pty1 pty2 pty3"
+JAIL_DEVICES="std ptm"
 
 # Host-side alias interface for jail bind IPs.
 JAIL_HOST_IF=lo0
