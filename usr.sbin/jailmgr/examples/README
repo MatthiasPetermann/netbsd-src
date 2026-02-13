@@ -39,8 +39,8 @@ It can also:
    During bootstrap, `jailmgr` ensures:
 
    - module `secmodel_jail` is loaded (`modload secmodel_jail` when needed),
-   - `/etc/modules` exists,
-   - `/etc/modules` contains a `secmodel_jail` entry for reboot persistence.
+   - `/etc/modules.conf` exists,
+   - `/etc/modules.conf` contains a `secmodel_jail` entry for reboot persistence.
 
 4. Prepare each jail (writes `${JAIL_DATA_DIR}/<name>/jail.conf`):
 
