@@ -471,9 +471,11 @@ start_jail() {
 	require_supervise_cmd
 	# shellcheck disable=SC2086
 	set -- ${JAIL_SUPERVISE_CMD}
-	# Start under nohup so rc(8)/run_rc_command SIGHUP does not terminate
-	# the jailctl supervisor right after boot-time startup.
-	nohup jailctl supervise "${name}" "$@" >/dev/null 2>&1
+	# Start under nohup *and* in the background so rc(8)/run_rc_command does
+	# not keep it as the rc script foreground process.  Otherwise the
+	# supervisor can be tied to rc script lifetime and disappear once startup
+	# handling completes.
+	nohup jailctl supervise "${name}" "$@" >/dev/null 2>&1 &
 	echo "Started jail ${name} at ${ip}"
 }
 
