@@ -12,7 +12,7 @@ It uses one shared read-only base layer (from `base.tar.xz`) and per-jail writab
 It can also:
 
 - manage host-side IP aliases on `JAIL_HOST_IF` (default `lo0`), and
-- generate optional NPF `rdr` rules.
+- generate optional NPF `map` (egress NAT) and `rdr` rules.
 
 ## Important command semantics
 
@@ -71,8 +71,19 @@ If `NPF_ENABLE=YES`, run:
 /usr/sbin/jailmgr npf-sync
 ```
 
-This writes `NPF_CONF_SNIPPET` with `rdr` rules from `NPF_RDR_LIST`.
+This writes `NPF_CONF_SNIPPET` with:
+
+- per-jail egress NAT (`map`) rules for each configured jail IP (when `NPF_NAT_ENABLE=YES`), and
+- `rdr` rules from each jail's `JAIL_NPF_RDR_LIST` in `${JAIL_DATA_DIR}/<name>/jail.conf`.
+
 Include that snippet from `/etc/npf.conf` and optionally set `NPF_AUTO_RELOAD=YES`.
+
+Per-jail `rdr` format in `jail.conf`:
+
+```sh
+JAIL_NPF_RDR_LIST="2221:22 8080:80"
+```
+
 
 ## Notes
 
