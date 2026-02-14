@@ -53,6 +53,9 @@ and
 .Pa etc.tar.xz
 from
 .Ev NETBSD_MIRROR
+and create a default
+.Pa /etc/jailmgr.conf
+if missing,
 after ensuring the
 .Li secmodel_jail
 kernel module is loaded,
@@ -91,6 +94,7 @@ Start all jails found under
 .Ev JAIL_DATA_DIR
 with a
 .Pa jail.conf .
+If one jail fails to start, processing continues with the next jail.
 .It Cm stop Ar name
 Terminate the corresponding
 .Xr jailctl 8
@@ -181,6 +185,16 @@ Whitespace-separated list of
 .Xr MAKEDEV 8
 targets used to populate jail-local
 .Pa /dev .
+.It Ev JAIL_PTYFS
+When set to
+.Dq YES
+(default), mount
+.Xr ptyfs 5
+at
+.Pa /dev/pts
+inside each jail-local
+.Pa /dev
+to support pseudo terminals.
 .It Ev JAIL_PORTS
 Per-jail comma-separated list of allowed bind ports stored in each jail's
 .Pa jail.conf .
