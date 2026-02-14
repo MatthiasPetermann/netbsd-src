@@ -30,14 +30,13 @@ JAIL_LOCAL_DEV=YES
 JAIL_DEV_SIZE=8m
 JAIL_DEVICES="std ptm"
 
-# Optional NPF integration for forwarding host interface ports to jails.
+# Optional NPF integration for NAT and forwarding host interface ports to jails.
 NPF_ENABLE=NO
 NPF_EXT_IF=wm0
 NPF_CONF_SNIPPET=/etc/npf-jailmgr.conf
 NPF_AUTO_RELOAD=NO
+# Generate per-jail egress NAT rules (map) when running npf-sync.
+NPF_NAT_ENABLE=YES
 
-# Format: "name:host_port:jail_port name2:host_port:jail_port ..."
-# Example forwards:
-# - wm0:2221 -> 10.0.0.1:22 (jail1)
-# - wm0:2222 -> 10.0.0.2:22 (jail2)
-NPF_RDR_LIST="jail1:2221:22 jail2:2222:22"
+# Per-jail jail.conf can set:
+#   JAIL_NPF_RDR_LIST="2221:22 8080:80"

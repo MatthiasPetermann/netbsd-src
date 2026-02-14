@@ -127,10 +127,18 @@ Run
 followed by
 .Cm start Cm --all .
 .It Cm npf-sync
-Generate (or update) an NPF redirection snippet from
-.Ev NPF_RDR_LIST
-and write it to
+Generate (or update) an NPF snippet and write it to
 .Ev NPF_CONF_SNIPPET .
+When
+.Ev NPF_NAT_ENABLE
+is
+.Dq YES ,
+egress NAT rules are generated for each configured jail IP
+.Pq one Li map rule per jail .
+Additionally, redirection rules are generated from each jail's
+.Ev JAIL_NPF_RDR_LIST
+value in
+.Pa jail.conf .
 If
 .Ev NPF_AUTO_RELOAD
 is
@@ -214,10 +222,29 @@ Path of generated NPF rule snippet.
 .It Ev NPF_AUTO_RELOAD
 Reload NPF after snippet updates when set to
 .Dq YES .
-.It Ev NPF_RDR_LIST
-Whitespace-separated list of
-.Dq name:host_port:jail_port
-forwarding entries.
+.It Ev NPF_NAT_ENABLE
+When set to
+.Dq YES
+(default),
+.Nm npf-sync
+adds per-jail egress NAT rules of the form:
+.Dq Li map on $NPF_EXT_IF inet from $JAIL_IPV4/32 to any -> ($NPF_EXT_IF) .
+Set to
+.Dq NO
+to disable NAT rule generation.
+.It Ev JAIL_NPF_RDR_LIST
+Per-jail forwarding entries stored in each jail's
+.Pa jail.conf ,
+using a whitespace-separated list of
+.Dq host_port:jail_port
+pairs.
+These entries are consumed by
+.Cm npf-sync
+to generate
+.Li rdr
+rules for that jail's
+.Ev JAIL_IPV4
+address.
 .El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
