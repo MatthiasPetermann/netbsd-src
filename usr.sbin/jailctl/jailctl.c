@@ -307,8 +307,16 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 	sigemptyset(&sa.sa_mask);
 	if (sigaction(SIGTERM, &sa, NULL) == -1 ||
 	    sigaction(SIGINT, &sa, NULL) == -1 ||
-	    sigaction(SIGHUP, &sa, NULL) == -1 ||
 	    sigaction(SIGQUIT, &sa, NULL) == -1)
+		err(1, "sigaction");
+
+	/*
+	 * Keep supervise mode detached from caller terminal/session lifetime.
+	 * If started via rc(8), startup completion can trigger SIGHUP delivery
+	 * to background jobs; treating SIGHUP as shutdown would stop the jail.
+	 */
+	sa.sa_handler = SIG_IGN;
+	if (sigaction(SIGHUP, &sa, NULL) == -1)
 		err(1, "sigaction");
 
 	monitor_shutdown_requested = 0;
