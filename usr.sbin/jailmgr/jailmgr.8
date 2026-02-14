@@ -30,7 +30,7 @@ and a jail-local
 .Pa /dev ,
 and
 .It
-IP-based jail naming and lifecycle management via
+optional IPv4-bound jail naming and lifecycle management via
 .Xr jailctl 8 .
 .El
 .Pp
@@ -45,7 +45,7 @@ environment variable.
 Most commands require superuser privileges.
 .Sh COMMANDS
 The following commands are supported:
-.Bl -tag -width "prepare name ip"
+.Bl -tag -width "prepare name [ip]"
 .It Cm bootstrap
 Download
 .Pa base.tar.xz
@@ -65,7 +65,7 @@ Then
 extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
-.It Cm prepare Ar name Ar ip
+.It Cm prepare Ar name Op Ar ip
 Create directories and metadata for one jail:
 .Pa root ,
 .Pa etc ,
@@ -90,8 +90,11 @@ on interface
 Remove those host-side IPv4 aliases.
 .It Cm start Ar name
 Mount the composed jail root and start the jail with
-.Xr jailctl 8 , using the IPv4 address stored in
+.Xr jailctl 8 , using the optional IPv4 address stored in
 .Pa jail.conf .
+When no IPv4 is set, the jail is created without
+.Fl i
+binding restrictions.
 .It Cm start Cm --all
 Run
 .Cm host-net-up
@@ -119,7 +122,7 @@ for jail
 .Ar name
 and then
 .Cm start
-for the same jail, using the IPv4 address from
+for the same jail, using the optional IPv4 address from
 .Pa jail.conf .
 .It Cm restart Cm --all
 Run
@@ -133,7 +136,8 @@ When
 .Ev NPF_NAT_ENABLE
 is
 .Dq YES ,
-egress NAT rules are generated for each configured jail IP
+egress NAT rules are generated for each jail with a configured
+.Ev JAIL_IPV4
 .Pq one Li map rule per jail .
 Additionally, redirection rules are generated from each jail's
 .Ev JAIL_NPF_RDR_LIST
@@ -245,6 +249,11 @@ to generate
 rules for that jail's
 .Ev JAIL_IPV4
 address.
+If
+.Ev JAIL_IPV4
+is empty, per-jail
+.Li rdr
+rule generation is skipped.
 .El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
@@ -262,7 +271,7 @@ Prepare and start all configured jails:
 # vi /etc/jailmgr.conf
 # jailmgr bootstrap
 # jailmgr prepare jail1 10.0.0.1
-# jailmgr prepare jail2 10.0.0.2
+# jailmgr prepare jail2              # no per-jail IPv4 bind limit
 # jailmgr start --all
 .Ed
 .Pp

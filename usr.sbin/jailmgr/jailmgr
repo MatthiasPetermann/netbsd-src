@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Build and manage IP-bound jailctl jails with a shared read-only base layer.
+# Build and manage jailctl jails with a shared read-only base layer.
 #
 # Layout:
 #   /var/jailmgr/releases/<release>/<arch>/{base,etc}.tar.xz
@@ -64,7 +64,7 @@ Usage: $0 <command> [args]
 
 Commands:
   bootstrap                      Download sets and build shared base layer
-  prepare <name> <ip>            Create jail instance directories and persist jail.conf
+  prepare <name> [ip]            Create jail instance directories and persist jail.conf
   host-net-up                    Add host aliases (default on JAIL_HOST_IF=lo0) for all jail IPs
   host-net-down                  Remove host aliases for all jail IPs
   start <name>                   Mount jail root and supervise jail via jailctl
@@ -193,7 +193,7 @@ load_jail_conf() {
 	name=$1
 	jail_paths "${name}"
 	if [ ! -r "${JAIL_CONF}" ]; then
-		echo "missing ${JAIL_CONF}; run prepare ${name} <ip> first" >&2
+		echo "missing ${JAIL_CONF}; run prepare ${name} [ip] first" >&2
 		exit 1
 	fi
 
@@ -209,10 +209,6 @@ load_jail_conf() {
 	fi
 	if [ "${JAIL_NAME}" != "${name}" ]; then
 		echo "jail.conf mismatch: expected JAIL_NAME=${name}, got ${JAIL_NAME}" >&2
-		exit 1
-	fi
-	if [ -z "${JAIL_IPV4:-}" ]; then
-		echo "JAIL_IPV4 missing in ${JAIL_CONF}" >&2
 		exit 1
 	fi
 }
@@ -314,7 +310,7 @@ prepare_jail() {
 	need_root
 	require_tools
 	name=$1
-	ip=$2
+	ip=${2:-}
 
 	jail_paths "${name}"
 	mkdir -p "${ROOT_DIR}" "${ETC_DIR}" "${VAR_DIR}" "${TMP_DIR}" "${HOME_DIR}" \
@@ -335,7 +331,11 @@ JAIL_ARCH=${MACHINE_ARCH}
 JAIL_NPF_RDR_LIST=
 CONF
 
-	echo "Prepared jail ${name} (${ip})"
+	if [ -n "${ip}" ]; then
+		echo "Prepared jail ${name} (${ip})"
+	else
+		echo "Prepared jail ${name} (no IPv4 bind limit)"
+	fi
 }
 
 jail_exists() {
@@ -374,6 +374,7 @@ host_net_up() {
 host_net_up_one() {
 	name=$1
 	load_jail_conf "${name}"
+	[ -n "${JAIL_IPV4:-}" ] || return
 	add_alias "${JAIL_IPV4}"
 }
 
@@ -387,6 +388,7 @@ host_net_down() {
 host_net_down_one() {
 	name=$1
 	load_jail_conf "${name}"
+	[ -n "${JAIL_IPV4:-}" ] || return
 	del_alias "${JAIL_IPV4}"
 }
 
@@ -438,8 +440,10 @@ npf_sync() {
 			name=${jail_conf%/jail.conf}
 			name=${name##*/}
 			load_jail_conf "${name}"
-			if [ -n "${JAIL_NPF_RDR_LIST:-}" ]; then
+			if [ -n "${JAIL_NPF_RDR_LIST:-}" ] && [ -n "${JAIL_IPV4:-}" ]; then
 				emit_rdr_rules_for_jail "${name}" "${JAIL_IPV4}" "${JAIL_NPF_RDR_LIST}"
+			elif [ -n "${JAIL_NPF_RDR_LIST:-}" ]; then
+				echo "# skipped ${name}: JAIL_NPF_RDR_LIST set but JAIL_IPV4 is empty" >&2
 			fi
 		done
 
@@ -483,14 +487,16 @@ start_jail() {
 	name=$1
 
 	load_jail_conf "${name}"
-	ip=${JAIL_IPV4}
+	ip=${JAIL_IPV4:-}
 	if [ -n "${JAIL_SUPERVISE_CMD_LOCAL:-}" ]; then
 		JAIL_SUPERVISE_CMD=${JAIL_SUPERVISE_CMD_LOCAL}
 	fi
 
 	jail_paths "${name}"
 	[ -d "${ROOT_DIR}" ] || prepare_jail "${name}" "${ip}"
-	add_alias "${ip}"
+	if [ -n "${ip}" ]; then
+		add_alias "${ip}"
+	fi
 	mount_jail_root
 
 	if jail_exists "${name}"; then
@@ -498,7 +504,11 @@ start_jail() {
 		return
 	fi
 
-	jailctl create -n "${name}" -i "${ip}" "${ROOT_DIR}"
+	if [ -n "${ip}" ]; then
+		jailctl create -n "${name}" -i "${ip}" "${ROOT_DIR}"
+	else
+		jailctl create -n "${name}" "${ROOT_DIR}"
+	fi
 	require_supervise_cmd
 	# shellcheck disable=SC2086
 	set -- ${JAIL_SUPERVISE_CMD}
@@ -507,7 +517,11 @@ start_jail() {
 	# supervisor can be tied to rc script lifetime and disappear once startup
 	# handling completes.
 	nohup jailctl supervise "${name}" "$@" >/dev/null 2>&1 &
-	echo "Started jail ${name} at ${ip}"
+	if [ -n "${ip}" ]; then
+		echo "Started jail ${name} at ${ip}"
+	else
+		echo "Started jail ${name}"
+	fi
 }
 
 stop_jail() {
@@ -611,8 +625,14 @@ case "${cmd}" in
 		build_base
 		;;
 	prepare)
-		[ $# -eq 3 ] || { usage; exit 1; }
-		prepare_jail "$2" "$3"
+		if [ $# -eq 2 ]; then
+			prepare_jail "$2"
+		elif [ $# -eq 3 ]; then
+			prepare_jail "$2" "$3"
+		else
+			usage
+			exit 1
+		fi
 		;;
 	host-net-up)
 		host_net_up
