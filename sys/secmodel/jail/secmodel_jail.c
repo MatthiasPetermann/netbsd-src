@@ -1,6 +1,6 @@
 /* $NetBSD$ */
 /*-
- * Copyright (c) 2025
+ * Copyright (c) 2026
  * The NetBSD Foundation, Inc.
  * All rights reserved.
  *
@@ -24,6 +24,9 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * secmodel_jail, jailctl, and jailmgr designed and implemented by
+ * Matthias Petermann, inspired by FreeBSD jails.
  */
 
 #include <sys/cdefs.h>
