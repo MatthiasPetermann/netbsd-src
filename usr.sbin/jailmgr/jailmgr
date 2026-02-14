@@ -404,12 +404,16 @@ start_jail() {
 	name=$1
 
 	load_jail_conf "${name}"
+	effective_supervise_cmd=${JAIL_SUPERVISE_CMD}
 	if [ -n "${JAIL_SUPERVISE_CMD_LOCAL:-}" ]; then
-		JAIL_SUPERVISE_CMD=${JAIL_SUPERVISE_CMD_LOCAL}
+		effective_supervise_cmd=${JAIL_SUPERVISE_CMD_LOCAL}
 	fi
 	ports=${JAIL_PORTS:-}
 	validate_jail_ports "${ports}"
-	require_supervise_cmd
+	if [ -z "${effective_supervise_cmd}" ]; then
+		echo "JAIL_SUPERVISE_CMD must be set in ${CONF_FILE} (example: /bin/sh /etc/rc)" >&2
+		exit 1
+	fi
 
 	jail_paths "${name}"
 	[ -d "${ROOT_DIR}" ] || prepare_jail "${name}"
@@ -426,7 +430,7 @@ start_jail() {
 		jailctl create -n "${name}" "${ROOT_DIR}"
 	fi
 	# shellcheck disable=SC2086
-	set -- ${JAIL_SUPERVISE_CMD}
+	set -- ${effective_supervise_cmd}
 	# Start under nohup *and* in the background so rc(8)/run_rc_command does
 	# not keep it as the rc script foreground process.  Otherwise the
 	# supervisor can be tied to rc script lifetime and disappear once startup
