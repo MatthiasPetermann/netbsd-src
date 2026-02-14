@@ -1,6 +1,6 @@
 # jailmgr (jailctl helper)
 
-`jailmgr` provisions and runs multiple IP-bound `jailctl` jails from one host-side configuration.
+`jailmgr` provisions and runs multiple `jailctl` jails from one host-side configuration.
 It uses one shared read-only base layer (from `base.tar.xz`) and per-jail writable state:
 
 - `etc`
@@ -16,8 +16,8 @@ It can also:
 
 ## Important command semantics
 
-- `prepare <name> <ip>` is the **only** command that takes an IP address.
-- `start <name>` and `restart <name>` always read the jail IP from `${JAIL_DATA_DIR}/<name>/jail.conf`.
+- `prepare <name> [ip]` optionally takes an IPv4 address.
+- `start <name>` and `restart <name>` always read the jail IP from `${JAIL_DATA_DIR}/<name>/jail.conf` (if set).
 - `start --all` / `restart --all` work on all configured jails.
 
 ## Workflow
@@ -46,7 +46,7 @@ It can also:
 
    ```sh
    /usr/sbin/jailmgr prepare jail1 10.0.0.1
-   /usr/sbin/jailmgr prepare jail2 10.0.0.2
+   /usr/sbin/jailmgr prepare jail2
    ```
 
 5. Start jails:
@@ -73,8 +73,8 @@ If `NPF_ENABLE=YES`, run:
 
 This writes `NPF_CONF_SNIPPET` with:
 
-- per-jail egress NAT (`map`) rules for each configured jail IP (when `NPF_NAT_ENABLE=YES`), and
-- `rdr` rules from each jail's `JAIL_NPF_RDR_LIST` in `${JAIL_DATA_DIR}/<name>/jail.conf`.
+- per-jail egress NAT (`map`) rules for each jail with `JAIL_IPV4` set (when `NPF_NAT_ENABLE=YES`), and
+- `rdr` rules from each jail's `JAIL_NPF_RDR_LIST` in `${JAIL_DATA_DIR}/<name>/jail.conf` when `JAIL_IPV4` is set.
 
 Include that snippet from `/etc/npf.conf` and optionally set `NPF_AUTO_RELOAD=YES`.
 
@@ -88,7 +88,7 @@ JAIL_NPF_RDR_LIST="2221:22 8080:80"
 ## Notes
 
 - The host must route the jail subnet appropriately (loopback aliases are handled by `jailmgr`).
-- `jailctl create -i <ip>` enforces per-jail IPv4 bind restrictions.
+- `jailctl create -i <ip>` enforces per-jail IPv4 bind restrictions; if no IP is configured, `jailmgr` creates the jail without `-i`.
 - `jailmgr start` uses `jailctl create` followed by `jailctl supervise`.
 - By default, bootstrap derives the set URL from `RELEASE` and `MACHINE_ARCH` as:
   `https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets`
