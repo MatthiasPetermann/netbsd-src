@@ -30,7 +30,7 @@ and a jail-local
 .Pa /dev ,
 and
 .It
-optional IPv4-bound jail naming and lifecycle management via
+jail naming and lifecycle management via
 .Xr jailctl 8 .
 .El
 .Pp
@@ -45,7 +45,7 @@ environment variable.
 Most commands require superuser privileges.
 .Sh COMMANDS
 The following commands are supported:
-.Bl -tag -width "prepare name [ip]"
+.Bl -tag -width "prepare name"
 .It Cm bootstrap
 Download
 .Pa base.tar.xz
@@ -65,7 +65,7 @@ Then
 extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
-.It Cm prepare Ar name Op Ar ip
+.It Cm prepare Ar name
 Create directories and metadata for one jail:
 .Pa root ,
 .Pa etc ,
@@ -81,24 +81,13 @@ is extracted into the jail-local
 copy.
 A jail-local shell configuration file is written to
 .Pa ${JAIL_DATA_DIR}/name/jail.conf .
-.It Cm host-net-up
-Add host-side IPv4 aliases for all jails with a
-.Pa jail.conf
-on interface
-.Ev JAIL_HOST_IF .
-.It Cm host-net-down
-Remove those host-side IPv4 aliases.
 .It Cm start Ar name
 Mount the composed jail root and start the jail with
-.Xr jailctl 8 , using the optional IPv4 address stored in
-.Pa jail.conf .
-When no IPv4 is set, the jail is created without
-.Fl i
-binding restrictions.
+.Xr jailctl 8 , using optional per-jail settings from
+.Pa jail.conf
+.Pq for example, Li JAIL_PORTS .
 .It Cm start Cm --all
-Run
-.Cm host-net-up
-and then start all jails found under
+Start all jails found under
 .Ev JAIL_DATA_DIR
 with a
 .Pa jail.conf .
@@ -122,32 +111,13 @@ for jail
 .Ar name
 and then
 .Cm start
-for the same jail, using the optional IPv4 address from
+for the same jail, using the optional settings from
 .Pa jail.conf .
 .It Cm restart Cm --all
 Run
 .Cm stop Cm --all
 followed by
 .Cm start Cm --all .
-.It Cm npf-sync
-Generate (or update) an NPF snippet and write it to
-.Ev NPF_CONF_SNIPPET .
-When
-.Ev NPF_NAT_ENABLE
-is
-.Dq YES ,
-egress NAT rules are generated for each jail with a configured
-.Ev JAIL_IPV4
-.Pq one Li map rule per jail .
-Additionally, redirection rules are generated from each jail's
-.Ev JAIL_NPF_RDR_LIST
-value in
-.Pa jail.conf .
-If
-.Ev NPF_AUTO_RELOAD
-is
-.Dq YES ,
-reload NPF after writing the snippet.
 .It Cm status
 Show
 .Xr jailctl 8
@@ -170,7 +140,7 @@ accepts shell-style variable assignments in
 .Ev JAILMGR_CONF ) .
 .Pp
 Important variables:
-.Bl -tag -width "NPF_CONF_SNIPPET"
+.Bl -tag -width "JAIL_SUPERVISE_CMD"
 .It Ev RELEASE
 NetBSD release used for set download paths.
 .It Ev MACHINE_ARCH
@@ -194,9 +164,6 @@ Jails may override this with
 .Ev JAIL_SUPERVISE_CMD_LOCAL
 in their
 .Pa jail.conf .
-.It Ev JAIL_HOST_IF
-Host interface for alias management (commonly
-.Dq lo0 ) .
 .It Ev JAIL_LOCAL_DEV
 When set to
 .Dq YES
@@ -214,46 +181,16 @@ Whitespace-separated list of
 .Xr MAKEDEV 8
 targets used to populate jail-local
 .Pa /dev .
-.It Ev NPF_ENABLE
-Enable NPF integration when set to
-.Dq YES .
-.It Ev NPF_EXT_IF
-External interface name used in generated
-.Nm npf-sync
-rules.
-.It Ev NPF_CONF_SNIPPET
-Path of generated NPF rule snippet.
-.It Ev NPF_AUTO_RELOAD
-Reload NPF after snippet updates when set to
-.Dq YES .
-.It Ev NPF_NAT_ENABLE
-When set to
-.Dq YES
-(default),
-.Nm npf-sync
-adds per-jail egress NAT rules of the form:
-.Dq Li map on $NPF_EXT_IF inet from $JAIL_IPV4/32 to any -> ($NPF_EXT_IF) .
-Set to
-.Dq NO
-to disable NAT rule generation.
-.It Ev JAIL_NPF_RDR_LIST
-Per-jail forwarding entries stored in each jail's
-.Pa jail.conf ,
-using a whitespace-separated list of
-.Dq host_port:jail_port
-pairs.
-These entries are consumed by
-.Cm npf-sync
-to generate
-.Li rdr
-rules for that jail's
-.Ev JAIL_IPV4
-address.
-If
-.Ev JAIL_IPV4
-is empty, per-jail
-.Li rdr
-rule generation is skipped.
+.It Ev JAIL_PORTS
+Per-jail comma-separated list of allowed bind ports stored in each jail's
+.Pa jail.conf .
+When set, it is passed to
+.Xr jailctl 8
+.Cm create
+via
+.Fl p
+and enforced by
+.Xr secmodel_jail 9 .
 .El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
@@ -270,21 +207,15 @@ Prepare and start all configured jails:
 # cp /usr/share/examples/jailmgr/jailmgr.conf.sample /etc/jailmgr.conf
 # vi /etc/jailmgr.conf
 # jailmgr bootstrap
-# jailmgr prepare jail1 10.0.0.1
-# jailmgr prepare jail2              # no per-jail IPv4 bind limit
+# jailmgr prepare jail1
+# jailmgr prepare jail2
+# echo 'JAIL_PORTS=22,80,443' >> /var/jailmgr/jails/jail1/jail.conf
 # jailmgr start --all
-.Ed
-.Pp
-Generate NPF rules for configured port forwards:
-.Bd -literal -offset indent
-# jailmgr npf-sync
-# echo "include \"/etc/npf-jailmgr.conf\"" >> /etc/npf.conf
-# npfctl reload
 .Ed
 .Sh SEE ALSO
 .Xr jailctl 8 ,
 .Xr mount_null 8 ,
-.Xr npf.conf 5 ,
+.Xr secmodel_jail 9 ,
 .Xr rc.d 8
 .Sh HISTORY
 The

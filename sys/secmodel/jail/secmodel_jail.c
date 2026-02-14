@@ -100,10 +100,11 @@ struct jail_entry {
 	char je_root[JAIL_ROOT_MAX + 1];
 	bool je_has_cpu_limit;
 	bool je_has_mem_limit;
-	bool je_has_bind4;
+	bool je_has_ports;
 	rlim_t je_cpu_limit;
 	rlim_t je_mem_limit;
-	in_addr_t je_bind4;
+	uint32_t je_nports;
+	uint16_t je_ports[JAIL_PORT_MAX];
 	LIST_ENTRY(jail_entry) je_entry;
 };
 
@@ -115,10 +116,11 @@ static jailid_t jail_next_id = 1;
 struct jail_config {
 	bool jc_has_cpu_limit;
 	bool jc_has_mem_limit;
-	bool jc_has_bind4;
+	bool jc_has_ports;
 	rlim_t jc_cpu_limit;
 	rlim_t jc_mem_limit;
-	in_addr_t jc_bind4;
+	uint32_t jc_nports;
+	uint16_t jc_ports[JAIL_PORT_MAX];
 };
 
 /*
@@ -213,10 +215,11 @@ secmodel_jail_get_config(jailid_t id, struct jail_config *config)
 	}
 	config->jc_has_cpu_limit = entry->je_has_cpu_limit;
 	config->jc_has_mem_limit = entry->je_has_mem_limit;
-	config->jc_has_bind4 = entry->je_has_bind4;
+	config->jc_has_ports = entry->je_has_ports;
 	config->jc_cpu_limit = entry->je_cpu_limit;
 	config->jc_mem_limit = entry->je_mem_limit;
-	config->jc_bind4 = entry->je_bind4;
+	config->jc_nports = entry->je_nports;
+	memcpy(config->jc_ports, entry->je_ports, sizeof(config->jc_ports));
 	mutex_exit(&jail_lock);
 
 	return true;
@@ -256,10 +259,11 @@ secmodel_jail_create(const struct jail_create *create,
 	if (config != NULL) {
 		entry->je_has_cpu_limit = config->jc_has_cpu_limit;
 		entry->je_has_mem_limit = config->jc_has_mem_limit;
-		entry->je_has_bind4 = config->jc_has_bind4;
+		entry->je_has_ports = config->jc_has_ports;
 		entry->je_cpu_limit = config->jc_cpu_limit;
 		entry->je_mem_limit = config->jc_mem_limit;
-		entry->je_bind4 = config->jc_bind4;
+		entry->je_nports = config->jc_nports;
+		memcpy(entry->je_ports, config->jc_ports, sizeof(entry->je_ports));
 	}
 	LIST_INSERT_HEAD(&jail_list, entry, je_entry);
 	mutex_exit(&jail_lock);
@@ -614,7 +618,7 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 
 		flags = create.jc_flags;
 		if ((flags & ~(JAIL_CREATE_MEMLIMIT |
-		    JAIL_CREATE_CPULIMIT | JAIL_CREATE_BIND4)) != 0)
+		    JAIL_CREATE_CPULIMIT | JAIL_CREATE_PORTS)) != 0)
 			return EINVAL;
 
 		memset(&config, 0, sizeof(config));
@@ -630,11 +634,14 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 			config.jc_has_cpu_limit = true;
 			config.jc_cpu_limit = (rlim_t)create.jc_cpu_limit;
 		}
-		if ((flags & JAIL_CREATE_BIND4) != 0) {
-			if (create.jc_bind4 == INADDR_ANY)
+		if ((flags & JAIL_CREATE_PORTS) != 0) {
+			if (create.jc_nports == 0 ||
+			    create.jc_nports > __arraycount(create.jc_ports))
 				return EINVAL;
-			config.jc_has_bind4 = true;
-			config.jc_bind4 = (in_addr_t)create.jc_bind4;
+			config.jc_has_ports = true;
+			config.jc_nports = create.jc_nports;
+			memcpy(config.jc_ports, create.jc_ports,
+			    sizeof(config.jc_ports));
 		}
 		configp = &config;
 	} else {
@@ -1083,16 +1090,18 @@ secmodel_jail_cred_cb(kauth_cred_t cred, kauth_action_t action,
 /*
  * kauth(9) listener for network scope.
  *
- * Enforces per-jail bind address restrictions when configured.
+ * Enforces per-jail bind port allow-lists when configured.
  */
 int
 secmodel_jail_network_cb(kauth_cred_t cred, kauth_action_t action,
     void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
 {
 	struct jail_config config;
-	enum kauth_network_req req;
 	struct sockaddr *sa;
 	struct sockaddr_in *sin;
+	struct sockaddr_in6 *sin6;
+	in_port_t port;
+	uint32_t i;
 	jailid_t id;
 
 	(void)cookie;
@@ -1109,19 +1118,34 @@ secmodel_jail_network_cb(kauth_cred_t cred, kauth_action_t action,
 	if (!secmodel_jail_get_config(id, &config))
 		return KAUTH_RESULT_DEFER;
 
-	if (!config.jc_has_bind4)
+	if (!config.jc_has_ports)
 		return KAUTH_RESULT_DEFER;
-
-	req = (enum kauth_network_req)(uintptr_t)arg0;
-	if (req == KAUTH_REQ_NETWORK_BIND_ANYADDR)
-		return KAUTH_RESULT_DENY;
+	(void)arg0;
+	(void)arg1;
 
 	sa = arg2;
-	if (sa == NULL || sa->sa_family != AF_INET)
+	if (sa == NULL)
 		return KAUTH_RESULT_DENY;
 
-	sin = (struct sockaddr_in *)sa;
-	if (sin->sin_addr.s_addr != config.jc_bind4)
+	if (sa->sa_family == AF_INET) {
+		sin = (struct sockaddr_in *)sa;
+		port = ntohs(sin->sin_port);
+	} else if (sa->sa_family == AF_INET6) {
+		sin6 = (struct sockaddr_in6 *)sa;
+		port = ntohs(sin6->sin6_port);
+	} else {
+		return KAUTH_RESULT_DENY;
+	}
+
+	if (port == 0)
+		return KAUTH_RESULT_DEFER;
+
+	for (i = 0; i < config.jc_nports; i++) {
+		if (config.jc_ports[i] == port)
+			return KAUTH_RESULT_DEFER;
+	}
+
+	if (config.jc_nports > 0)
 		return KAUTH_RESULT_DENY;
 
 	return KAUTH_RESULT_DEFER;

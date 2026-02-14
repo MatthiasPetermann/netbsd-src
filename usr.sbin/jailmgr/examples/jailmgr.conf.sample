@@ -11,12 +11,8 @@ JAIL_BASE_DIR=/var/jailmgr/base
 JAIL_DATA_DIR=/var/jailmgr/jails
 JAIL_RELEASE_DIR=/var/jailmgr/releases
 
-# Interface where jail IP aliases should be configured.
-# lo0 is usually easiest for host-local access to 10.0.0.x jail endpoints.
-JAIL_HOST_IF=lo0
-
 # Jail-specific settings are stored in ${JAIL_DATA_DIR}/<name>/jail.conf
-# and created/updated by: jailmgr prepare <name> [IPv4]
+# and created/updated by: jailmgr prepare <name>
 
 # User to create inside each jail (if not already present in master.passwd)
 JAIL_DEFAULT_USER=user
@@ -30,13 +26,5 @@ JAIL_LOCAL_DEV=YES
 JAIL_DEV_SIZE=8m
 JAIL_DEVICES="std ptm"
 
-# Optional NPF integration for NAT and forwarding host interface ports to jails.
-NPF_ENABLE=NO
-NPF_EXT_IF=wm0
-NPF_CONF_SNIPPET=/etc/npf-jailmgr.conf
-NPF_AUTO_RELOAD=NO
-# Generate per-jail egress NAT rules (map) when running npf-sync.
-NPF_NAT_ENABLE=YES
-
 # Per-jail jail.conf can set:
-#   JAIL_NPF_RDR_LIST="2221:22 8080:80"
+#   JAIL_PORTS="22,80,443"
