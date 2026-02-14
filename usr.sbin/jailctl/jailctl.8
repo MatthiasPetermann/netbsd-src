@@ -35,8 +35,8 @@
 .Nm
 .Cm create
 .Op Fl c Ar cpu-ms
-.Op Fl i Ar ipv4
 .Op Fl m Ar bytes
+.Op Fl p Ar ports
 .Fl n Ar name
 .Ar root
 .Nm
@@ -66,31 +66,22 @@ jail id, while the host root user (jail id 0) can access all processes.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Op Fl c Ar cpu-ms Op Fl i Ar ipv4 Op Fl m Ar bytes Fl n Ar name Ar root
+.It Cm create Op Fl c Ar cpu-ms Op Fl m Ar bytes Op Fl p Ar ports Fl n Ar name Ar root
 Create a new jail id, assign it the unique
 .Ar name ,
 and store jail name and root metadata in the kernel jail model.
 This command only creates the jail and prints the resulting jail id.
 .Pp
-The optional flags set per-jail limits and bind restrictions at creation
-time:
+The optional flags set per-jail limits and bind policy at creation time:
 .Bl -tag -width Ds
 .It Fl c Ar cpu-ms
 Set a CPU time limit (in milliseconds) for processes in the jail.
-.It Fl i Ar ipv4
-Restrict IPv4 socket binds inside the jail to the specified address.
-With this restriction enabled, binds to
-.Dv INADDR_ANY
-.Pq 0.0.0.0
-are denied.
-Utilities that implicitly bind wildcard source addresses for outbound traffic
-.Pq for example, some DNS lookup tools
-may therefore fail with
-.Er EPERM
-unless they are configured to use the jail's configured IPv4 address as
-their source address.
 .It Fl m Ar bytes
 Set a virtual memory limit (in bytes) for processes in the jail.
+.It Fl p Ar ports
+Set a comma-separated list of allowed TCP/UDP port numbers for bind requests
+inside the jail.
+If this option is set, non-zero bind ports not present in the list are denied.
 .El
 .It Cm supervise Op Fl p Ar pri Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
 Start a command in an existing jail selected by

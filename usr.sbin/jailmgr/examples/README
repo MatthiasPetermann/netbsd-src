@@ -9,15 +9,10 @@ It uses one shared read-only base layer (from `base.tar.xz`) and per-jail writab
 - `home`
 - optional jail-local `/dev` (tmpfs + `MAKEDEV`)
 
-It can also:
-
-- manage host-side IP aliases on `JAIL_HOST_IF` (default `lo0`), and
-- generate optional NPF `map` (egress NAT) and `rdr` rules.
-
 ## Important command semantics
 
-- `prepare <name> [ip]` optionally takes an IPv4 address.
-- `start <name>` and `restart <name>` always read the jail IP from `${JAIL_DATA_DIR}/<name>/jail.conf` (if set).
+- `prepare <name>` creates/updates the jail config and filesystem layout.
+- `start <name>` and `restart <name>` use per-jail settings from `${JAIL_DATA_DIR}/<name>/jail.conf`.
 - `start --all` / `restart --all` work on all configured jails.
 
 ## Workflow
@@ -45,7 +40,7 @@ It can also:
 4. Prepare each jail (writes `${JAIL_DATA_DIR}/<name>/jail.conf`):
 
    ```sh
-   /usr/sbin/jailmgr prepare jail1 10.0.0.1
+   /usr/sbin/jailmgr prepare jail1
    /usr/sbin/jailmgr prepare jail2
    ```
 
@@ -56,39 +51,23 @@ It can also:
    /usr/sbin/jailmgr start --all
    ```
 
-6. Restart jails (same address semantics as `start`):
+6. Restart jails:
 
    ```sh
    /usr/sbin/jailmgr restart jail1
    /usr/sbin/jailmgr restart --all
    ```
 
-## Optional NPF integration
-
-If `NPF_ENABLE=YES`, run:
+Per-jail allowed bind-port list format in `jail.conf`:
 
 ```sh
-/usr/sbin/jailmgr npf-sync
-```
-
-This writes `NPF_CONF_SNIPPET` with:
-
-- per-jail egress NAT (`map`) rules for each jail with `JAIL_IPV4` set (when `NPF_NAT_ENABLE=YES`), and
-- `rdr` rules from each jail's `JAIL_NPF_RDR_LIST` in `${JAIL_DATA_DIR}/<name>/jail.conf` when `JAIL_IPV4` is set.
-
-Include that snippet from `/etc/npf.conf` and optionally set `NPF_AUTO_RELOAD=YES`.
-
-Per-jail `rdr` format in `jail.conf`:
-
-```sh
-JAIL_NPF_RDR_LIST="2221:22 8080:80"
+JAIL_PORTS="22,80,443"
 ```
 
 
 ## Notes
 
-- The host must route the jail subnet appropriately (loopback aliases are handled by `jailmgr`).
-- `jailctl create -i <ip>` enforces per-jail IPv4 bind restrictions; if no IP is configured, `jailmgr` creates the jail without `-i`.
+- `jailctl create -p <ports>` enforces per-jail allowed bind ports when `JAIL_PORTS` is configured.
 - `jailmgr start` uses `jailctl create` followed by `jailctl supervise`.
 - By default, bootstrap derives the set URL from `RELEASE` and `MACHINE_ARCH` as:
   `https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets`
