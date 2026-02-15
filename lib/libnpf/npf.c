@@ -735,12 +735,6 @@ npf_rule_setproc(nl_rule_t *rl, const char *name)
 	return nvlist_error(rl->rule_dict);
 }
 
-int
-npf_rule_setjailname(nl_rule_t *rl, const char *name)
-{
-	nvlist_add_string(rl->rule_dict, "jail-name", name);
-	return nvlist_error(rl->rule_dict);
-}
 
 void *
 npf_rule_export(nl_rule_t *rl, size_t *length)

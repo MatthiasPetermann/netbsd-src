@@ -49,6 +49,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/jail.h>
 #include <sys/time.h>
 
+#include <net/if.h>
+
 #include <netinet/in.h>
 
 #include <uvm/uvm_extern.h>
@@ -60,6 +62,7 @@ MODULE(MODULE_CLASS_SECMODEL, secmodel_jail, NULL);
 
 static kauth_listener_t l_process;
 static kauth_listener_t l_cred;
+static kauth_listener_t l_network;
 
 static secmodel_t jail_sm;
 static kauth_key_t jail_key;
@@ -98,6 +101,7 @@ struct jail_entry {
 	jailid_t je_id;
 	char je_name[JAIL_NAME_MAX + 1];
 	char je_root[JAIL_ROOT_MAX + 1];
+	char je_ifname[JAIL_IFNAME_MAX + 1];
 	bool je_has_cpu_limit;
 	bool je_has_mem_limit;
 	rlim_t je_cpu_limit;
@@ -111,6 +115,8 @@ static kmutex_t jail_lock;
 static jailid_t jail_next_id = 1;
 
 static struct jail_entry *secmodel_jail_lookup(jailid_t);
+static int secmodel_jail_network_cb(kauth_cred_t, kauth_action_t, void *,
+    void *, void *, void *, void *);
 
 struct jail_config {
 	bool jc_has_cpu_limit;
@@ -273,6 +279,7 @@ secmodel_jail_create(const struct jail_create *create,
 	if (create != NULL) {
 		strlcpy(entry->je_name, create->jc_name, sizeof(entry->je_name));
 		strlcpy(entry->je_root, create->jc_root, sizeof(entry->je_root));
+		strlcpy(entry->je_ifname, create->jc_ifname, sizeof(entry->je_ifname));
 	}
 	if (config != NULL) {
 		entry->je_has_cpu_limit = config->jc_has_cpu_limit;
@@ -658,7 +665,8 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 		if (create.jc_name[0] == '\0' || create.jc_root[0] == '\0')
 			return EINVAL;
 		if (memchr(create.jc_name, '\n', sizeof(create.jc_name)) != NULL ||
-		    memchr(create.jc_root, '\n', sizeof(create.jc_root)) != NULL)
+		    memchr(create.jc_root, '\n', sizeof(create.jc_root)) != NULL ||
+		    memchr(create.jc_ifname, '\n', sizeof(create.jc_ifname)) != NULL)
 			return EINVAL;
 		error = secmodel_jail_create(&create, configp, &id);
 	} else {
@@ -809,6 +817,8 @@ secmodel_jail_sysctl_list(SYSCTLFN_ARGS)
 		    sizeof(entries[i].ji_name));
 		strlcpy(entries[i].ji_root, entry->je_root,
 		    sizeof(entries[i].ji_root));
+		strlcpy(entries[i].ji_ifname, entry->je_ifname,
+		    sizeof(entries[i].ji_ifname));
 		i++;
 	}
 	mutex_exit(&jail_lock);
@@ -981,6 +991,8 @@ secmodel_jail_start(void)
 	    secmodel_jail_process_cb, NULL);
 	l_cred = kauth_listen_scope(KAUTH_SCOPE_CRED,
 	    secmodel_jail_cred_cb, NULL);
+	l_network = kauth_listen_scope(KAUTH_SCOPE_NETWORK,
+	    secmodel_jail_network_cb, NULL);
 	uvm_proc_jail_memlimit_check = secmodel_jail_enforce_memlimit;
 }
 
@@ -997,6 +1009,7 @@ secmodel_jail_stop(void)
 
 	kauth_unlisten_scope(l_process);
 	kauth_unlisten_scope(l_cred);
+	kauth_unlisten_scope(l_network);
 	kauth_deregister_key(jail_key);
 
 	mutex_enter(&jail_lock);
@@ -1088,6 +1101,54 @@ secmodel_jail_cred_cb(kauth_cred_t cred, kauth_action_t action,
 	default:
 		return KAUTH_RESULT_DEFER;
 	}
+}
+
+static int
+secmodel_jail_network_cb(kauth_cred_t cred, kauth_action_t action,
+    void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
+{
+	const struct jail_entry *entry;
+	const struct ifnet *ifp;
+	enum kauth_network_req req;
+	jailid_t id;
+	int result;
+
+	(void)cookie;
+	(void)arg2;
+	(void)arg3;
+
+	if (action != KAUTH_NETWORK_INTERFACE)
+		return KAUTH_RESULT_DEFER;
+
+	if (secmodel_jail_is_host_root(cred))
+		return KAUTH_RESULT_DEFER;
+
+	req = (enum kauth_network_req)(uintptr_t)arg0;
+	if (req != KAUTH_REQ_NETWORK_INTERFACE_SET &&
+	    req != KAUTH_REQ_NETWORK_INTERFACE_SETPRIV &&
+	    req != KAUTH_REQ_NETWORK_INTERFACE_FIRMWARE)
+		return KAUTH_RESULT_DEFER;
+
+	ifp = arg1;
+	if (ifp == NULL)
+		return KAUTH_RESULT_DEFER;
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST)
+		return KAUTH_RESULT_DEFER;
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry == NULL || entry->je_ifname[0] == '\0') {
+		result = KAUTH_RESULT_DENY;
+	} else if (strcmp(ifp->if_xname, entry->je_ifname) == 0) {
+		result = KAUTH_RESULT_DEFER;
+	} else {
+		result = KAUTH_RESULT_DENY;
+	}
+	mutex_exit(&jail_lock);
+
+	return result;
 }
 
 static int

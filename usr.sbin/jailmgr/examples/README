@@ -35,7 +35,8 @@ It uses one shared read-only base layer (from `base.tar.xz`) and per-jail writab
 
    - module `secmodel_jail` is loaded (`modload secmodel_jail` when needed),
    - `/etc/modules.conf` exists,
-   - `/etc/modules.conf` contains a `secmodel_jail` entry for reboot persistence.
+   - `/etc/modules.conf` contains a `secmodel_jail` entry for reboot persistence,
+   - when `JAIL_VETHER_ENABLE=YES`, the configured bridge exists and is persisted in host startup config.
 
 4. Prepare each jail (writes `${JAIL_DATA_DIR}/<name>/jail.conf`):
 
@@ -61,6 +62,9 @@ It uses one shared read-only base layer (from `base.tar.xz`) and per-jail writab
 ## Notes
 
 - `jailmgr start` uses `jailctl create` followed by `jailctl supervise`.
+- By default, each jail gets a dedicated `vether` interface attached to `JAIL_VETHER_BRIDGE` (default: `bridge0`).
+- Missing bridges are auto-created by `jailmgr`.
+- `jailmgr` automatically manages in-jail `/etc/ifconfig.<vetherX>` files for the assigned interface and keeps them in sync across start/stop cycles.
 - By default, bootstrap derives the set URL from `RELEASE` and `MACHINE_ARCH` as:
   `https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets`
   (override with `NETBSD_MIRROR`).

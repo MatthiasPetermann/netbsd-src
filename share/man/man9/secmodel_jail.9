@@ -57,10 +57,13 @@ Create a new jail id.
 The write side accepts either a legacy integer form or a
 .Vt struct jail_create
 request.
+When the structured form is used, jail metadata such as name, root, and
+optional interface name is recorded.
 .It Va destroy
 Destroy a jail id that has no remaining process members.
 .It Va list
-Read-only list of active jail ids and reference counts.
+Read-only list of active jail ids and reference counts, including stored
+name/root/interface metadata.
 .It Va resource_mode
 Selects how configured jail CPU/memory limits are enforced:
 .Bl -tag -width 0xN
@@ -89,6 +92,11 @@ asynchronously signalled by aggregate CPU policy.
 .El
 .Pp
 The default is aggregate mode.
+The jail network policy uses optional per-jail interface metadata.
+When an interface name is configured for a jail, privileged network interface
+operations requested by processes in that jail are permitted only on that
+interface, while host root remains unrestricted.
+.Pp
 .Sh MODE TRANSITIONS
 Changing
 .Va resource_mode

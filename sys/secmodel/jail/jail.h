@@ -33,7 +33,9 @@
 
 /*
  * secmodel_jail enforces process visibility and signal delivery based on a
- * jail id stored in credentials. Host root (jail id 0) bypasses these checks.
+ * jail id stored in credentials.  It can also enforce per-jail interface
+ * policy for privileged interface operations when an interface name is
+ * configured for a jail.  Host root (jail id 0) bypasses these checks.
  */
 #define SECMODEL_JAIL_ID   "org.netbsd.secmodel.jail"
 #define SECMODEL_JAIL_NAME "NetBSD Jail"

@@ -288,25 +288,6 @@ understanding icmp-type.
 .Pp
 A rule can also instruct NPF to create an entry in the state table when
 passing the packet or to apply a procedure to the packet (e.g. "log").
-A rule can also include the
-.Cm jail
-qualifier (
-.Cm jail Ar name
-) to match socket ownership by jail name.
-For outbound traffic, the qualifier is evaluated against the jail of the
-originating socket credentials.
-For inbound TCP/UDP traffic, NPF resolves the local socket owner and evaluates
-its credentials against the configured jail name.
-If an inbound rule omits
-.Cm jail ,
-host-only semantics are applied for TCP/UDP traffic (jail id 0).
-If no local socket owner can be resolved for inbound traffic,
-an explicit
-.Cm jail
-qualifier does not match,
-while rules without
-.Cm jail
-retain legacy non-jail-restricted behavior.
 
 .Pp
 A
@@ -618,7 +599,6 @@ npf-filter	= [ "family" family-opt ] [ proto ] ( "all" | filt-opts )
 static-rule	= ( "block" [ block-opts ] | "pass" )
 		  [ "stateful" | "stateful-all" ]
 		  [ "in" | "out" ] [ "final" ] [ "on" interface ]
-		  [ "jail" name-string ]
 		  ( npf-filter | "pcap-filter" pcap-filter-expr )
 		  [ "apply" proc-name ]
 

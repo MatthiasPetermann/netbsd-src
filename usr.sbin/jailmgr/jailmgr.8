@@ -65,6 +65,12 @@ and persist
 in
 .Pa /etc/modules.conf
 for future boots.
+If
+.Ev JAIL_VETHER_ENABLE
+is enabled,
+.Nm
+also ensures the configured bridge exists and writes persistent host
+network configuration so the bridge is brought up on reboot.
 Then
 extract
 .Pa base.tar.xz
@@ -90,6 +96,10 @@ A jail-local shell configuration file is written to
 Mount the composed jail root and start the jail with
 .Xr jailctl 8 , using optional per-jail settings from
 .Pa jail.conf .
+By default, a dedicated
+.Xr vether 4
+interface is created per jail and attached to a host bridge before jail
+startup.
 .It Cm start Cm --all
 Start all jails found under
 .Ev JAIL_DATA_DIR
@@ -102,8 +112,9 @@ Terminate the corresponding
 supervise process for the jail named
 .Ar name ,
 then destroy the jail by name through
-.Xr jailctl 8
-and unmount its root composition.
+.Xr jailctl 8 , tear down the jail's
+.Xr vether 4
+interface, and unmount its root composition.
 .It Cm stop Cm --all
 Stop and unmount all jails found under
 .Ev JAIL_DATA_DIR
@@ -196,6 +207,29 @@ at
 inside each jail-local
 .Pa /dev
 to support pseudo terminals.
+
+.It Ev JAIL_VETHER_ENABLE
+When set to
+.Dq YES
+(default), create and manage one
+.Xr vether 4
+interface per jail.
+.It Ev JAIL_VETHER_BRIDGE
+Host bridge interface to which per-jail
+.Xr vether 4
+interfaces are attached (default
+.Dq bridge0 ) .
+If missing, the bridge is created automatically when jails start.
+During
+.Cm bootstrap ,
+.Nm
+also persists bridge bring-up in
+.Pa /etc/rc.conf
+and
+.Pa /etc/ifconfig.<bridge> .
+The manager automatically maintains a jailed
+.Pa /etc/ifconfig.<vetherX>
+file for each assigned interface.
 .El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
@@ -219,6 +253,8 @@ Prepare and start all configured jails:
 .Sh SEE ALSO
 .Xr jailctl 8 ,
 .Xr mount_null 8 ,
+.Xr vether 4 ,
+.Xr bridge 4 ,
 .Xr secmodel_jail 9 ,
 .Xr rc.d 8
 .Sh HISTORY

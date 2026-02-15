@@ -171,11 +171,12 @@ jail_list(void)
 		return;
 	}
 
-	printf("%-8s %-8s %-16s %s\n", "ID", "PROCS", "NAME", "ROOT");
+	printf("%-8s %-8s %-16s %-16s %s\n", "ID", "PROCS", "NAME", "IFACE", "ROOT");
 	for (i = 0; i < count; i++) {
-		printf("%-8" PRIu32 " %-8" PRIu32 " %-16s %s\n",
+		printf("%-8" PRIu32 " %-8" PRIu32 " %-16s %-16s %s\n",
 		    entries[i].ji_id, entries[i].ji_refcount,
 		    entries[i].ji_name[0] != '\0' ? entries[i].ji_name : "-",
+		    entries[i].ji_ifname[0] != '\0' ? entries[i].ji_ifname : "-",
 		    entries[i].ji_root[0] != '\0' ? entries[i].ji_root : "-");
 	}
 
@@ -651,7 +652,7 @@ main(int argc, char *argv[])
 		memset(&create, 0, sizeof(create));
 		name = NULL;
 		optind = 2;
-		while ((ch = getopt(argc, argv, "c:m:n:")) != -1) {
+		while ((ch = getopt(argc, argv, "c:i:m:n:")) != -1) {
 			switch (ch) {
 			case 'c':
 				errno = 0;
@@ -660,6 +661,11 @@ main(int argc, char *argv[])
 					errx(1, "invalid cpu limit: %s", optarg);
 				create.jc_flags |= JAIL_CREATE_CPULIMIT;
 				create.jc_cpu_limit = num;
+				break;
+			case 'i':
+				if (strlen(optarg) > JAIL_IFNAME_MAX)
+					errx(1, "interface name too long");
+				sanitize_field(optarg, create.jc_ifname, sizeof(create.jc_ifname));
 				break;
 			case 'm':
 				errno = 0;
@@ -763,7 +769,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-c cpu-ms] [-m bytes] -n name <root>\n"
+	    "usage: %s create [-c cpu-ms] [-i ifname] [-m bytes] -n name <root>\n"
 	    "       %s supervise [-p pri] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"

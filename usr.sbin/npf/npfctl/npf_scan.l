@@ -142,7 +142,6 @@ in			return IN;
 out			return OUT;
 forw			return FORW;
 interface		return INTERFACE;
-jail			return JAIL;
 all			return ALL;
 block			return BLOCK;
 pass			return PASS;

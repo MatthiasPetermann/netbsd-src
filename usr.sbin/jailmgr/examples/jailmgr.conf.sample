@@ -27,3 +27,9 @@ JAIL_DEV_SIZE=8m
 JAIL_DEVICES="std ptm"
 JAIL_PTYFS=YES
 
+
+# Per-jail vether network setup
+JAIL_VETHER_ENABLE=YES
+# Host bridge used for per-jail vether attachment. During bootstrap, jailmgr
+# ensures this bridge exists and persists its bring-up on reboot.
+JAIL_VETHER_BRIDGE=bridge0

@@ -3,21 +3,18 @@ NetBSD Jails Specification
 
 Document purpose
 ----------------
-This specification consolidates and harmonizes the jail-related design notes
-in the current documentation set into one didactically structured reference.
+This specification consolidates the current jail-related design into one
+reference and explains why certain alternatives were rejected.
 
-It describes how the NetBSD jail stack is currently designed and implemented
-across:
+It describes the implemented model across:
 
 - secmodel_jail (kernel security model)
 - secmodel core broker APIs
 - UVM integration for memory admission control
-- NPF integration for jail-aware rule matching
 - jailctl (low-level userland control tool)
 - jailmgr (higher-level operational manager)
 
-The scope is the implemented model in the current tree, not an aspirational
-future roadmap.
+The scope is the implemented model in the current tree.
 
 
 Table of contents
@@ -28,13 +25,13 @@ Table of contents
 4. Resource enforcement model (RLIMIT vs aggregate)
 5. secmodel core integration (registration and eval)
 6. UVM integration pattern (callback hook)
-7. NPF integration pattern (jail rule qualifier)
+7. Network policy model (interface affinity)
 8. jailctl specification
 9. jailmgr specification
 10. End-to-end runtime flows
 11. Behavior matrix and fallback semantics
 12. Security properties, limits, and non-goals
-13. Design rationale and pattern selection guidance
+13. Design rationale and discarded approaches
 
 
 1. Conceptual model and goals
@@ -46,10 +43,10 @@ Table of contents
 
 1.2 Explicit networking model: host stack, not network namespaces
 - No per-jail TCP/IP stack.
-- No per-jail interfaces/routing namespaces.
+- No per-jail routing namespace.
 - Jails share host networking primitives.
-- External exposure control is moved to NPF policy, where service ownership can
-  be stated explicitly via jail qualifiers.
+- Network hardening is done through per-jail interface-affinity checks for
+  privileged interface operations.
 
 1.3 Operational simplicity over full virtualization
 - The stack is intentionally lightweight (kauth + sysctl + chroot workflows).
@@ -59,7 +56,7 @@ Table of contents
 1.4 Design intent summary
 - secmodel_jail: identity + isolation + policy checks.
 - UVM hook: hard memory-growth admission veto in aggregate mode.
-- NPF qualifier: explicit and readable service-ownership firewall policy.
+- Network policy: per-jail interface affinity for privileged interface ops.
 
 
 2. Layered architecture
@@ -67,7 +64,7 @@ Table of contents
 
 +--------------------------------------------------------------------+
 | Userland operations                                                 |
-|  - jailmgr (multi-jail lifecycle, FS composition, service workflows)|
+|  - jailmgr (multi-jail lifecycle, FS composition, vether/bridge)   |
 |  - jailctl (create/exec/supervise/list/destroy via sysctl)         |
 +-----------------------------|--------------------------------------+
                               v
@@ -75,24 +72,19 @@ Table of contents
 | Kernel security/control plane                                       |
 |  secmodel_jail                                                      |
 |   - jail metadata + IDs                                             |
-|   - kauth policy listeners (cansee/signal, etc.)                   |
-|   - credential lifecycle hooks                                      |
+|   - kauth policy listeners (process, cred, network)                |
 |   - optional UVM memlimit policy callback provider                 |
-|   - secmodel eval endpoint for external consumers                  |
+|   - secmodel eval endpoint                                         |
 +-------------------|--------------------------|----------------------+
                     v                          v
          +---------------------+      +-----------------------------+
-         | UVM                 |      | NPF                         |
-         | - growth call sites |      | - rule parser/runtime       |
-         | - callback slot     |      | - jail qualifier matching   |
+         | UVM                 |      | network kauth call sites    |
+         | - growth call sites |      | - interface set/setpriv     |
+         | - callback slot     |      | - firmware ops              |
          +---------------------+      +-----------------------------+
-                    ^                          |
-                    |                          v
+                    ^
+                    |
                     +---------- secmodel core (register/eval broker)
-
-Key principle:
-- Different subsystems use different integration mechanisms based on their
-  policy role and performance/coupling needs.
 
 
 3. secmodel_jail kernel specification
@@ -104,6 +96,7 @@ Key principle:
   - jail ID
   - jail name
   - root path metadata
+  - optional interface name (ifname)
   - optional CPU limit
   - optional memory limit
 
@@ -175,25 +168,6 @@ security.models.jail.resource_mode:
   - no asynchronous kill/throttle of already-running members solely from
     aggregate CPU accounting
 
-4.4 Resource decision flow (aggregate mode)
-
-Process action (enter/fork/mmap/sbrk/stack growth)
-                |
-                v
-      Determine caller's jail membership
-                |
-                v
-      Compute projected jail-wide usage
-                |
-       +--------+---------+
-       |                  |
-   within limit      exceeds limit
-       |                  |
-       v                  v
-   allow action       deny action
-                    (e.g., ENOMEM on
-                     memory growth)
-
 
 5. secmodel core integration (registration and eval)
 ----------------------------------------------------
@@ -203,17 +177,9 @@ Process action (enter/fork/mmap/sbrk/stack growth)
   - sm_eval
   - sm_setinfo
 
-5.2 Why secmodel_jail must register sm_eval
-- External consumers (like NPF) query jail semantics via secmodel_eval.
-- If sm_eval is NULL, secmodel_eval cannot answer jail queries.
-- Therefore secmodel_jail must register an eval handler for brokered queries.
-
-5.3 Query contract shape
-- Consumer provides:
-  - secmodel ID
-  - query name (what)
-  - typed args/result structure
-- Provider returns success/failure and result payload.
+5.2 Why secmodel_jail registers sm_eval
+- Internal/external consumers may query jail semantics through secmodel_eval.
+- secmodel_jail therefore exposes an eval handler for jail-related queries.
 
 
 6. UVM integration pattern (callback hook)
@@ -229,63 +195,28 @@ Process action (enter/fork/mmap/sbrk/stack growth)
 - Enforce deterministic memory admission checks at VM growth choke points.
 - Cover multiple growth paths through one hook strategy.
 
-6.3 Properties
-- No hard linker dependency from UVM to secmodel_jail internals.
-- Very low per-call overhead.
-- Safe no-op behavior when secmodel_jail is absent (NULL pointer path).
 
-6.4 Trade-offs
-- Tighter subsystem contract than brokered query interfaces.
-- Single-hook-slot composability limits.
+7. Network policy model (interface affinity)
+--------------------------------------------
+7.1 Policy scope
+- secmodel_jail registers a network kauth listener.
+- For jailed credentials (non-host-root), privileged network interface actions
+  are restricted to the jail-configured ifname.
 
+7.2 Enforced action class
+- The policy applies to privileged interface operation requests, including
+  set/setpriv/firmware class operations.
 
-7. NPF integration pattern (jail rule qualifier)
-------------------------------------------------
-7.1 User-visible rule feature
-- Optional rule qualifier:
-  - jail <name>
-- Internal metadata key:
-  - jail-name
+7.3 Behavior
+- Host root bypasses restrictions.
+- If no ifname is configured for a non-host jail, privileged interface
+  operations are denied for that jailed credential.
+- If an ifname is configured, privileged interface operations on other
+  interfaces are denied.
 
-7.2 Semantics
-Outbound:
-- If qualifier exists, packet's originating socket credentials must match jail
-  name.
-- Without qualifier, no jail-name restriction is applied.
-
-Inbound (TCP/UDP service-owner context):
-- NPF resolves local service socket owner via PCB lookup.
-- With qualifier, resolved owner credentials must match given jail name.
-- Without qualifier, host-only semantics apply when owner context exists.
-
-Inbound with no local owner context:
-- With explicit jail qualifier: no match.
-- Without qualifier: legacy/non-jail-restricted behavior remains.
-
-7.3 Runtime data path (simplified)
-
-Outbound packet:
-  socket -> PACKET_TAG_SO -> NPF rule eval -> secmodel_eval(jail cred match)
-
-Inbound packet:
-  packet -> PCB owner lookup -> owner cred (if found)
-            |                           |
-            | found                     | not found
-            v                           v
-      jail/host match logic      explicit jail => no match
-                                 no qualifier => legacy behavior
-
-7.4 secmodel coupling style
-- NPF does not directly link against jail internals for matching decisions.
-- It asks secmodel core broker:
-  - secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES, ...)
-- This yields loose coupling and explicit fallback handling when provider is
-  absent.
-
-7.5 Security intent
-- Make service ownership explicit in firewall policy.
-- Reduce accidental host/jail exposure overlap.
-- Preserve compatibility for traffic classes without resolvable owner context.
+7.4 Out of scope
+- This does not provide full network namespace isolation.
+- Ordinary host-stack packet flow remains shared.
 
 
 8. jailctl specification
@@ -294,7 +225,7 @@ Inbound packet:
 - Thin operational interface over security.models.jail sysctls.
 
 8.2 Command surface
-- create [-c cpu-ms] [-m bytes] -n name <root>
+- create [-c cpu-ms] [-i ifname] [-m bytes] -n name <root>
 - supervise [-p priority] [-t tag] <jail-id|name> <command...>
 - destroy <jail-id|name>
 - exec <jail-id|name> [command...]
@@ -304,6 +235,7 @@ Inbound packet:
 Create:
 - requires unique jail name
 - submits metadata and optional limits
+- may attach per-jail interface metadata (ifname)
 
 Exec:
 - chdir(root) -> chroot(".") -> chdir("/")
@@ -316,7 +248,7 @@ Supervise:
 - on stop signal: SIGTERM process group, then SIGKILL after timeout
 
 List/resolve:
-- list shows ID, process count, name, root
+- list shows ID, process count, name, ifname, root
 - targets can be selected by numeric ID or name
 
 
@@ -331,16 +263,25 @@ List/resolve:
 - Optional per-jail /dev via tmpfs + MAKEDEV
 - Root composition via mount_null overlays
 
-9.3 Configuration model
+9.3 Network lifecycle model
+- Per jail, jailmgr creates/destroys a dedicated vether interface.
+- The vether is attached to configured host bridge.
+- jailmgr auto-creates bridge if missing and can persist bridge bring-up in
+  host startup config.
+- jailmgr maintains jailed etc/ifconfig.<vetherX> automatically.
+
+9.4 Configuration model
 - Global config: /etc/jailmgr.conf (or JAILMGR_CONF override)
 - Per-jail config: ${JAIL_DATA_DIR}/<name>/jail.conf
 - Supports global/per-jail supervised command selection
 
-9.4 Operations
-- bootstrap: load/persist module, fetch/extract base artifacts
+9.5 Operations
+- bootstrap: load/persist module, fetch/extract base artifacts; ensure bridge
+  existence/persistence when vether mode enabled
 - prepare <name>: create per-jail structure and defaults
-- start <name>|--all: mount, create jail, launch supervise command
-- stop <name>|--all: stop supervise, destroy jail, unmount
+- start <name>|--all: mount, ensure bridge/vether wiring, create jail, launch
+  supervise command
+- stop <name>|--all: stop supervise, destroy jail, tear down vether, unmount
 - restart <name>|--all: stop then start
 - status: jail list + mount state
 - gen-rc: generate rc.d wrapper
@@ -356,6 +297,9 @@ jailmgr prepare/start
 filesystem layers prepared/mounted
         |
         v
+ensure bridge + create/attach vether
+        |
+        v
 jailctl create -> secmodel_jail.create sysctl
         |
         v
@@ -365,21 +309,22 @@ jailctl supervise/exec
         v
 workload runs with credential jail membership
 
-10.2 Inbound service policy flow
+10.2 Privileged interface operation flow
 
-Inbound packet
-    |
-    v
-NPF rule evaluation
-    |
-    +--> resolve local socket owner (TCP/UDP)
-    |
-    +--> if rule has jail <name>:
-    |       secmodel_eval -> secmodel_jail credential match
-    |
-    +--> if rule has no jail:
-            host-only check when owner exists,
-            else legacy behavior for non-owner-context traffic
+jailed process requests privileged interface op
+        |
+        v
+kauth network authorization
+        |
+        v
+secmodel_jail network listener checks jail ifname
+        |
+   +----+-------------------+
+   |                        |
+ interface matches      interface differs/no-ifname
+   |                        |
+   v                        v
+ defer to other models      deny
 
 10.3 Memory growth policy flow
 
@@ -403,60 +348,65 @@ normal UVM behavior             secmodel_jail memlimit check
 - Process isolation checks active.
 - Jail lifecycle sysctl controls active.
 - UVM aggregate memory veto can be active (mode-dependent).
-- NPF jail qualifier queries can be answered through secmodel_eval.
+- Per-jail privileged interface-affinity checks active.
 
 11.2 secmodel_jail absent
 - UVM hook remains NULL; no jail memlimit callback enforcement.
-- NPF secmodel_eval jail query fails and applies explicit fallback:
-  - explicit jail qualifier rules do not match
-  - unqualified behavior remains per existing NPF semantics
+- No jail process/network restrictions are enforced by secmodel_jail.
 
 11.3 Safety properties in absence/failure
 - UVM avoids null-dereference via pointer presence checks.
-- NPF handles secmodel_eval errors through rule-level fallback logic.
+- Network authorization falls back to remaining security models.
 
 
 12. Security properties, limits, and non-goals
 ----------------------------------------------
 12.1 What is strengthened
 - Cross-jail process visibility/signal restrictions.
-- Explicit owner-based network exposure control with NPF qualifiers.
 - Optional jail-scoped resource admission checks.
+- Per-jail affinity for privileged interface operations.
 
 12.2 What is intentionally not provided
 - Per-jail network namespaces/virtual stacks.
 - Full VM/hypervisor isolation semantics.
-- Universal owner resolution for all inbound traffic classes.
+- Complete packet-level owner isolation in shared host stack.
 
 12.3 Practical implication
-- This stack is strong for lightweight service isolation and policy clarity.
+- Strong for lightweight service isolation with explicit host-managed wiring.
 - For hard tenant isolation and deep virtualized networking requirements,
   full virtualization remains the recommended escalation path.
 
 
-13. Design rationale and pattern selection guidance
----------------------------------------------------
-13.1 Why two integration styles coexist
-- UVM path solves hard, high-frequency admission control in VM internals.
-- NPF path solves flexible policy classification in a rule engine.
-- One mechanism would not optimize both concerns equally well.
+13. Design rationale and discarded approaches
+---------------------------------------------
+13.1 Current approach (selected)
+- Enforce network control at kernel authorization points (kauth network scope)
+  with per-jail interface metadata.
+- Keep host topology orchestration (bridge lifecycle, vether plumbing,
+  persistence) in jailmgr.
 
-13.2 Rule of thumb for future integrations
-- Use direct callback hooks for deterministic subsystem choke-point vetoes.
-- Use secmodel_eval broker queries for cross-model policy composition and
-  looser modular coupling.
+13.2 Compared to prior NPF-centered approach
+- NPF jail qualifier focused on rule-classification/owner matching.
+- It did not directly constrain privileged interface configuration operations.
+- The selected kauth-interface-affinity approach is a better fit for
+  controlling interface mutation rights regardless of firewall rule shape.
 
-13.3 Conceptual comparison
+13.3 Discarded approaches
+- Discarded: continue NPF jail qualifier as primary jail-network isolation
+  mechanism.
+  - Reason: policy coupling to firewall rule intent, not interface control
+    authority.
+- Discarded: move bridge lifecycle into jailctl/secmodel_jail.
+  - Reason: bridge lifecycle is host operational orchestration, better owned by
+    jailmgr; kernel model should enforce policy, not perform topology setup.
+- Discarded: global IPv4/IPv6 knobs in jailmgr.conf for vether assignment.
+  - Reason: semantically wrong for multi-jail deployments; replaced with
+    automatic per-jail ifconfig.<vetherX> management.
 
-+----------------------+-------------------------------+-------------------------+
-| Dimension            | UVM integration               | NPF integration         |
-+----------------------+-------------------------------+-------------------------+
-| Mechanism            | Function pointer callback     | secmodel_eval query     |
-| Coupling             | Tighter subsystem contract    | Looser broker boundary  |
-| Policy role          | Hard resource admission gate  | Rule classification     |
-| Absence behavior     | NULL hook => no-op            | Query fail => fallback  |
-| Performance profile  | Minimal overhead, hot paths   | Extra indirection       |
-| Evolvability         | Narrow/specific hook surface  | Protocol-like extensible|
-+----------------------+-------------------------------+-------------------------+
+13.4 Rule of thumb for future integrations
+- Use kernel authorization hooks for hard access-control semantics.
+- Use manager tooling for host lifecycle/orchestration semantics.
+- Avoid overloading firewall classifiers as substitutes for control-plane
+  authorization checks.
 
 End of specification.
