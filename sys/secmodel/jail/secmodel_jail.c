@@ -60,7 +60,6 @@ MODULE(MODULE_CLASS_SECMODEL, secmodel_jail, NULL);
 
 static kauth_listener_t l_process;
 static kauth_listener_t l_cred;
-static kauth_listener_t l_network;
 
 static secmodel_t jail_sm;
 static kauth_key_t jail_key;
@@ -76,8 +75,6 @@ enum jail_resource_mode {
 
 static int jail_resource_mode = JAIL_RESOURCE_AGGREGATE;
 
-static int	secmodel_jail_network_cb(kauth_cred_t, kauth_action_t,
-		    void *, void *, void *, void *, void *);
 static int	secmodel_jail_sysctl_resource_mode(SYSCTLFN_ARGS);
 static rlim_t	secmodel_jail_cpu_ms_to_rlimit(uint64_t);
 static uint64_t	secmodel_jail_proc_as_bytes(struct proc *);
@@ -103,11 +100,8 @@ struct jail_entry {
 	char je_root[JAIL_ROOT_MAX + 1];
 	bool je_has_cpu_limit;
 	bool je_has_mem_limit;
-	bool je_has_ports;
 	rlim_t je_cpu_limit;
 	rlim_t je_mem_limit;
-	uint32_t je_nports;
-	uint16_t je_ports[JAIL_PORT_MAX];
 	LIST_ENTRY(jail_entry) je_entry;
 };
 
@@ -119,11 +113,8 @@ static jailid_t jail_next_id = 1;
 struct jail_config {
 	bool jc_has_cpu_limit;
 	bool jc_has_mem_limit;
-	bool jc_has_ports;
 	rlim_t jc_cpu_limit;
 	rlim_t jc_mem_limit;
-	uint32_t jc_nports;
-	uint16_t jc_ports[JAIL_PORT_MAX];
 };
 
 /*
@@ -218,11 +209,8 @@ secmodel_jail_get_config(jailid_t id, struct jail_config *config)
 	}
 	config->jc_has_cpu_limit = entry->je_has_cpu_limit;
 	config->jc_has_mem_limit = entry->je_has_mem_limit;
-	config->jc_has_ports = entry->je_has_ports;
 	config->jc_cpu_limit = entry->je_cpu_limit;
 	config->jc_mem_limit = entry->je_mem_limit;
-	config->jc_nports = entry->je_nports;
-	memcpy(config->jc_ports, entry->je_ports, sizeof(config->jc_ports));
 	mutex_exit(&jail_lock);
 
 	return true;
@@ -262,11 +250,8 @@ secmodel_jail_create(const struct jail_create *create,
 	if (config != NULL) {
 		entry->je_has_cpu_limit = config->jc_has_cpu_limit;
 		entry->je_has_mem_limit = config->jc_has_mem_limit;
-		entry->je_has_ports = config->jc_has_ports;
 		entry->je_cpu_limit = config->jc_cpu_limit;
 		entry->je_mem_limit = config->jc_mem_limit;
-		entry->je_nports = config->jc_nports;
-		memcpy(entry->je_ports, config->jc_ports, sizeof(entry->je_ports));
 	}
 	LIST_INSERT_HEAD(&jail_list, entry, je_entry);
 	mutex_exit(&jail_lock);
@@ -621,7 +606,7 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 
 		flags = create.jc_flags;
 		if ((flags & ~(JAIL_CREATE_MEMLIMIT |
-		    JAIL_CREATE_CPULIMIT | JAIL_CREATE_PORTS)) != 0)
+		    JAIL_CREATE_CPULIMIT)) != 0)
 			return EINVAL;
 
 		memset(&config, 0, sizeof(config));
@@ -636,15 +621,6 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 				return EINVAL;
 			config.jc_has_cpu_limit = true;
 			config.jc_cpu_limit = (rlim_t)create.jc_cpu_limit;
-		}
-		if ((flags & JAIL_CREATE_PORTS) != 0) {
-			if (create.jc_nports == 0 ||
-			    create.jc_nports > __arraycount(create.jc_ports))
-				return EINVAL;
-			config.jc_has_ports = true;
-			config.jc_nports = create.jc_nports;
-			memcpy(config.jc_ports, create.jc_ports,
-			    sizeof(config.jc_ports));
 		}
 		configp = &config;
 	} else {
@@ -978,8 +954,6 @@ secmodel_jail_start(void)
 	    secmodel_jail_process_cb, NULL);
 	l_cred = kauth_listen_scope(KAUTH_SCOPE_CRED,
 	    secmodel_jail_cred_cb, NULL);
-	l_network = kauth_listen_scope(KAUTH_SCOPE_NETWORK,
-	    secmodel_jail_network_cb, NULL);
 	uvm_proc_jail_memlimit_check = secmodel_jail_enforce_memlimit;
 }
 
@@ -996,7 +970,6 @@ secmodel_jail_stop(void)
 
 	kauth_unlisten_scope(l_process);
 	kauth_unlisten_scope(l_cred);
-	kauth_unlisten_scope(l_network);
 	kauth_deregister_key(jail_key);
 
 	mutex_enter(&jail_lock);
@@ -1088,70 +1061,6 @@ secmodel_jail_cred_cb(kauth_cred_t cred, kauth_action_t action,
 	default:
 		return KAUTH_RESULT_DEFER;
 	}
-}
-
-/*
- * kauth(9) listener for network scope.
- *
- * Enforces per-jail bind port allow-lists when configured.
- */
-int
-secmodel_jail_network_cb(kauth_cred_t cred, kauth_action_t action,
-    void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
-{
-	struct jail_config config;
-	struct sockaddr *sa;
-	struct sockaddr_in *sin;
-	struct sockaddr_in6 *sin6;
-	in_port_t port;
-	uint32_t i;
-	jailid_t id;
-
-	(void)cookie;
-	(void)arg1;
-	(void)arg3;
-
-	if (action != KAUTH_NETWORK_BIND)
-		return KAUTH_RESULT_DEFER;
-
-	if (secmodel_jail_is_host_root(cred))
-		return KAUTH_RESULT_DEFER;
-
-	id = secmodel_jail_cred_id(cred);
-	if (!secmodel_jail_get_config(id, &config))
-		return KAUTH_RESULT_DEFER;
-
-	if (!config.jc_has_ports)
-		return KAUTH_RESULT_DEFER;
-	(void)arg0;
-	(void)arg1;
-
-	sa = arg2;
-	if (sa == NULL)
-		return KAUTH_RESULT_DENY;
-
-	if (sa->sa_family == AF_INET) {
-		sin = (struct sockaddr_in *)sa;
-		port = ntohs(sin->sin_port);
-	} else if (sa->sa_family == AF_INET6) {
-		sin6 = (struct sockaddr_in6 *)sa;
-		port = ntohs(sin6->sin6_port);
-	} else {
-		return KAUTH_RESULT_DENY;
-	}
-
-	if (port == 0)
-		return KAUTH_RESULT_DEFER;
-
-	for (i = 0; i < config.jc_nports; i++) {
-		if (config.jc_ports[i] == port)
-			return KAUTH_RESULT_DEFER;
-	}
-
-	if (config.jc_nports > 0)
-		return KAUTH_RESULT_DENY;
-
-	return KAUTH_RESULT_DEFER;
 }
 
 /*

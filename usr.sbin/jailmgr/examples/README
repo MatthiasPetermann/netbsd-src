@@ -58,16 +58,8 @@ It uses one shared read-only base layer (from `base.tar.xz`) and per-jail writab
    /usr/sbin/jailmgr restart --all
    ```
 
-Per-jail allowed bind-port list format in `jail.conf`:
-
-```sh
-JAIL_PORTS="22,80,443"
-```
-
-
 ## Notes
 
-- `jailctl create -p <ports>` enforces per-jail allowed bind ports when `JAIL_PORTS` is configured.
 - `jailmgr start` uses `jailctl create` followed by `jailctl supervise`.
 - By default, bootstrap derives the set URL from `RELEASE` and `MACHINE_ARCH` as:
   `https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets`

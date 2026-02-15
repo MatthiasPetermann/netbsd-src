@@ -131,21 +131,6 @@ limit, the operation fails with
 The UVM hook is intentionally generic: UVM provides call sites while
 .Nm
 provides policy.
-.Sh NETWORK BIND POLICY
-When a jail is created with an allowed-port list, the network-scope
-.Xr kauth 9
-listener checks
-.Dv KAUTH_NETWORK_BIND
-requests and only permits non-zero bind ports listed in the jail's
-configuration.
-Both
-.Dv AF_INET
-and
-.Dv AF_INET6
-bind requests are evaluated.
-.Pp
-This policy is an authorization check and does not rewrite socket addresses.
-Address selection and external publication should be handled separately.
 .Sh OPERATIONAL LOGGING
 .Nm
 emits concise kernel log entries for high-value lifecycle events:
