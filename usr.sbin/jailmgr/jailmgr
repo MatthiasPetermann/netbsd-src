@@ -201,8 +201,14 @@ ensure_bridge_present() {
 		return
 	fi
 
-	ifconfig "${bridge}" create
-	ifconfig "${bridge}" up
+	if ! ifconfig "${bridge}" create >/dev/null 2>&1; then
+		echo "warning: could not create bridge interface ${bridge}; jail will start without vether networking" >&2
+		return 1
+	fi
+	if ! ifconfig "${bridge}" up >/dev/null 2>&1; then
+		echo "warning: could not bring up bridge interface ${bridge}; jail will start without vether networking" >&2
+		return 1
+	fi
 	echo "Created bridge interface ${bridge}"
 }
 
@@ -401,21 +407,39 @@ setup_jail_network() {
 		return
 	fi
 
-	ensure_bridge_present "${bridge}"
+	if ! ensure_bridge_present "${bridge}"; then
+		return
+	fi
 
 	if [ -r "${VETHER_STATE}" ]; then
 		JAIL_NET_IF=$(cat "${VETHER_STATE}")
 	fi
 	if [ -z "${JAIL_NET_IF}" ] || ! ifconfig "${JAIL_NET_IF}" >/dev/null 2>&1; then
-		JAIL_NET_IF=$(ifconfig vether create)
+		if ! JAIL_NET_IF=$(ifconfig vether create 2>/dev/null); then
+			echo "warning: could not create vether interface; jail will start without network interface" >&2
+			JAIL_NET_IF=
+			return
+		fi
 		echo "${JAIL_NET_IF}" > "${VETHER_STATE}"
 	fi
 
 	if ! brconfig "${bridge}" | awk -v ifn="${JAIL_NET_IF}" '$1 == ifn { found=1 } END { exit !found }'; then
-		brconfig "${bridge}" add "${JAIL_NET_IF}"
+		if ! brconfig "${bridge}" add "${JAIL_NET_IF}" >/dev/null 2>&1; then
+			echo "warning: could not add ${JAIL_NET_IF} to ${bridge}; jail will start without network interface" >&2
+			ifconfig "${JAIL_NET_IF}" destroy >/dev/null 2>&1 || true
+			rm -f "${VETHER_STATE}"
+			JAIL_NET_IF=
+			return
+		fi
 	fi
 
-	ifconfig "${JAIL_NET_IF}" up
+	if ! ifconfig "${JAIL_NET_IF}" up >/dev/null 2>&1; then
+		echo "warning: could not bring up ${JAIL_NET_IF}; jail will start without network interface" >&2
+		ifconfig "${JAIL_NET_IF}" destroy >/dev/null 2>&1 || true
+		rm -f "${VETHER_STATE}"
+		JAIL_NET_IF=
+		return
+	fi
 	write_jail_ifconfig "${JAIL_NET_IF}"
 }
 
