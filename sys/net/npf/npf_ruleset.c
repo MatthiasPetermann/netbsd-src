@@ -893,7 +893,9 @@ npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
 {
 	const char *jail_name = rl->r_jailname[0] ? rl->r_jailname : NULL;
 	const bool inbound = di_mask == NPF_RULE_IN;
+	struct secmodel_jail_eval_cred_matches_args args;
 	struct socket *so;
+	bool match = false;
 
 	if (jail_name == NULL && !inbound) {
 		return true;
@@ -912,7 +914,14 @@ npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
 		 */
 		return jail_name == NULL;
 	}
-	return secmodel_jail_cred_matches(so->so_cred, jail_name);
+	args.cred = so->so_cred;
+	args.name = jail_name;
+
+	if (secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES,
+	    &args, &match) != 0) {
+		return jail_name == NULL;
+	}
+	return match;
 }
 #else
 static bool

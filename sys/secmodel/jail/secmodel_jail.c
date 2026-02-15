@@ -1090,6 +1090,23 @@ secmodel_jail_cred_cb(kauth_cred_t cred, kauth_action_t action,
 	}
 }
 
+static int
+secmodel_jail_eval(const char *what, void *arg, void *ret)
+{
+	const struct secmodel_jail_eval_cred_matches_args *a;
+	bool *matchp;
+
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_CRED_MATCHES) != 0)
+		return ENOENT;
+	if (arg == NULL || ret == NULL)
+		return EINVAL;
+
+	a = arg;
+	matchp = ret;
+	*matchp = secmodel_jail_cred_matches(a->cred, a->name);
+	return 0;
+}
+
 /*
  * Module command handler: register/deregister the security model.
  */
@@ -1102,7 +1119,7 @@ secmodel_jail_modcmd(modcmd_t cmd, void *arg)
 	case MODULE_CMD_INIT:
 		error = secmodel_register(&jail_sm,
 		    SECMODEL_JAIL_ID, SECMODEL_JAIL_NAME,
-		    NULL, NULL, NULL);
+		    NULL, secmodel_jail_eval, NULL);
 		if (error != 0)
 			printf("secmodel_jail_modcmd::init: "
 			    "secmodel_register returned %d\n", error);
