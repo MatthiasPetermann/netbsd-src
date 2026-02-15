@@ -1,0 +1,191 @@
+secmodel_jail integration patterns with UVM and NPF
+=================================================
+
+Scope
+-----
+This note compares two distinct integration styles used by secmodel_jail:
+
+1) UVM integration (resource governance):
+   - `uvm_proc_jail_memlimit_check` callback consumed in VM growth paths.
+2) NPF integration (classification / policy matching):
+   - `secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES, ...)`
+     query from ruleset matching.
+
+The designs are intentionally different because they solve different kernel
+problems: hard admission control in memory-management code vs. optional policy
+annotation in packet-filter matching.
+
+A) UVM path: direct callback hook (push-style enforcement)
+-----------------------------------------------------------
+Primary examples:
+- Hook declaration and ownership boundary:
+  - `sys/uvm/uvm_extern.h` (`extern int (*uvm_proc_jail_memlimit_check)(...)`)
+  - `sys/uvm/uvm_glue.c` (default `NULL` function pointer)
+- Hook call sites in UVM growth operations:
+  - `sys/uvm/uvm_unix.c` (`sys_obreak`, `uvm_grow`)
+  - `sys/uvm/uvm_mmap.c` (`uvm_mmap` user mapping growth check)
+- Hook provider and lifecycle in secmodel_jail:
+  - `sys/secmodel/jail/secmodel_jail.c`
+    (`secmodel_jail_start` installs, `secmodel_jail_stop` removes,
+     `secmodel_jail_enforce_memlimit` implements policy)
+
+Objective
+~~~~~~~~~
+Provide a low-latency and deterministic veto point before user address-space
+expansion (sbrk/mmap/stack growth), so jail memory limits are enforced even if
+individual processes would otherwise pass normal per-process limits.
+
+Design mechanics
+~~~~~~~~~~~~~~~~
+- UVM owns all call sites and remains generic.
+- secmodel_jail optionally plugs in one function pointer.
+- In aggregate mode, secmodel_jail computes jail-wide usage snapshot and
+  returns `ENOMEM` when a growth would exceed configured jail memory limit.
+- If no model is active, the hook remains `NULL` and UVM behavior is unchanged.
+
+Advantages
+~~~~~~~~~~
+- Strong enforcement semantics at exactly the right choke points.
+- Small per-check overhead (single null-check + direct call).
+- Works uniformly for several growth vectors (mmap/sbrk/stack) via shared hook.
+- Explicit module lifecycle control (install/uninstall) avoids hidden coupling.
+
+Trade-offs / disadvantages
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Tighter ABI/API coupling to UVM internals (named symbol contract).
+- Single hook slot: less composable if multiple independent consumers need the
+  same interception point.
+- Policy logic must be safe in VM-sensitive paths (locking/cost constraints).
+
+B) NPF path: secmodel query interface (pull-style classification)
+-----------------------------------------------------------------
+Primary examples:
+- Rule carries an optional jail selector:
+  - `sys/net/npf/npf_ruleset.c` (`jail-name` import/export on rules)
+- Packet-to-socket ownership resolution:
+  - `npf_rule_getsock_outbound`, `npf_rule_getsock_inbound`
+- Jail check via generic secmodel evaluation call:
+  - `npf_rule_jail_match` calls
+    `secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES, ...)`
+- secmodel_jail evaluation endpoint:
+  - `sys/secmodel/jail/secmodel_jail.c` (`secmodel_jail_eval`)
+
+Objective
+~~~~~~~~~
+Allow packet-filter rules to match traffic by jail identity (or host context)
+without introducing direct NPF-to-secmodel_jail symbol dependencies.
+
+Design mechanics
+~~~~~~~~~~~~~~~~
+- NPF stores optional rule qualifier `jail-name`.
+- During rule evaluation, NPF derives socket credentials when possible.
+- NPF asks secmodel framework whether credential matches requested jail name.
+- If owner mapping is unavailable, behavior falls back conservatively to legacy
+  semantics unless an explicit jail qualifier requires strict matching.
+
+Advantages
+~~~~~~~~~~
+- Loose coupling: NPF depends on secmodel framework interface, not concrete
+  secmodel_jail internals.
+- Extensible request model (`what` string + typed args/ret) for future queries.
+- Failure isolation: if query fails, code can choose fallback behavior.
+- Natural fit for optional metadata-driven filtering (rule qualifiers).
+
+Trade-offs / disadvantages
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Slightly more indirection and runtime branching than direct callback.
+- Semantics depend on ability to resolve packet ownership to a local socket;
+  non-local traffic may use fallback behavior.
+- Enforcement is conditional rule logic, not a universal hard resource gate.
+
+Side-by-side design classification
+----------------------------------
+1) Coupling level
+   - UVM path: tighter, explicit function-pointer contract.
+   - NPF path: looser, message-like secmodel query boundary.
+
+2) Policy role
+   - UVM path: hard admission control for memory growth.
+   - NPF path: contextual packet classification / rule scoping.
+
+3) Failure behavior
+   - UVM path: denial (`ENOMEM`) at growth site when over limit.
+   - NPF path: per-rule match result with fallback semantics if unavailable.
+
+4) Composability
+   - UVM path: efficient but single-hook style (limited multiplexing).
+   - NPF path: more composable protocol-like interface.
+
+5) Performance profile
+   - UVM path: minimal call overhead, suited for hot VM paths.
+   - NPF path: additional lookup/evaluation steps, acceptable for optional
+     filtering qualifiers.
+
+Why both approaches coexist
+---------------------------
+The two integrations reflect different design priorities:
+- UVM requires deterministic, always-on enforcement at subsystem choke points.
+- NPF requires flexible, optional, and decoupled identity matching in a
+  rules engine where degraded behavior is still meaningful.
+
+In short: callback-hook design for hard resource gating; secmodel-eval design
+for policy-rich, loosely coupled classification.
+
+Kernel references for the same mechanisms in other contexts
+===========================================================
+
+1) Same mechanism as UVM hook: optional subsystem callback pointers
+-------------------------------------------------------------------
+A close in-kernel analogue to `uvm_proc_jail_memlimit_check` is the SysV SHM
+integration with UVM:
+
+- Hook declarations:
+  - `sys/sys/shm.h`: `uvm_shmexit`, `uvm_shmfork`
+- Hook storage and call sites in UVM core:
+  - `sys/uvm/uvm_map.c` defines them as `NULL` defaults and invokes them during
+    vmspace teardown/fork only if set.
+- Hook provider lifecycle:
+  - `sys/kern/sysv_shm.c` installs callbacks at init and clears them on detach.
+
+Interpretation ("why")
+~~~~~~~~~~~~~~~~~~~~~~
+This pattern appears when one subsystem (UVM) needs to expose high-frequency,
+well-defined life-cycle points to an optional feature (here SysV SHM; in jail's
+case aggregate memlimit policy) without hard-linking UVM to feature internals.
+It optimizes for:
+- low overhead at hot call sites,
+- explicit ownership/lifecycle,
+- no cost when feature is absent (`NULL` pointer).
+
+2) Same mechanism as NPF jail query: secmodel_eval broker calls
+----------------------------------------------------------------
+A close in-kernel analogue to `npf_rule_jail_match -> secmodel_eval(...)` is in
+`secmodel_extensions`:
+
+- Securelevel query via secmodel broker:
+  - `sys/secmodel/extensions/secmodel_extensions.c`:
+    `is_securelevel_above()` calls
+    `secmodel_eval("org.netbsd.secmodel.securelevel", "is-securelevel-above", ...)`
+- Root privilege query via secmodel broker:
+  - same file, process/network/vnode callbacks call
+    `secmodel_eval("org.netbsd.secmodel.suser", "is-root", ...)`
+
+Interpretation ("why")
+~~~~~~~~~~~~~~~~~~~~~~
+This pattern appears when the caller wants policy answers from another
+security model but prefers to depend on a stable broker API (`secmodel_eval`)
+instead of direct symbol coupling. It optimizes for:
+- loose coupling between independently loadable security components,
+- protocol-like extensibility (`what` + typed args/return),
+- graceful fallback behavior if provider is absent or query fails.
+
+Design reading across NetBSD kernel
+-----------------------------------
+- Use callback hooks when you need deterministic enforcement exactly at
+  subsystem choke points and can accept tighter API coupling.
+- Use eval/broker queries when you need cross-model policy composition with
+  weaker coupling and more evolvable interfaces.
+
+That is consistent with current secmodel_jail usage:
+- UVM path (memory growth): hard gate, callback hook.
+- NPF path (rule match qualifier): policy query, broker call.
