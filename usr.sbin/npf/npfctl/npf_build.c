@@ -693,8 +693,8 @@ npfctl_build_group_end(void)
  * if any, and insert into the ruleset of current group, or set the rule.
  */
 void
-npfctl_build_rule(uint32_t attr, const char *ifname, sa_family_t family,
-    const npfvar_t *popts, const filt_opts_t *fopts,
+npfctl_build_rule(uint32_t attr, const char *ifname, const char *jail_name,
+    sa_family_t family, const npfvar_t *popts, const filt_opts_t *fopts,
     const char *pcap_filter, const char *rproc)
 {
 	nl_rule_t *rl;
@@ -710,6 +710,10 @@ npfctl_build_rule(uint32_t attr, const char *ifname, sa_family_t family,
 
 	if (rproc) {
 		npf_rule_setproc(rl, rproc);
+	}
+
+	if (jail_name) {
+		npf_rule_setjailname(rl, jail_name);
 	}
 
 	if (npf_conf) {

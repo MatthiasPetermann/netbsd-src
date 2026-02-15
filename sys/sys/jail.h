@@ -30,6 +30,7 @@
 #define _SYS_JAIL_H_
 
 #include <sys/types.h>
+#include <stdbool.h>
 
 typedef uint32_t jailid_t;
 

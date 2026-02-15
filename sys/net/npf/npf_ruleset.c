@@ -44,6 +44,13 @@ __KERNEL_RCSID(0, "$NetBSD: npf_ruleset.c,v 1.51.20.1 2023/08/23 18:19:32 martin
 #include <sys/queue.h>
 #include <sys/mbuf.h>
 #include <sys/types.h>
+#include <sys/socketvar.h>
+
+#include <netinet/in_pcb.h>
+#include <netinet/tcp_var.h>
+#include <netinet/udp_var.h>
+
+#include <secmodel/jail/jail.h>
 
 #include <net/bpf.h>
 #include <net/bpfjit.h>
@@ -112,6 +119,7 @@ struct npf_rule {
 	/* Rule ID, name and the optional key. */
 	uint64_t		r_id;
 	char			r_name[NPF_RULE_MAXNAMELEN];
+	char			r_jailname[JAIL_NAME_MAX + 1];
 	uint8_t			r_key[NPF_RULE_MAXKEYLEN];
 
 	/* All-list entry and the auxiliary info. */
@@ -618,11 +626,22 @@ npf_rule_alloc(npf_t *npf, const nvlist_t *rule)
 	}
 	rl->r_natp = NULL;
 
-	/* Name (optional) */
+	/* Name (optional). */
 	if ((rname = dnvlist_get_string(rule, "name", NULL)) != NULL) {
 		strlcpy(rl->r_name, rname, NPF_RULE_MAXNAMELEN);
 	} else {
 		rl->r_name[0] = '\0';
+	}
+
+	/* Jail selector name (optional). */
+	if ((rname = dnvlist_get_string(rule, "jail-name", NULL)) != NULL) {
+		if (strlcpy(rl->r_jailname, rname, sizeof(rl->r_jailname)) >=
+		    sizeof(rl->r_jailname)) {
+			kmem_free(rl, sizeof(npf_rule_t));
+			return NULL;
+		}
+	} else {
+		rl->r_jailname[0] = '\0';
 	}
 
 	/* Attributes, priority and interface ID (optional). */
@@ -684,6 +703,9 @@ npf_rule_export(npf_t *npf, const npf_rule_t *rl)
 
 	if (rl->r_name[0]) {
 		nvlist_add_string(rule, "name", rl->r_name);
+	}
+	if (rl->r_jailname[0]) {
+		nvlist_add_string(rule, "jail-name", rl->r_jailname);
 	}
 	if (NPF_DYNAMIC_RULE_P(rl->r_attr)) {
 		nvlist_add_binary(rule, "key", rl->r_key, NPF_RULE_MAXKEYLEN);
@@ -798,13 +820,119 @@ npf_rule_setnat(npf_rule_t *rl, npf_natpolicy_t *np)
 	rl->r_natp = np;
 }
 
+
+#ifdef _KERNEL
+static struct socket *
+npf_rule_getsock_outbound(const npf_cache_t *npc)
+{
+	struct mbuf *m = nbuf_head_mbuf(npc->npc_nbuf);
+	struct m_tag *mt;
+
+	mt = m_tag_find(m, PACKET_TAG_SO);
+	if (mt == NULL) {
+		return NULL;
+	}
+	return *(struct socket **)(mt + 1);
+}
+
+static struct socket *
+npf_rule_getsock_inbound(const npf_cache_t *npc)
+{
+	struct inpcb *inp = NULL;
+	const in_port_t sport = npc->npc_l4.udp->uh_sport;
+	const in_port_t dport = npc->npc_l4.udp->uh_dport;
+
+#ifdef INET
+	if (npf_iscached(npc, NPC_IP4)) {
+		const struct in_addr saddr = { .s_addr = npc->npc_ips[NPF_SRC]->word32[0] };
+		const struct in_addr daddr = { .s_addr = npc->npc_ips[NPF_DST]->word32[0] };
+
+		if (npf_iscached(npc, NPC_TCP)) {
+			inp = inpcb_lookup(&tcbtable, saddr, sport, daddr, dport, NULL);
+			if (inp == NULL) {
+				inp = inpcb_lookup_bound(&tcbtable, daddr, dport);
+			}
+		} else if (npf_iscached(npc, NPC_UDP)) {
+			inp = inpcb_lookup(&udbtable, saddr, sport, daddr, dport, NULL);
+			if (inp == NULL) {
+				inp = inpcb_lookup_bound(&udbtable, daddr, dport);
+			}
+		}
+	}
+#endif
+#ifdef INET6
+	if (inp == NULL && npf_iscached(npc, NPC_IP6)) {
+		const struct in6_addr * const saddr =
+		    (const struct in6_addr *)npc->npc_ips[NPF_SRC];
+		const struct in6_addr * const daddr =
+		    (const struct in6_addr *)npc->npc_ips[NPF_DST];
+
+		if (npf_iscached(npc, NPC_TCP)) {
+			inp = in6pcb_lookup(&tcbtable, saddr, sport, daddr, dport, 0, NULL);
+			if (inp == NULL) {
+				inp = in6pcb_lookup_bound(&tcbtable, daddr, dport, 1);
+			}
+		} else if (npf_iscached(npc, NPC_UDP)) {
+			inp = in6pcb_lookup(&udbtable, saddr, sport, daddr, dport, 0, NULL);
+			if (inp == NULL) {
+				inp = in6pcb_lookup_bound(&udbtable, daddr, dport, 1);
+			}
+		}
+	}
+#endif
+
+	if (inp == NULL || inp->inp_socket == NULL) {
+		return NULL;
+	}
+	return inp->inp_socket;
+}
+
+static bool
+npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
+    const int di_mask)
+{
+	const char *jail_name = rl->r_jailname[0] ? rl->r_jailname : NULL;
+	const bool inbound = di_mask == NPF_RULE_IN;
+	struct socket *so;
+
+	if (jail_name == NULL && !inbound) {
+		return true;
+	}
+
+	if (inbound && !npf_iscached(npc, NPC_TCP) && !npf_iscached(npc, NPC_UDP)) {
+		return true;
+	}
+
+	so = inbound ? npf_rule_getsock_inbound(npc) : npf_rule_getsock_outbound(npc);
+	if (so == NULL || so->so_cred == NULL) {
+		/*
+		 * Inbound ownership checks apply only when packet can be associated
+		 * with a local socket owner.  Keep legacy behaviour for non-local
+		 * traffic unless a jail qualifier was explicitly requested.
+		 */
+		return jail_name == NULL;
+	}
+	return secmodel_jail_cred_matches(so->so_cred, jail_name);
+}
+#else
+static bool
+npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
+    const int di_mask)
+{
+	(void)rl;
+	(void)npc;
+	(void)di_mask;
+	return true;
+}
+#endif
+
 /*
  * npf_rule_inspect: match the interface, direction and run the filter code.
  * Returns true if rule matches and false otherwise.
  */
 static inline bool
-npf_rule_inspect(const npf_rule_t *rl, bpf_args_t *bc_args,
-    const int di_mask, const unsigned ifid)
+npf_rule_inspect(const npf_rule_t *rl, const npf_cache_t *npc,
+    bpf_args_t *bc_args, const int di_mask, const unsigned ifid)
 {
 	/* Match the interface. */
 	if (rl->r_ifid && rl->r_ifid != ifid) {
@@ -815,6 +943,10 @@ npf_rule_inspect(const npf_rule_t *rl, bpf_args_t *bc_args,
 	if ((rl->r_attr & NPF_RULE_DIMASK) != NPF_RULE_DIMASK) {
 		if ((rl->r_attr & di_mask) == 0)
 			return false;
+	}
+
+	if (!npf_rule_jail_match(rl, npc, di_mask)) {
+		return false;
 	}
 
 	/* Any code? */
@@ -831,8 +963,8 @@ npf_rule_inspect(const npf_rule_t *rl, bpf_args_t *bc_args,
  * This is only for the dynamic rules.  Subrules cannot have nested rules.
  */
 static inline npf_rule_t *
-npf_rule_reinspect(const npf_rule_t *rg, bpf_args_t *bc_args,
-    const int di_mask, const unsigned ifid)
+npf_rule_reinspect(const npf_rule_t *rg, const npf_cache_t *npc,
+    bpf_args_t *bc_args, const int di_mask, const unsigned ifid)
 {
 	npf_rule_t *final_rl = NULL, *rl;
 
@@ -841,7 +973,7 @@ npf_rule_reinspect(const npf_rule_t *rg, bpf_args_t *bc_args,
 	rl = atomic_load_relaxed(&rg->r_subset);
 	for (; rl; rl = atomic_load_relaxed(&rl->r_next)) {
 		KASSERT(!final_rl || rl->r_priority >= final_rl->r_priority);
-		if (!npf_rule_inspect(rl, bc_args, di_mask, ifid)) {
+		if (!npf_rule_inspect(rl, npc, bc_args, di_mask, ifid)) {
 			continue;
 		}
 		if (rl->r_attr & NPF_RULE_FINAL) {
@@ -896,7 +1028,7 @@ npf_ruleset_inspect(npf_cache_t *npc, const npf_ruleset_t *rlset,
 		}
 
 		/* Main inspection of the rule. */
-		if (!npf_rule_inspect(rl, &bc_args, di_mask, ifid)) {
+		if (!npf_rule_inspect(rl, npc, &bc_args, di_mask, ifid)) {
 			n = skip_to;
 			continue;
 		}
@@ -906,7 +1038,7 @@ npf_ruleset_inspect(npf_cache_t *npc, const npf_ruleset_t *rlset,
 			 * If this is a dynamic rule, re-inspect the subrules.
 			 * If it has any matching rule, then it is final.
 			 */
-			rl = npf_rule_reinspect(rl, &bc_args, di_mask, ifid);
+			rl = npf_rule_reinspect(rl, npc, &bc_args, di_mask, ifid);
 			if (rl != NULL) {
 				final_rl = rl;
 				break;

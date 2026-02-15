@@ -158,6 +158,26 @@ extern pfil_head_t *inet_pfil_hook;			/* XXX */
 
 int ip_do_loopback_cksum = 0;
 
+
+static void
+ip_setsockettag(struct mbuf *m, struct inpcb *inp)
+{
+	struct m_tag *mtag;
+	struct socket **sotag;
+
+	if (inp == NULL || inp->inp_socket == NULL)
+		return;
+	if (m_tag_find(m, PACKET_TAG_SO) != NULL)
+		return;
+
+	mtag = m_tag_get(PACKET_TAG_SO, sizeof(*sotag), M_NOWAIT);
+	if (mtag == NULL)
+		return;
+	sotag = (struct socket **)(mtag + 1);
+	*sotag = inp->inp_socket;
+	m_tag_prepend(m, mtag);
+}
+
 static int
 ip_mark_mpls(struct ifnet * const ifp, struct mbuf * const m,
     const struct rtentry *rt)
@@ -643,6 +663,7 @@ sendit:
 		/*
 		 * Run through list of hooks for output packets.
 		 */
+		ip_setsockettag(m, inp);
 		error = pfil_run_hooks(inet_pfil_hook, &m, ifp, PFIL_OUT);
 		if (error || m == NULL) {
 			IP_STATINC(IP_STAT_PFILDROP_OUT);

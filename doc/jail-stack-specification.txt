@@ -12,6 +12,8 @@ This document describes the behavior implemented by the current tree for:
 
 The scope is intentionally pragmatic: process isolation first, host networking
 by design (not virtualized), and simple operational workflows.
+Network virtualization (per-jail stacks/namespaces) is intentionally out of
+scope due to complexity and maintainability costs.
 
 
 1. Design Goals
@@ -26,8 +28,8 @@ by design (not virtualized), and simple operational workflows.
 - The solution deliberately reuses the host network stack.
 - There is no attempt to virtualize per-jail network namespaces, interfaces,
   routing tables, or independent TCP/IP stacks.
-- Optional per-jail bind-port allow-lists are enforced as an authorization
-  layer, not as network virtualization.
+- This is a conscious architecture decision: secmodel_jail focuses on process
+  isolation and credential-based membership, not network stack virtualization.
 
 1.3 Operational Simplicity and Low Overhead
 - Favor lightweight primitives already present in NetBSD:
@@ -40,8 +42,9 @@ by design (not virtualized), and simple operational workflows.
 
 1.4 Security Improvements at Obvious Control Points
 - Restrict inter-jail process signaling and process discovery.
-- Optionally restrict bind() to host-approved non-zero ports.
-- Optionally apply CPU and memory limits per jail.
+- Apply CPU and memory limits per jail (optional).
+- Integrate with NPF jail-aware filtering to make external service exposure
+  explicit at firewall policy level.
 
 1.5 Out-of-Scope / Non-Goals
 - No full-system virtualization semantics.
@@ -87,7 +90,6 @@ by design (not virtualized), and simple operational workflows.
   - root path (metadata for userland workflows)
   - optional CPU limit
   - optional memory limit
-  - optional allowed bind ports
 - Jail destroy is refused while any process (including zombies) still has that
   jail ID.
 
@@ -110,14 +112,17 @@ by design (not virtualized), and simple operational workflows.
 - New credentials initialize with jail id 0.
 - Credential copies preserve jail id.
 
-3.5 Network Bind Authorization
-- Hook point: KAUTH_NETWORK_BIND.
-- Applies when jail has an allowed-port list.
-- Supports AF_INET and AF_INET6 bind checks.
-- Port 0 (ephemeral bind request) is not blocked by allow-list logic.
-- Non-zero ports not present in configured allow-list are denied.
-- This is authorization-only; it does not rewrite addresses or virtualize
-  networking.
+3.5 Network Scope and Exposure Control
+- secmodel_jail does not currently implement per-jail network namespaces or a
+  virtual TCP/IP stack.
+- Processes in jails may bind to host addresses/ports subject to normal host
+  networking rules.
+- This is intentional: prior experiments with kauth-based bind restrictions
+  (e.g., alias-IP-only binding or strict per-port policies) showed limitations
+  in real workloads (for example DNS) and required brittle workarounds.
+- Instead, network exposure is controlled explicitly at packet-filter policy
+  level via NPF jail-aware rules (`jail <name>`), which keeps architecture and
+  operations simpler while making external exposure intentional.
 
 3.6 Resource Enforcement
 
@@ -168,7 +173,7 @@ by design (not virtualized), and simple operational workflows.
 -------------------------------------------------
 
 4.1 Command Surface
-- create [-c cpu-ms] [-m bytes] [-p ports] -n name <root>
+- create [-c cpu-ms] [-m bytes] -n name <root>
 - supervise [-p priority] [-t tag] <jail-id|name> <command...>
 - destroy <jail-id|name>
 - exec <jail-id|name> [command...]
@@ -184,7 +189,6 @@ by design (not virtualized), and simple operational workflows.
 - Optional policies:
   - CPU limit in milliseconds
   - memory limit in bytes
-  - comma-separated allowed bind ports
 
 4.4 Exec Behavior
 - chdir(root), chroot("."), chdir("/")
@@ -222,7 +226,6 @@ by design (not virtualized), and simple operational workflows.
 - Global config: /etc/jailmgr.conf (or JAILMGR_CONF override).
 - Per-jail config: ${JAIL_DATA_DIR}/<name>/jail.conf.
 - Supports global and per-jail supervised command selection.
-- Supports per-jail JAIL_PORTS passed through to jailctl create -p.
 
 5.4 Commands
 - bootstrap:
@@ -235,7 +238,7 @@ by design (not virtualized), and simple operational workflows.
   - generate jail.conf metadata
 - start <name>|--all:
   - mount composed root
-  - create jail (with optional bind-port policy)
+  - create jail
   - run jailctl supervise with configured service command
 - stop <name>|--all:
   - stop supervise process
@@ -255,7 +258,8 @@ by design (not virtualized), and simple operational workflows.
 6.1 What This Stack Is Good At
 - Efficient service isolation and management on one host.
 - Lightweight container-like operations with low conceptual overhead.
-- Clear host-centric control over process interaction and bind permissions.
+- Clear host-centric control over process interaction and explicit network
+  exposure policy when combined with NPF jail-aware filtering.
 
 6.2 What This Stack Does Not Attempt
 - It does not emulate full VM isolation characteristics.
@@ -270,7 +274,8 @@ by design (not virtualized), and simple operational workflows.
 ------------------------------------
 - resource_mode switching affects future checks only.
 - Existing process RLIMIT values are not rewritten on mode switch.
-- Port policy is deny-by-default only when a list is configured.
 - Process isolation behavior depends on jail ID assignment in credentials;
   host-root control plane remains intentionally global.
+- Network exposure control is delegated to firewall policy (NPF), not bind-time
+  namespace/stack virtualization in secmodel_jail.
 
