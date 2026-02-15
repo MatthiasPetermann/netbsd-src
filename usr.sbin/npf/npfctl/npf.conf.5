@@ -300,6 +300,13 @@ its credentials against the configured jail name.
 If an inbound rule omits
 .Cm jail ,
 host-only semantics are applied for TCP/UDP traffic (jail id 0).
+If no local socket owner can be resolved for inbound traffic,
+an explicit
+.Cm jail
+qualifier does not match,
+while rules without
+.Cm jail
+retain legacy non-jail-restricted behavior.
 
 .Pp
 A
