@@ -110,6 +110,8 @@ static LIST_HEAD(, jail_entry) jail_list =
 static kmutex_t jail_lock;
 static jailid_t jail_next_id = 1;
 
+static struct jail_entry *secmodel_jail_lookup(jailid_t);
+
 struct jail_config {
 	bool jc_has_cpu_limit;
 	bool jc_has_mem_limit;
@@ -138,6 +140,31 @@ static void
 secmodel_jail_cred_setid(kauth_cred_t cred, jailid_t id)
 {
 	kauth_cred_setdata(cred, jail_key, (void *)(uintptr_t)id);
+}
+
+bool
+secmodel_jail_cred_matches(kauth_cred_t cred, const char *name)
+{
+	const struct jail_entry *entry;
+	jailid_t id;
+
+	id = secmodel_jail_cred_id(cred);
+	if (name == NULL) {
+		return id == JAILID_HOST;
+	}
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry == NULL) {
+		mutex_exit(&jail_lock);
+		return false;
+	}
+	if (strcmp(entry->je_name, name) != 0) {
+		mutex_exit(&jail_lock);
+		return false;
+	}
+	mutex_exit(&jail_lock);
+	return true;
 }
 
 /*

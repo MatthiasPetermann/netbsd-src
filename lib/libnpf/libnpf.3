@@ -69,6 +69,7 @@
 .Fn npf_rule_setprio "nl_rule_t *rl" "int pri"
 .Ft int
 .Fn npf_rule_setproc "nl_rule_t *rl" "const char *name"
+.Fn npf_rule_setjailname "nl_rule_t *rl" "const char *name"
 .Ft int
 .Fn npf_rule_insert "nl_config_t *ncf" "nl_rule_t *parent" "nl_rule_t *rl"
 .Ft bool
@@ -271,6 +272,9 @@ assigned and will share this level in the ordered way.
 .\" ---
 .It Fn npf_rule_setproc "rl" "name"
 Set a procedure for the specified rule.
+." ---
+.It Fn npf_rule_setjailname "rl" "name"
+Set a jail selector name for the specified rule.
 .\" ---
 .It Fn npf_rule_insert "ncf" "parent" "rl"
 Insert the rule into the set of the parent rule specified by

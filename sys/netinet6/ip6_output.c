@@ -184,6 +184,25 @@ ip6_if_output(struct ifnet * const ifp, struct ifnet * const origifp,
 	return error;
 }
 
+static void
+ip6_setsockettag(struct mbuf *m, struct inpcb *inp)
+{
+	struct m_tag *mtag;
+	struct socket **sotag;
+
+	if (inp == NULL || inp->inp_socket == NULL)
+		return;
+	if (m_tag_find(m, PACKET_TAG_SO) != NULL)
+		return;
+
+	mtag = m_tag_get(PACKET_TAG_SO, sizeof(*sotag), M_NOWAIT);
+	if (mtag == NULL)
+		return;
+	sotag = (struct socket **)(mtag + 1);
+	*sotag = inp->inp_socket;
+	m_tag_prepend(m, mtag);
+}
+
 /*
  * IP6 output. The packet in mbuf chain m contains a skeletal IP6
  * header (with pri, len, nxt, hlim, src, dst).
@@ -770,6 +789,7 @@ ip6_output(
 	/*
 	 * Run through list of hooks for output packets.
 	 */
+	ip6_setsockettag(m, inp);
 	error = pfil_run_hooks(inet6_pfil_hook, &m, ifp, PFIL_OUT);
 	if (error != 0 || m == NULL) {
 		IP6_STATINC(IP6_STAT_PFILDROP_OUT);
