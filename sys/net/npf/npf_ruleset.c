@@ -44,11 +44,6 @@ __KERNEL_RCSID(0, "$NetBSD: npf_ruleset.c,v 1.51.20.1 2023/08/23 18:19:32 martin
 #include <sys/queue.h>
 #include <sys/mbuf.h>
 #include <sys/types.h>
-#include <sys/socketvar.h>
-
-#include <netinet/in_pcb.h>
-#include <netinet/tcp_var.h>
-#include <netinet/udp_var.h>
 
 
 #include <net/bpf.h>
