@@ -29,6 +29,8 @@
 #ifndef _SECMODEL_JAIL_JAIL_H_
 #define _SECMODEL_JAIL_JAIL_H_
 
+#include <secmodel/secmodel.h>
+
 /*
  * secmodel_jail enforces process visibility and signal delivery based on a
  * jail id stored in credentials. Host root (jail id 0) bypasses these checks.
@@ -47,5 +49,11 @@ int secmodel_jail_cred_cb(kauth_cred_t, kauth_action_t, void *,
 
 bool secmodel_jail_cred_matches(kauth_cred_t, const char *);
 
+#define SECMODEL_JAIL_EVAL_CRED_MATCHES "cred-matches"
+
+struct secmodel_jail_eval_cred_matches_args {
+	kauth_cred_t cred;
+	const char *name;
+};
 
 #endif /* !_SECMODEL_JAIL_JAIL_H_ */

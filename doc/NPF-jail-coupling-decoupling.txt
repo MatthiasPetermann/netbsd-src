@@ -1,0 +1,220 @@
+NPF / UVM / secmodel_jail Coupling and Decoupling
+=================================================
+
+Overview
+--------
+
+This note explains how the jail-related integration is wired between:
+
+- NPF (packet filter rule matching)
+- UVM (process address-space growth checks)
+- secmodel_jail (jail identity and policy implementation)
+- secmodel core (registration and optional query dispatch)
+
+The goal is to make clear which dependencies are intentionally tight,
+which are optional at runtime, and how behavior changes when
+secmodel_jail is not loaded.
+
+
+1) Components and responsibilities
+----------------------------------
+
+secmodel_jail
+~~~~~~~~~~~~~
+
+secmodel_jail is the authority for jail identity stored in credentials,
+jail lifecycle, and jail policy checks.  It owns:
+
+- jail credential matching logic (`secmodel_jail_cred_matches`)
+- jail process visibility/signal policy hooks (kauth process scope)
+- credential initialization/copy hooks (kauth cred scope)
+- optional memory admission callback into UVM
+
+secmodel core (`secmodel_register`, `secmodel_eval`)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+secmodel core is a generic registry and dispatch layer for security models.
+Each model can register an `sm_eval` callback.  Consumers query by secmodel
+ID + query string through `secmodel_eval(...)`.
+
+NPF
+~~~
+
+NPF uses jail information only for optional rule qualifiers (`jail-name`)
+and for host-vs-jailed owner checks in packet/socket ownership matching.
+NPF should not depend on secmodel_jail internals at link time.
+
+UVM
+~~~
+
+UVM has a generic function-pointer hook:
+
+- `uvm_proc_jail_memlimit_check`
+
+This pointer is `NULL` by default.  secmodel_jail sets it while active and
+clears it on unload.  UVM checks pointer presence before calling.
+
+
+2) Current dependency model
+---------------------------
+
+2.1 UVM <-> secmodel_jail (function-pointer optional coupling)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- UVM exports `uvm_proc_jail_memlimit_check` as an optional callback slot.
+- secmodel_jail assigns `secmodel_jail_enforce_memlimit` during start.
+- secmodel_jail clears the pointer during stop, with identity check.
+
+Properties:
+
+- No hard linker dependency from UVM to secmodel_jail.
+- Runtime optional behavior; if secmodel_jail is absent, UVM simply skips
+  jail memory checks.
+
+2.2 NPF <-> secmodel_jail (secmodel_eval decoupling)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+NPF does not call `secmodel_jail_cred_matches` directly.  Instead:
+
+- NPF builds `struct secmodel_jail_eval_cred_matches_args`
+- NPF calls
+  `secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES, ...)`
+- secmodel_jail provides that query through `secmodel_jail_eval`
+  registered as `sm_eval` in `secmodel_register(...)`.
+
+Properties:
+
+- No hard linker dependency from NPF to secmodel_jail symbols.
+- NPF depends only on secmodel core API and jail query contract
+  (ID + query name + argument struct).
+- If secmodel_jail is not registered, `secmodel_eval` returns an error and
+  NPF applies fallback behavior.
+
+
+3) Why `secmodel_jail_eval` must be passed to `secmodel_register`
+-----------------------------------------------------------------
+
+`secmodel_register` stores callbacks in the model descriptor:
+
+- `sm_eval`
+- `sm_setinfo`
+
+`secmodel_eval` looks up a model by ID and calls `sm_eval`.
+If `sm_eval == NULL`, `secmodel_eval` cannot answer queries for that model.
+
+Therefore, secmodel_jail must register with
+`sm_eval = secmodel_jail_eval` so that consumers (like NPF) can query
+jail state via the generic secmodel interface.
+
+Without this, secmodel_jail could still enforce kauth policy internally,
+but external consumers would have no generic runtime query path.
+
+
+4) Runtime behavior matrix
+--------------------------
+
+Case A: secmodel_jail loaded
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- UVM memory growth checks can call jail memlimit hook.
+- NPF jail-related ownership checks can query secmodel_jail via
+  `secmodel_eval`.
+- Jail-qualified NPF rules (`jail-name = ...`) can match by jail identity.
+
+Case B: secmodel_jail not loaded
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- UVM: hook pointer remains `NULL`; no jail memlimit enforcement.
+- NPF: `secmodel_eval(SECMODEL_JAIL_ID, ...)` fails; NPF fallback applies:
+  - rules with explicit `jail-name` do not match
+  - unqualified behavior remains permissive/legacy as implemented in NPF
+
+No null-pointer dereference should occur in either integration path, because:
+
+- UVM checks function pointer before calling.
+- NPF handles `secmodel_eval` failure explicitly.
+
+
+5) Coupling summary
+-------------------
+
+Tight coupling (intentional):
+
+- secmodel_jail internal policy logic <-> jail data structures
+
+Loose coupling (intentional):
+
+- UVM -> secmodel_jail via optional callback slot
+- NPF -> secmodel_jail via secmodel registry/query (`secmodel_eval`)
+
+This split preserves modularity while allowing jail-specific enforcement and
+matching where available.
+
+6) Why UVM uses a callback pointer while NPF uses secmodel_eval
+----------------------------------------------------------------
+
+A natural question is whether NPF could mirror the UVM pattern and use a
+runtime function pointer installed by secmodel_jail.  Technically, yes.
+However, there are practical layering and maintenance trade-offs.
+
+What is similar
+~~~~~~~~~~~~~~~
+
+Both UVM and NPF need optional jail-aware behavior that should remain safe
+when secmodel_jail is absent.
+
+What is different
+~~~~~~~~~~~~~~~~~
+
+- UVM exports a narrowly scoped VM-internal hook for one specific decision
+  point (address-space growth admission).
+- NPF performs a security-model query (credential-to-jail matching), which
+  naturally fits the generic secmodel registry/query API.
+
+In other words, the UVM callback is a subsystem-local extension point,
+while the NPF case is a cross-subsystem secmodel query.
+
+Pros/cons of callback-pointer style
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Pros:
+
+- direct typed call, no query dispatch
+- minimal per-call overhead
+- straightforward for tightly scoped kernel-internal hooks
+
+Cons:
+
+- scales poorly if many consumers need many optional hooks
+- tends to create ad-hoc interfaces scattered across subsystems
+- increases risk of layering leakage (who owns the hook and header)
+
+Pros/cons of secmodel_eval style
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Pros:
+
+- single generic query mechanism for secmodel consumers
+- avoids direct linkage to provider internals
+- easier to extend with additional jail-related queries over time
+
+Cons:
+
+- query indirection (ID + query string + args struct)
+- requires explicit fallback handling when provider is absent
+
+Should we standardize on one model?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A strict one-size-fits-all standard is usually not ideal.
+
+Recommended guideline:
+
+- Prefer `secmodel_eval` for secmodel semantics exposed to external
+  consumers (e.g., NPF asking jail identity/match questions).
+- Prefer dedicated callback pointers for highly localized, performance-
+  sensitive subsystem hooks that are not generic secmodel queries
+  (e.g., VM growth veto points).
+
+This keeps interfaces coherent: secmodel queries go through secmodel core,
+while subsystem-private hotpath hooks remain local.
