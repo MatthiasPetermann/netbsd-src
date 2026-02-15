@@ -89,8 +89,7 @@ A jail-local shell configuration file is written to
 .It Cm start Ar name
 Mount the composed jail root and start the jail with
 .Xr jailctl 8 , using optional per-jail settings from
-.Pa jail.conf
-.Pq for example, Li JAIL_PORTS .
+.Pa jail.conf .
 .It Cm start Cm --all
 Start all jails found under
 .Ev JAIL_DATA_DIR
@@ -197,16 +196,6 @@ at
 inside each jail-local
 .Pa /dev
 to support pseudo terminals.
-.It Ev JAIL_PORTS
-Per-jail comma-separated list of allowed bind ports stored in each jail's
-.Pa jail.conf .
-When set, it is passed to
-.Xr jailctl 8
-.Cm create
-via
-.Fl p
-and enforced by
-.Xr secmodel_jail 9 .
 .El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
@@ -225,7 +214,6 @@ Prepare and start all configured jails:
 # jailmgr bootstrap
 # jailmgr prepare jail1
 # jailmgr prepare jail2
-# echo 'JAIL_PORTS=22,80,443' >> /var/jailmgr/jails/jail1/jail.conf
 # jailmgr start --all
 .Ed
 .Sh SEE ALSO

@@ -68,7 +68,6 @@ static void	jail_spawn_detached(jailid_t, const char *, const char *,
 static int	parse_log_facility(const char *);
 static int	parse_log_level(const char *);
 static int	parse_log_priority(const char *);
-static void	parse_port_list(struct jail_create *, const char *);
 static void	sanitize_field(const char *, char *, size_t);
 static bool	jail_lookup_by_name(const char *, struct jail_info *);
 static bool	jail_lookup_by_id(jailid_t, struct jail_info *);
@@ -615,31 +614,6 @@ getnum(const char *str, uintmax_t *num)
 	return 0;
 }
 
-static void
-parse_port_list(struct jail_create *create, const char *arg)
-{
-	char *copy, *tok, *cp;
-	uintmax_t num;
-
-	copy = strdup(arg);
-	if (copy == NULL)
-		err(1, "strdup");
-	cp = copy;
-
-	while ((tok = strsep(&cp, ",")) != NULL) {
-		if (*tok == '\0')
-			errx(1, "invalid port list: %s", arg);
-		if (getnum(tok, &num) == -1 || num == 0 || num > UINT16_MAX)
-			errx(1, "invalid port: %s", tok);
-		if (create->jc_nports >= __arraycount(create->jc_ports))
-			errx(1, "too many allowed ports (max %zu)",
-			    __arraycount(create->jc_ports));
-		create->jc_ports[create->jc_nports++] = (uint16_t)num;
-	}
-
-	free(copy);
-}
-
 static jailid_t
 resolve_jail_target(const char *arg, struct jail_info *ji)
 {
@@ -677,7 +651,7 @@ main(int argc, char *argv[])
 		memset(&create, 0, sizeof(create));
 		name = NULL;
 		optind = 2;
-		while ((ch = getopt(argc, argv, "c:m:n:p:")) != -1) {
+		while ((ch = getopt(argc, argv, "c:m:n:")) != -1) {
 			switch (ch) {
 			case 'c':
 				errno = 0;
@@ -698,10 +672,6 @@ main(int argc, char *argv[])
 			case 'n':
 				name = optarg;
 				break;
-			case 'p':
-				create.jc_flags |= JAIL_CREATE_PORTS;
-				parse_port_list(&create, optarg);
-				break;
 			default:
 				usage();
 			}
@@ -709,9 +679,6 @@ main(int argc, char *argv[])
 
 		if (optind >= argc || name == NULL || argc != optind + 1)
 			usage();
-		if ((create.jc_flags & JAIL_CREATE_PORTS) != 0 &&
-		    create.jc_nports == 0)
-			errx(1, "-p requires at least one port");
 		if (strlen(name) > JAIL_NAME_MAX)
 			errx(1, "name too long");
 
@@ -796,7 +763,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-c cpu-ms] [-m bytes] [-p ports] -n name <root>\n"
+	    "usage: %s create [-c cpu-ms] [-m bytes] -n name <root>\n"
 	    "       %s supervise [-p pri] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"

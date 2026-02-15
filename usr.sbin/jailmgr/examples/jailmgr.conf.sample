@@ -27,5 +27,3 @@ JAIL_DEV_SIZE=8m
 JAIL_DEVICES="std ptm"
 JAIL_PTYFS=YES
 
-# Per-jail jail.conf can set:
-#   JAIL_PORTS="22,80,443"
