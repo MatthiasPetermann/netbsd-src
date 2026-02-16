@@ -146,6 +146,7 @@
  */
 
 #include <sys/callout.h>
+#include <netinet/tcp_timer.h>
 
 #ifdef TCP_SIGNATURE
 /*
