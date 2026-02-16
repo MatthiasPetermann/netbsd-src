@@ -147,23 +147,37 @@ secmodel_jail_cred_matches(kauth_cred_t cred, const char *name)
 {
 	const struct jail_entry *entry;
 	jailid_t id;
+	bool match;
 
 	id = secmodel_jail_cred_id(cred);
 	if (name == NULL) {
-		return id == JAILID_HOST;
+		match = id == JAILID_HOST;
+		log(LOG_DEBUG,
+		    "secmodel_jail debug: cred_matches id=%u name=<none> match=%d\n",
+		    (unsigned)id, match);
+		return match;
 	}
 
 	mutex_enter(&jail_lock);
 	entry = secmodel_jail_lookup(id);
 	if (entry == NULL) {
 		mutex_exit(&jail_lock);
+		log(LOG_DEBUG,
+		    "secmodel_jail debug: cred_matches id=%u name=\"%s\" match=0 (entry missing)\n",
+		    (unsigned)id, name);
 		return false;
 	}
 	if (strcmp(entry->je_name, name) != 0) {
 		mutex_exit(&jail_lock);
+		log(LOG_DEBUG,
+		    "secmodel_jail debug: cred_matches id=%u name=\"%s\" entry=\"%s\" match=0\n",
+		    (unsigned)id, name, entry->je_name);
 		return false;
 	}
 	mutex_exit(&jail_lock);
+	log(LOG_DEBUG,
+	    "secmodel_jail debug: cred_matches id=%u name=\"%s\" match=1\n",
+	    (unsigned)id, name);
 	return true;
 }
 
@@ -1103,7 +1117,13 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 
 	a = arg;
 	matchp = ret;
+	log(LOG_DEBUG,
+	    "secmodel_jail debug: eval what=\"%s\" cred_matches name=%s\n",
+	    what, a->name ? a->name : "<none>");
 	*matchp = secmodel_jail_cred_matches(a->cred, a->name);
+	log(LOG_DEBUG,
+	    "secmodel_jail debug: eval result what=\"%s\" match=%d\n",
+	    what, *matchp);
 	return 0;
 }
 

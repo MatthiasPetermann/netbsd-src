@@ -44,6 +44,7 @@ __KERNEL_RCSID(0, "$NetBSD: npf_ruleset.c,v 1.51.20.1 2023/08/23 18:19:32 martin
 #include <sys/kmem.h>
 #include <sys/queue.h>
 #include <sys/mbuf.h>
+#include <sys/syslog.h>
 #include <sys/types.h>
 #include <sys/socketvar.h>
 #include <sys/jail.h>
@@ -647,6 +648,9 @@ npf_rule_alloc(npf_t *npf, const nvlist_t *rule)
 			kmem_free(rl, sizeof(npf_rule_t));
 			return NULL;
 		}
+		log(LOG_DEBUG,
+		    "npf jail debug: loaded rule name=\"%s\" jail-selector=\"%s\"\n",
+		    rl->r_name[0] ? rl->r_name : "<unnamed>", rl->r_jailname);
 	} else {
 		rl->r_jailname[0] = '\0';
 	}
@@ -829,6 +833,24 @@ npf_rule_setnat(npf_rule_t *rl, npf_natpolicy_t *np)
 
 
 #if defined(_KERNEL) && !defined(_RUMPKERNEL)
+static void
+npf_jail_debug_log(const npf_cache_t *npc, const int di_mask,
+    const char *jail_name, const char *stage, const char *detail)
+{
+	const int af = npf_iscached(npc, NPC_IP4) ? AF_INET :
+	    npf_iscached(npc, NPC_IP6) ? AF_INET6 : AF_UNSPEC;
+	const in_port_t sport = npc->npc_l4.udp->uh_sport;
+	const in_port_t dport = npc->npc_l4.udp->uh_dport;
+	const char *proto = npf_iscached(npc, NPC_TCP) ? "tcp" :
+	    npf_iscached(npc, NPC_UDP) ? "udp" : "other";
+	const char *dir = di_mask == NPF_RULE_IN ? "in" : "out";
+
+	log(LOG_DEBUG,
+	    "npf jail debug: stage=%s dir=%s af=%d proto=%s sport=%u dport=%u jail=\"%s\" detail=%s\n",
+	    stage, dir, af, proto, ntohs(sport), ntohs(dport),
+	    jail_name ? jail_name : "<none>", detail);
+}
+
 static struct socket *
 npf_rule_getsock_outbound(const npf_cache_t *npc)
 {
@@ -837,8 +859,12 @@ npf_rule_getsock_outbound(const npf_cache_t *npc)
 
 	mt = m_tag_find(m, PACKET_TAG_SO);
 	if (mt == NULL) {
+		npf_jail_debug_log(npc, NPF_RULE_OUT, NULL, "getsock-out",
+		    "PACKET_TAG_SO not found");
 		return NULL;
 	}
+	npf_jail_debug_log(npc, NPF_RULE_OUT, NULL, "getsock-out",
+	    "PACKET_TAG_SO found");
 	return *(struct socket **)(mt + 1);
 }
 
@@ -889,8 +915,12 @@ npf_rule_getsock_inbound(const npf_cache_t *npc)
 #endif
 
 	if (inp == NULL || inp->inp_socket == NULL) {
+		npf_jail_debug_log(npc, NPF_RULE_IN, NULL, "getsock-in",
+		    "inpcb/socket lookup failed");
 		return NULL;
 	}
+	npf_jail_debug_log(npc, NPF_RULE_IN, NULL, "getsock-in",
+	    "inpcb/socket lookup succeeded");
 	return inp->inp_socket;
 }
 
@@ -906,10 +936,14 @@ npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
 	bool match = false;
 
 	if (jail_name == NULL && !inbound) {
+		npf_jail_debug_log(npc, di_mask, jail_name, "jail-match",
+		    "outbound without jail qualifier => match");
 		return true;
 	}
 
 	if (inbound && !npf_iscached(npc, NPC_TCP) && !npf_iscached(npc, NPC_UDP)) {
+		npf_jail_debug_log(npc, di_mask, jail_name, "jail-match",
+		    "inbound non-TCP/UDP => match");
 		return true;
 	}
 
@@ -920,6 +954,10 @@ npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
 		 * with a local socket owner.  Keep legacy behaviour for non-local
 		 * traffic unless a jail qualifier was explicitly requested.
 		 */
+		npf_jail_debug_log(npc, di_mask, jail_name, "jail-match",
+		    jail_name == NULL ?
+		    "no socket/cred and no qualifier => legacy match" :
+		    "no socket/cred with jail qualifier => no match");
 		return jail_name == NULL;
 	}
 	args.cred = so->so_cred;
@@ -928,8 +966,13 @@ npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
 	error = secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES,
 	    &args, &match);
 	if (error != 0) {
+		npf_jail_debug_log(npc, di_mask, jail_name, "jail-match",
+		    "secmodel_eval failed");
 		return jail_name == NULL;
 	}
+	npf_jail_debug_log(npc, di_mask, jail_name, "jail-match",
+	    match ? "credential matched jail selector" :
+	    "credential did not match jail selector");
 	return match;
 }
 #else
@@ -1105,7 +1148,7 @@ npf_ruleset_dump(npf_t *npf, const char *name)
 	LIST_FOREACH(rg, &rlset->rs_dynamic, r_dentry) {
 		printf("ruleset '%s':\n", rg->r_name);
 		for (rl = rg->r_subset; rl; rl = rl->r_next) {
-			printf("\tid %"PRIu64", key: ", rl->r_id);
+			printf("	id %"PRIu64", key: ", rl->r_id);
 			for (unsigned i = 0; i < NPF_RULE_MAXKEYLEN; i++)
 				printf("%x", rl->r_key[i]);
 			printf("\n");
