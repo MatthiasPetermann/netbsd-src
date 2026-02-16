@@ -40,6 +40,7 @@ __KERNEL_RCSID(0, "$NetBSD: npf_ruleset.c,v 1.51.20.1 2023/08/23 18:19:32 martin
 #include <sys/types.h>
 
 #include <sys/atomic.h>
+#include <sys/errno.h>
 #include <sys/kmem.h>
 #include <sys/queue.h>
 #include <sys/mbuf.h>
@@ -901,6 +902,7 @@ npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
 	const bool inbound = di_mask == NPF_RULE_IN;
 	struct secmodel_jail_eval_cred_matches_args args;
 	struct socket *so;
+	int error;
 	bool match = false;
 
 	if (jail_name == NULL && !inbound) {
@@ -923,8 +925,16 @@ npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
 	args.cred = so->so_cred;
 	args.name = jail_name;
 
-	if (secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES,
-	    &args, &match) != 0) {
+	error = secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES,
+	    &args, &match);
+	if (error == ENOENT) {
+		/*
+		 * Security model evaluation callback is unavailable.
+		 * Fall back to a direct check so jail-qualified rules still
+		 * operate when secmodel eval dispatch is not registered.
+		 */
+		match = secmodel_jail_cred_matches(args.cred, args.name);
+	} else if (error != 0) {
 		return jail_name == NULL;
 	}
 	return match;
