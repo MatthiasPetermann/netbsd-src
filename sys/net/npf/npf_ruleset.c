@@ -927,14 +927,7 @@ npf_rule_jail_match(const npf_rule_t *rl, const npf_cache_t *npc,
 
 	error = secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES,
 	    &args, &match);
-	if (error == ENOENT) {
-		/*
-		 * Security model evaluation callback is unavailable.
-		 * Fall back to a direct check so jail-qualified rules still
-		 * operate when secmodel eval dispatch is not registered.
-		 */
-		match = secmodel_jail_cred_matches(args.cred, args.name);
-	} else if (error != 0) {
+	if (error != 0) {
 		return jail_name == NULL;
 	}
 	return match;

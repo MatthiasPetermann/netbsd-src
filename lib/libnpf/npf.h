@@ -112,6 +112,7 @@ int		npf_rule_setinfo(nl_rule_t *, const void *, size_t);
 const char *	npf_rule_getname(nl_rule_t *);
 uint32_t	npf_rule_getattr(nl_rule_t *);
 const char *	npf_rule_getinterface(nl_rule_t *);
+const char *	npf_rule_getjailname(nl_rule_t *);
 const void *	npf_rule_getinfo(nl_rule_t *, size_t *);
 const char *	npf_rule_getproc(nl_rule_t *);
 uint64_t	npf_rule_getid(nl_rule_t *);
