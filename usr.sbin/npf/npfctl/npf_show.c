@@ -513,7 +513,7 @@ static void
 npfctl_print_rule(npf_conf_info_t *ctx, nl_rule_t *rl, unsigned level)
 {
 	const uint32_t attr = npf_rule_getattr(rl);
-	const char *rproc, *ifname, *name;
+	const char *rproc, *ifname, *jail_name, *name;
 	bool dyn_ruleset;
 
 	/* Rule attributes/flags. */
@@ -529,6 +529,9 @@ npfctl_print_rule(npf_conf_info_t *ctx, nl_rule_t *rl, unsigned level)
 	}
 	if ((ifname = npf_rule_getinterface(rl)) != NULL) {
 		ctx->fpos += fprintf(ctx->fp, "on %s ", ifname);
+	}
+	if ((jail_name = npf_rule_getjailname(rl)) != NULL) {
+		ctx->fpos += fprintf(ctx->fp, "jail \"%s\" ", jail_name);
 	}
 	if (attr == (NPF_RULE_GROUP | NPF_RULE_IN | NPF_RULE_OUT) && !ifname) {
 		/* The default group is a special case. */

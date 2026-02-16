@@ -297,6 +297,11 @@ For outbound traffic, the qualifier is evaluated against the jail of the
 originating socket credentials.
 For inbound TCP/UDP traffic, NPF resolves the local socket owner and evaluates
 its credentials against the configured jail name.
+This matching is therefore limited to traffic that terminates on a local
+socket in the host network stack; forwarded traffic and packets redirected
+to another network stack cannot be matched with the
+.Cm jail
+qualifier at the ingress interface.
 If an inbound rule omits
 .Cm jail ,
 host-only semantics are applied for TCP/UDP traffic (jail id 0).

@@ -838,6 +838,12 @@ npf_rule_getinterface(nl_rule_t *rl)
 	return dnvlist_get_string(rl->rule_dict, "ifname", NULL);
 }
 
+const char *
+npf_rule_getjailname(nl_rule_t *rl)
+{
+	return dnvlist_get_string(rl->rule_dict, "jail-name", NULL);
+}
+
 const void *
 npf_rule_getinfo(nl_rule_t *rl, size_t *len)
 {
