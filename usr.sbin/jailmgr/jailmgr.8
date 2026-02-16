@@ -1,0 +1,233 @@
+." $NetBSD$
+.Dd February 13, 2026
+.Dt JAILMGR 8
+.Os
+.Sh NAME
+.Nm jailmgr
+.Nd provision and manage multiple jailctl jails from one configuration
+.Sh SYNOPSIS
+.Nm
+.Ar command
+.Op Ar args ...
+.Sh DESCRIPTION
+The
+.Nm
+utility is a shell-script helper around
+.Xr jailctl 8
+for provisioning and operating multiple jails.
+It is designed for setups that use:
+.Bl -bullet -compact
+.It
+a shared, read-only base filesystem extracted from
+.Pa base.tar.xz ,
+.It
+per-jail writable directories for
+.Pa /etc ,
+.Pa /var ,
+.Pa /tmp ,
+.Pa /home ,
+.Pa /usr/pkg ,
+and a jail-local
+.Pa /dev ,
+and
+.It
+jail naming and lifecycle management via
+.Xr jailctl 8 .
+.El
+.Pp
+By default,
+.Nm
+reads configuration from
+.Pa /etc/jailmgr.conf .
+A different configuration file can be selected with the
+.Ev JAILMGR_CONF
+environment variable.
+.Pp
+Most commands require superuser privileges.
+.Sh COMMANDS
+The following commands are supported:
+.Bl -tag -width "prepare name"
+.It Cm bootstrap
+Download
+.Pa base.tar.xz
+and
+.Pa etc.tar.xz
+from
+.Ev NETBSD_MIRROR
+and create a default
+.Pa /etc/jailmgr.conf
+if missing,
+after ensuring the
+.Li secmodel_jail
+kernel module is loaded,
+and persist
+.Li secmodel_jail
+in
+.Pa /etc/modules.conf
+for future boots.
+Then
+extract
+.Pa base.tar.xz
+into the configured shared base layer directory.
+.It Cm prepare Ar name
+Create directories and metadata for one jail:
+.Pa root ,
+.Pa etc ,
+.Pa var ,
+.Pa tmp ,
+.Pa home ,
+.Pa pkg ,
+and
+.Pa dev .
+If necessary,
+.Pa etc.tar.xz
+is extracted into the jail-local
+.Pa etc
+copy.
+A jail-local shell configuration file is written to
+.Pa ${JAIL_DATA_DIR}/name/jail.conf .
+.It Cm start Ar name
+Mount the composed jail root and start the jail with
+.Xr jailctl 8 , using optional per-jail settings from
+.Pa jail.conf .
+.It Cm start Cm --all
+Start all jails found under
+.Ev JAIL_DATA_DIR
+with a
+.Pa jail.conf .
+If one jail fails to start, processing continues with the next jail.
+.It Cm stop Ar name
+Terminate the corresponding
+.Xr jailctl 8
+supervise process for the jail named
+.Ar name ,
+then destroy the jail by name through
+.Xr jailctl 8
+and unmount its root composition.
+.It Cm stop Cm --all
+Stop and unmount all jails found under
+.Ev JAIL_DATA_DIR
+with a
+.Pa jail.conf .
+.It Cm restart Ar name
+Run
+.Cm stop
+for jail
+.Ar name
+and then
+.Cm start
+for the same jail, using the optional settings from
+.Pa jail.conf .
+.It Cm restart Cm --all
+Run
+.Cm stop Cm --all
+followed by
+.Cm start Cm --all .
+.It Cm status
+Show
+.Xr jailctl 8
+status and mount status for all configured jails.
+.It Cm gen-rc Op Ar path
+Emit an
+.Xr rc.d 8
+wrapper script.
+If
+.Ar path
+is omitted,
+.Pa /etc/rc.d/jailmgr
+is used.
+.El
+.Sh CONFIGURATION
+.Nm
+accepts shell-style variable assignments in
+.Pa /etc/jailmgr.conf
+(or the file referenced by
+.Ev JAILMGR_CONF ) .
+.Pp
+Important variables:
+.Bl -tag -width "JAIL_SUPERVISE_CMD"
+.It Ev RELEASE
+NetBSD release used for set download paths.
+.It Ev MACHINE_ARCH
+Machine architecture used for set download paths.
+.It Ev NETBSD_MIRROR
+Base URL for set downloads.
+.It Ev JAIL_BASE_DIR
+Directory containing extracted shared base layers.
+.It Ev JAIL_DATA_DIR
+Directory containing per-jail writable state.
+.It Ev JAIL_RELEASE_DIR
+Directory containing downloaded set archives.
+.It Ev JAIL_DEFAULT_USER
+User account to ensure exists inside each prepared jail.
+.It Ev JAIL_SUPERVISE_CMD
+Required command (with optional arguments) passed to
+.Xr jailctl 8
+.Cm supervise
+after jail creation.
+Jails may override this with
+.Ev JAIL_SUPERVISE_CMD_LOCAL
+in their
+.Pa jail.conf .
+.It Ev JAIL_LOCAL_DEV
+When set to
+.Dq YES
+(default), mount a jail-local tmpfs on
+.Pa /dev
+and populate a minimal device set with
+.Xr MAKEDEV 8 .
+.It Ev JAIL_DEV_SIZE
+Size argument used for the tmpfs mounted at jail-local
+.Pa /dev
+(default
+.Dq 8m ) .
+.It Ev JAIL_DEVICES
+Whitespace-separated list of
+.Xr MAKEDEV 8
+targets used to populate jail-local
+.Pa /dev .
+.It Ev JAIL_PTYFS
+When set to
+.Dq YES
+(default), mount
+.Xr ptyfs 5
+at
+.Pa /dev/pts
+inside each jail-local
+.Pa /dev
+to support pseudo terminals.
+.El
+.Sh FILES
+.Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
+.It Pa /etc/jailmgr.conf
+Default configuration file.
+.It Pa /usr/share/examples/jailmgr/jailmgr.conf.sample
+Sample configuration file.
+.It Pa /usr/share/examples/jailmgr/README
+Operational notes and quick-start guidance.
+.El
+.Sh EXAMPLES
+Prepare and start all configured jails:
+.Bd -literal -offset indent
+# cp /usr/share/examples/jailmgr/jailmgr.conf.sample /etc/jailmgr.conf
+# vi /etc/jailmgr.conf
+# jailmgr bootstrap
+# jailmgr prepare jail1
+# jailmgr prepare jail2
+# jailmgr start --all
+.Ed
+.Sh SEE ALSO
+.Xr jailctl 8 ,
+.Xr mount_null 8 ,
+.Xr secmodel_jail 9 ,
+.Xr rc.d 8
+.Sh HISTORY
+The
+.Nm
+script appeared in
+.Nx 10.0 .
+This manual page was expanded when
+.Nm
+was moved to its own
+.Pa usr.sbin/jailmgr
+subdirectory.

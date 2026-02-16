@@ -1559,6 +1559,8 @@
 ./usr/sbin/isibootd				base-bootserver-bin
 ./usr/sbin/ispppcontrol				base-obsolete		obsolete
 ./usr/sbin/iwictl				base-sysutil-bin
+./usr/sbin/jailctl				base-sysutil-bin
+./usr/sbin/jailmgr				base-sysutil-bin
 ./usr/sbin/kadmin				base-krb5-bin		kerberos
 ./usr/sbin/kcm					base-krb5-bin		kerberos
 ./usr/sbin/kdc					base-krb5-bin		kerberos
@@ -2513,6 +2515,9 @@
 ./usr/share/examples/hostapd			base-netutil-examples
 ./usr/share/examples/ipf			base-netutil-examples
 ./usr/share/examples/isdn			base-obsolete	obsolete
+./usr/share/examples/jailmgr			base-sysutil-examples
+./usr/share/examples/jailmgr/README		base-sysutil-examples	share
+./usr/share/examples/jailmgr/jailmgr.conf.sample	base-sysutil-examples	share
 ./usr/share/examples/kerberos			base-krb5-examples
 ./usr/share/examples/lua			base-sys-examples
 ./usr/share/examples/lua/README			base-sys-examples	share

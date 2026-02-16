@@ -689,6 +689,12 @@ void			uvm_lwp_setuarea(lwp_t *, vaddr_t);
 int			uvm_vslock(struct vmspace *, void *, size_t, vm_prot_t);
 void			uvm_vsunlock(struct vmspace *, void *, size_t);
 void			uvm_cpu_attach(struct cpu_info *);
+/*
+ * Optional jail policy hook consulted before user address-space growth.
+ * UVM owns the call sites, while secmodel_jail (or another consumer) owns
+ * the policy decision and can return non-zero to reject the growth.
+ */
+extern int		(*uvm_proc_jail_memlimit_check)(struct proc *, size_t);
 
 
 /* uvm_init.c */

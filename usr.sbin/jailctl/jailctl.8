@@ -1,0 +1,134 @@
+." $NetBSD$
+.\"-
+.\" Copyright (c) 2025
+.\" The NetBSD Foundation, Inc.
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+.\" ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+.\" TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+.\" PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+.\" BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.\"-
+.Dd September 24, 2025
+.Dt JAILCTL 8
+.Os
+.Sh NAME
+.Nm jailctl
+.Nd manage secmodel jail instances
+.Sh SYNOPSIS
+.Nm
+.Cm create
+.Op Fl c Ar cpu-ms
+.Op Fl m Ar bytes
+.Fl n Ar name
+.Ar root
+.Nm
+.Cm supervise
+.Op Fl p Ar pri
+.Op Fl t Ar tag
+.Ar jail-id | name
+.Ar command
+.Op Ar args ...
+.Nm
+.Cm destroy
+.Ar jail-id | name
+.Nm
+.Cm exec
+.Ar jail-id | name
+.Op command
+.Op Ar args ...
+.Nm
+.Cm list
+.Sh DESCRIPTION
+The
+.Nm
+utility manages jails provided by the secmodel jail security model.
+Jails are process groups identified by a jail id.
+Processes in a jail can only signal or see other processes with the same
+jail id, while the host root user (jail id 0) can access all processes.
+.Pp
+The commands are as follows:
+.Bl -tag -width Ds
+.It Cm create Op Fl c Ar cpu-ms Op Fl m Ar bytes Fl n Ar name Ar root
+Create a new jail id, assign it the unique
+.Ar name ,
+and store jail name and root metadata in the kernel jail model.
+This command only creates the jail and prints the resulting jail id.
+.Pp
+The optional flags set per-jail resource limits at creation time:
+.Bl -tag -width Ds
+.It Fl c Ar cpu-ms
+Set a CPU time limit (in milliseconds) for processes in the jail.
+.It Fl m Ar bytes
+Set a virtual memory limit (in bytes) for processes in the jail.
+.El
+.It Cm supervise Op Fl p Ar pri Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
+Start a command in an existing jail selected by
+.Ar jail-id
+or
+.Ar name .
+The started command's standard output and standard error are forwarded to
+host syslog by a background supervisor process.
+.Pp
+The optional flags control supervisor logging:
+.Bl -tag -width Ds
+.It Fl p Ar pri
+Set the syslog priority used for forwarded output, compatible with
+.Xr logger 1 :
+either a numeric value or a
+.Dq facility.level
+pair (for example,
+.Dq local3.info ) .
+The default is
+.Dq daemon.notice .
+.It Fl t Ar tag
+Set the syslog tag used for forwarded jailed-command output.
+If omitted,
+.Dq jailctl
+is used.
+.El
+.Pp
+The background supervisor process is shown in process listings as
+.Dq jailctl supervise jail=<name> jid=<id>
+to distinguish it from one-shot supervise invocations.
+.It Cm destroy Ar jail-id | name
+Destroy a jail selected by
+.Ar jail-id
+or
+.Ar name
+that has no remaining processes.
+.It Cm exec Ar jail-id | name Op command Op Ar args ...
+Enter a running jail selected by
+.Ar jail-id
+or
+.Ar name
+using the root stored in kernel jail metadata and execute
+.Ar command .
+If no command is provided, an interactive shell is started.
+.It Cm list
+List active jail ids, process counts, configured jail names, and roots.
+.El
+.Sh SEE ALSO
+.Xr chroot 2 ,
+.Xr secmodel 9 ,
+.Xr sysctl 8
+.Sh HISTORY
+The
+.Nm
+utility first appeared in NetBSD 10.0.
