@@ -62,6 +62,12 @@ __KERNEL_RCSID(0, "$NetBSD: npf_handler.c,v 1.49 2020/05/30 14:16:56 rmind Exp $
 #include <netinet/ip_var.h>
 #include <netinet/ip6.h>
 #include <netinet6/ip6_var.h>
+#include <netinet/in_pcb.h>
+#include <netinet/tcp_var.h>
+#include <netinet/udp_var.h>
+
+#include <secmodel/secmodel.h>
+#include <secmodel/jail/jail.h>
 #endif
 
 #include "npf_impl.h"
@@ -127,6 +133,166 @@ npf_reassembly(npf_t *npf, npf_cache_t *npc, bool *mff)
 	npf_stats_inc(npf, NPF_STAT_REASSEMBLY);
 	return 0;
 }
+
+
+#ifdef _KERNEL
+
+static kauth_cred_t
+npf_get_outgoing_socket_cred(npf_cache_t *npc)
+{
+	struct mbuf *m = nbuf_head_mbuf(npc->npc_nbuf);
+	struct m_tag *mt;
+	struct socket *so;
+
+	if (m == NULL) {
+		return NULL;
+	}
+	mt = m_tag_find(m, PACKET_TAG_SO);
+	if (mt == NULL) {
+		return NULL;
+	}
+	so = *(struct socket **)(mt + 1);
+	if (so == NULL) {
+		return NULL;
+	}
+	return so->so_cred;
+}
+
+static kauth_cred_t
+npf_get_inbound_owner_cred(const npf_cache_t *npc)
+{
+	struct inpcb *inp = NULL;
+	const in_port_t sport = npf_iscached(npc, NPC_TCP) ?
+	    npc->npc_l4.tcp->th_sport : npc->npc_l4.udp->uh_sport;
+	const in_port_t dport = npf_iscached(npc, NPC_TCP) ?
+	    npc->npc_l4.tcp->th_dport : npc->npc_l4.udp->uh_dport;
+
+	if (npf_iscached(npc, NPC_IP4)) {
+		struct in_addr src4, dst4;
+
+		memcpy(&src4, npc->npc_ips[NPF_SRC], sizeof(src4));
+		memcpy(&dst4, npc->npc_ips[NPF_DST], sizeof(dst4));
+
+		if (npf_iscached(npc, NPC_TCP)) {
+			inp = inpcb_lookup(&tcbtable, src4, sport, dst4, dport, 0);
+			if (inp == NULL) {
+				inp = inpcb_lookup_bound(&tcbtable, dst4, dport);
+			}
+		} else if (npf_iscached(npc, NPC_UDP)) {
+			inp = inpcb_lookup(&udbtable, src4, sport, dst4, dport, 0);
+			if (inp == NULL) {
+				inp = inpcb_lookup_bound(&udbtable, dst4, dport);
+			}
+		}
+	} else if (npf_iscached(npc, NPC_IP6)) {
+		struct in6_addr src6, dst6;
+
+		memcpy(&src6, npc->npc_ips[NPF_SRC], sizeof(src6));
+		memcpy(&dst6, npc->npc_ips[NPF_DST], sizeof(dst6));
+
+		if (npf_iscached(npc, NPC_TCP)) {
+			inp = in6pcb_lookup(&tcbtable, &src6, sport, &dst6, dport, 0, 0);
+			if (inp == NULL) {
+				inp = in6pcb_lookup_bound(&tcbtable, &dst6, dport, 0);
+			}
+		} else if (npf_iscached(npc, NPC_UDP)) {
+			inp = in6pcb_lookup(&udbtable, &src6, sport, &dst6, dport, 0, 0);
+			if (inp == NULL) {
+				inp = in6pcb_lookup_bound(&udbtable, &dst6, dport, 0);
+			}
+		}
+	}
+
+	if (inp == NULL || inp->inp_socket == NULL) {
+		return NULL;
+	}
+	return inp->inp_socket->so_cred;
+}
+
+static bool
+npf_rule_jail_match(const npf_rule_t *rl, npf_cache_t *npc, int di)
+{
+	const char *jailname = npf_rule_getjailname(rl);
+	kauth_cred_t cred;
+	struct secmodel_jail_eval_cred_matches_args args;
+	bool match = false;
+	int error;
+
+	if (!npf_iscached(npc, NPC_TCP) && !npf_iscached(npc, NPC_UDP)) {
+		/*
+		 * Jail-aware owner matching is only meaningful for TCP/UDP,
+		 * because these protocols map naturally to local sockets.
+		 */
+		return jailname == NULL;
+	}
+
+	if (di & PFIL_OUT) {
+		cred = npf_get_outgoing_socket_cred(npc);
+		if (cred == NULL) {
+			return false;
+		}
+		if (jailname == NULL) {
+			return true;
+		}
+	} else {
+		cred = npf_get_inbound_owner_cred(npc);
+		if (cred == NULL) {
+			/*
+			 * If no local owner socket can be resolved, explicit jail
+			 * qualifiers must not match. Unqualified rules keep legacy
+			 * behavior and therefore continue to match.
+			 */
+			return jailname == NULL;
+		}
+		if (jailname == NULL) {
+			/*
+			 * For inbound traffic without an explicit jail qualifier,
+			 * only host sockets (jail id 0) are accepted by design.
+			 * The secmodel_jail API uses name == NULL to express host.
+			 */
+			args.cred = cred;
+			args.name = NULL;
+			error = secmodel_eval(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_EVAL_CRED_MATCHES, &args, &match);
+			if (error != 0) {
+				return true;
+			}
+			return match;
+		}
+	}
+
+	args.cred = cred;
+	args.name = jailname;
+	error = secmodel_eval(SECMODEL_JAIL_ID,
+	    SECMODEL_JAIL_EVAL_CRED_MATCHES, &args, &match);
+	if (error != 0) {
+		/*
+		 * If secmodel_jail is unavailable, explicit jail qualifiers are
+		 * treated as non-matching while unqualified rules preserve the
+		 * legacy NPF behavior.
+		 */
+		return npf_rule_getjailname(rl) == NULL;
+	}
+	return match;
+}
+
+#else
+
+static bool
+npf_rule_jail_match(const npf_rule_t *rl, npf_cache_t *npc, int di)
+{
+	/*
+	 * The standalone test environment has no kernel sockets or secmodel
+	 * providers. Keep legacy behavior by treating jail qualifiers as
+	 * non-restrictive in this build mode.
+	 */
+	(void)rl;
+	(void)npc;
+	(void)di;
+	return true;
+}
+
+#endif
 
 static inline bool
 npf_packet_bypass_tag_p(nbuf_t *nbuf)
@@ -229,6 +395,16 @@ npfk_packet_handler(npf_t *npf, struct mbuf **mp, ifnet_t *ifp, int di)
 			goto pass;
 		}
 		npf_stats_inc(npf, NPF_STAT_BLOCK_DEFAULT);
+		goto block;
+	}
+
+	/*
+	 * Apply jail qualifier semantics after byte-code match so the
+	 * selected rule is also validated against socket ownership context.
+	 */
+	if (!npf_rule_jail_match(rl, &npc, di)) {
+		npf_config_read_exit(npf, slock);
+		npf_stats_inc(npf, NPF_STAT_BLOCK_RULESET);
 		goto block;
 	}
 
