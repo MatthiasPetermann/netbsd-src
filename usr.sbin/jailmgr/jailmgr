@@ -197,6 +197,26 @@ ensure_secmodel_jail() {
 	fi
 }
 
+ensure_base_writable_links() {
+	# Writable jail paths live below /.data (mounted per-jail).  Keep these
+	# links in the shared read-only base so every jail sees the same layout.
+	if [ ! -d "${BASE_LAYER}" ]; then
+		echo "missing ${BASE_LAYER}; run bootstrap first" >&2
+		exit 1
+	fi
+
+	mkdir -p "${BASE_LAYER}/.data" "${BASE_LAYER}/usr"
+	rm -rf "${BASE_LAYER}/etc" "${BASE_LAYER}/var" "${BASE_LAYER}/tmp" \
+		"${BASE_LAYER}/home" "${BASE_LAYER}/root" "${BASE_LAYER}/usr/pkg"
+	ln -s ".data/etc" "${BASE_LAYER}/etc"
+	ln -s ".data/var" "${BASE_LAYER}/var"
+	ln -s ".data/tmp" "${BASE_LAYER}/tmp"
+	ln -s ".data/home" "${BASE_LAYER}/home"
+	ln -s ".data/root" "${BASE_LAYER}/root"
+	ln -s "../.data/usr/pkg" "${BASE_LAYER}/usr/pkg"
+}
+
+
 build_base() {
 	need_root
 	require_tools
@@ -207,20 +227,10 @@ build_base() {
 
 	mkdir -p "${BASE_LAYER}"
 	tar -xzp -f "${BASE_SET}" -C "${BASE_LAYER}"
-
-	# Writable jail paths live below /.data (mounted per-jail).  Keep these
-	# symlinks in the shared read-only base so every jail sees the same layout.
-	mkdir -p "${BASE_LAYER}/usr"
-	rm -rf "${BASE_LAYER}/etc" "${BASE_LAYER}/var" "${BASE_LAYER}/tmp" \
-		"${BASE_LAYER}/home" "${BASE_LAYER}/root" "${BASE_LAYER}/usr/pkg"
-	ln -s ".data/etc" "${BASE_LAYER}/etc"
-	ln -s ".data/var" "${BASE_LAYER}/var"
-	ln -s ".data/tmp" "${BASE_LAYER}/tmp"
-	ln -s ".data/home" "${BASE_LAYER}/home"
-	ln -s ".data/root" "${BASE_LAYER}/root"
-	ln -s "../.data/usr/pkg" "${BASE_LAYER}/usr/pkg"
+	ensure_base_writable_links
 	echo "Prepared base layer at ${BASE_LAYER}"
 }
+
 
 jail_paths() {
 	name=$1
@@ -325,7 +335,7 @@ setup_etc() {
 # Compose the final jail root by overlaying writable per-jail directories on
 # top of the shared read-only base layer.
 mount_jail_root() {
-	mkdir -p "${ROOT_DIR}/.data"
+	ensure_base_writable_links
 
 	if mount | awk -v p="on ${ROOT_DIR} " 'index($0,p){found=1} END{exit !found}'; then
 		return
