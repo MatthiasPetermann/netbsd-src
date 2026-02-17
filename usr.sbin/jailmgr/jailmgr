@@ -94,6 +94,9 @@ Each jail stores its own config at: ${JAIL_DATA_DIR}/<name>/jail.conf
 USAGE
 }
 
+# Guard helper used by all mutating operations; jail lifecycle changes are
+# intentionally root-only because they manipulate mounts, module state and
+# kernel jail controls.
 need_root() {
 	if [ "$(id -u)" -ne 0 ]; then
 		echo "must be root" >&2
@@ -101,6 +104,8 @@ need_root() {
 	fi
 }
 
+# Validate external toolchain early so command failures happen before partial
+# state changes (mounts, jail creation, config writes).
 require_tools() {
 	for t in jailctl tar mount mount_tmpfs umount ps; do
 		command -v "${t}" >/dev/null 2>&1 || {
@@ -170,6 +175,8 @@ fetch_sets() {
 	echo "Downloaded sets to ${SET_DIR}"
 }
 
+# Ensure the kernel jail security model is available now and across reboot.
+# This is the integration point between jailmgr automation and secmodel_jail.
 ensure_secmodel_jail() {
 	need_root
 
@@ -250,6 +257,8 @@ jail_autostart_enabled() {
 	[ "${JAIL_AUTOSTART:-NO}" = "YES" ]
 }
 
+# Build per-jail /dev view backed by tmpfs (+ optional ptyfs).  This keeps
+# device nodes scoped to the jail filesystem instead of bind-sharing host /dev.
 setup_local_dev() {
 	if [ "${JAIL_LOCAL_DEV}" != "YES" ]; then
 		return
@@ -315,6 +324,8 @@ setup_etc() {
 	fi
 }
 
+# Compose the final jail root by overlaying writable per-jail directories on
+# top of the shared read-only base layer.
 mount_jail_root() {
 	# Ensure mount targets exist in the base layer before mounting it read-only.
 	mkdir -p "${BASE_LAYER}/home"
@@ -342,6 +353,8 @@ umount_jail_root() {
 	done
 }
 
+# Create persistent on-disk jail structure and write jail.conf consumed by
+# start/stop operations.  Resource/logging values are persisted for jailctl.
 create_jail() {
 	need_root
 	require_tools
@@ -390,6 +403,8 @@ jail_exists() {
 	jailctl list | awk -v n="${name}" '$3==n{found=1} END{exit !found}'
 }
 
+# Start sequence: load config, mount root overlays, allocate kernel jail ID
+# through jailctl create, then launch supervised workload with jailctl supervise.
 start_jail() {
 	need_root
 	require_tools
@@ -441,6 +456,8 @@ start_jail() {
 	echo "Started jail ${name}"
 }
 
+# Stop sequence mirrors startup in reverse: stop supervisor, destroy kernel
+# jail object, then unmount filesystem overlays.
 stop_jail() {
 	need_root
 	require_tools
@@ -501,6 +518,8 @@ restart_all() {
 	start_all
 }
 
+# Operational snapshot that combines kernel jail table output with mount view
+# so operators can correlate runtime and filesystem state quickly.
 status() {
 	jailctl list || true
 	echo
