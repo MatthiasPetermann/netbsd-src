@@ -77,6 +77,12 @@ static jailid_t	resolve_jail_target(const char *, struct jail_info *);
 
 static volatile sig_atomic_t monitor_shutdown_requested;
 
+/*
+ * Signal handler used by supervise mode monitor process.
+ *
+ * We only set a flag here to keep the handler async-signal-safe; the actual
+ * shutdown sequence (TERM/KILL and wait logic) is performed in the main loop.
+ */
 static void
 monitor_signal_handler(int signo)
 {
@@ -90,6 +96,10 @@ jail_fetch_list(size_t *countp)
 	struct jail_info *entries;
 	size_t len;
 
+	/*
+	 * Two-pass sysctl pattern: first query required length, then allocate and
+	 * fetch the current jail table snapshot.
+	 */
 	len = 0;
 	if (sysctlbyname("security.models.jail.list", NULL, &len,
 	    NULL, 0) == -1)
@@ -122,6 +132,11 @@ jail_create(const struct jail_create *create)
 	size_t len;
 	int one;
 
+	/*
+	 * Support both create ABI variants:
+	 * - structured request with metadata/limits
+	 * - legacy integer payload for bare jail-id allocation
+	 */
 	id = 0;
 	if (create != NULL) {
 		struct jail_create req;
@@ -237,6 +252,12 @@ jail_exec(jailid_t id, const char *root, char *cmd[])
 {
 	const char *shell;
 
+	/*
+	 * Execution order matters:
+	 * 1) enter jail filesystem view via chroot
+	 * 2) switch jail membership in kernel via sysctl
+	 * 3) exec workload/shell with both constraints in effect
+	 */
 	if (chdir(root) == -1 || chroot(".") == -1)
 		err(1, "%s", root);
 
@@ -263,6 +284,10 @@ log_stream_data(int priority, const char *stream, jailid_t id, const char *name,
 	size_t used;
 	size_t i;
 
+	/*
+	 * Convert an arbitrary byte stream into syslog lines while preserving
+	 * partial-line state across read(2) calls.
+	 */
 	used = *usedp;
 	for (i = 0; i < chunklen; i++) {
 		if (chunk[i] == '\n') {
@@ -300,6 +325,11 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 	int stderr_level;
 	int status;
 
+	/*
+	 * The monitor owns lifecycle and logging for the supervised jail command:
+	 * - forward stdout/stderr to syslog with jail context
+	 * - on shutdown request, terminate process group gracefully then forcefully
+	 */
 	setproctitle("jailctl supervise jail=%s jid=%" PRIu32, name, id);
 	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
 	stderr_level = stdout_level < LOG_ERR ? stdout_level : LOG_ERR;
@@ -463,6 +493,11 @@ jail_spawn_detached(jailid_t id, const char *root, const char *name,
 	int outpipe[2], errpipe[2], devnull;
 	pid_t child, mgr;
 
+	/*
+	 * Double-fork model:
+	 * - manager child supervises logging and signal orchestration
+	 * - workload child gets a new session and executes inside jail context
+	 */
 	if (pipe(outpipe) == -1 || pipe(errpipe) == -1)
 		err(1, "pipe");
 
@@ -576,6 +611,7 @@ parse_log_priority(const char *arg)
 	long num;
 	char *endp;
 
+	/* Accept either a raw numeric priority or facility.level syntax. */
 	if (strlen(arg) >= sizeof(pri))
 		errx(1, "priority too long: %s", arg);
 	strlcpy(pri, arg, sizeof(pri));
@@ -619,6 +655,7 @@ resolve_jail_target(const char *arg, struct jail_info *ji)
 {
 	uintmax_t num;
 
+	/* Prefer numeric ID lookup, then fall back to exact-name lookup. */
 	if (getnum(arg, &num) == 0 && num <= UINT32_MAX) {
 		if (!jail_lookup_by_id((jailid_t)num, ji))
 			errx(1, "jail %" PRIu32 " not found", (jailid_t)num);

@@ -199,6 +199,32 @@ Process action (enter/fork/mmap/sbrk/stack growth)
                      memory growth)
 
 
+4.5 Aggregate resource accounting internals (conceptual)
+
++----------------------+         +------------------------------+
+| Jail member process A|         | Jail member process B        |
+| - p_rtime            |         | - p_rtime                    |
+| - vm_map.size        |         | - vm_map.size                |
++----------+-----------+         +---------------+--------------+
+           |                                     |
+           +----------------+  +----------------+
+                            v  v
+                      +------------------+
+                      | secmodel_jail    |
+                      | usage aggregator |
+                      +------------------+
+                             |
+                             v
+              +----------------------------------+
+              | Compare against jail config caps |
+              |  - cpu_ms                        |
+              |  - mem_bytes                     |
+              +----------------+-----------------+
+                               |
+                     +---------+---------+
+                     | allow / deny gate |
+                     +-------------------+
+
 5. secmodel core integration (registration and eval)
 ----------------------------------------------------
 5.1 Broker model
@@ -242,6 +268,31 @@ Process action (enter/fork/mmap/sbrk/stack growth)
 - Tighter subsystem contract than brokered query interfaces.
 - Single-hook-slot composability limits.
 
+
+6.5 UVM call-chain view (simplified)
+
+Userspace allocator/syscall
+          |
+          v
+    VM growth request
+          |
+          v
++-----------------------------+
+| UVM growth path             |
+| (mmap/brk/stack expansion)  |
++-------------+---------------+
+              |
+              v
+  if (uvm_proc_jail_memlimit_check != NULL)
+              |
+     +--------+---------+
+     | callback present |
+     v                  v
+secmodel_jail check    no callback
+(projected mem cap)    (model absent)
+     |                  |
+     v                  v
+allow or ENOMEM       normal UVM path
 
 7. NPF integration pattern (jail rule qualifier)
 ------------------------------------------------
@@ -349,6 +400,30 @@ List/resolve:
 - status: jail list + mount state
 - gen-rc: generate rc.d wrapper
 
+
+9.5 jailmgr start/stop orchestration map
+
+start:
+  jail.conf -> mount overlays -> jailctl create -> jailctl supervise -> service
+
+stop:
+  locate monitor -> signal monitor -> jailctl destroy -> unmount overlays
+
+Detailed control-flow:
+
++-----------+      +--------------+      +------------------+
+| jailmgr    |----->| filesystem   |----->| jailctl create   |
+| start      |      | mount stack  |      | (kernel sysctl)  |
++-----------+      +--------------+      +---------+--------+
+                                                      |
+                                                      v
+                                             +------------------+
+                                             | jailctl supervise |
+                                             | + monitor process |
+                                             +---------+--------+
+                                                       |
+                                                       v
+                                               workload in jail
 
 10. End-to-end runtime flows
 ----------------------------

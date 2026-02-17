@@ -472,6 +472,11 @@ secmodel_jail_proc_as_bytes(struct proc *p)
 	if (vm == NULL)
 		return 0;
 
+	/*
+	 * Use vm_map.size as the authoritative per-process address-space size.
+	 * This is exactly what UVM growth paths eventually affect, so using the
+	 * same metric keeps aggregate admission checks aligned with UVM behavior.
+	 */
 	return (uint64_t)vm->vm_map.size;
 }
 
@@ -600,6 +605,11 @@ secmodel_jail_enforce_memlimit(struct proc *p, size_t grow)
 	if (!secmodel_jail_get_config(id, &config) || !config.jc_has_mem_limit)
 		return 0;
 
+	/*
+	 * This callback is invoked from UVM growth choke points with the
+	 * prospective growth amount.  We aggregate current jail usage and apply a
+	 * projected-size check so UVM can return ENOMEM before committing growth.
+	 */
 	secmodel_jail_usage(id, NULL, &mem_bytes);
 	if (mem_bytes + (uint64_t)grow > config.jc_mem_limit) {
 		secmodel_jail_log_veto("uvm_grow", id, &config, 0,
@@ -995,6 +1005,10 @@ secmodel_jail_start(void)
 	    secmodel_jail_process_cb, NULL);
 	l_cred = kauth_listen_scope(KAUTH_SCOPE_CRED,
 	    secmodel_jail_cred_cb, NULL);
+	/*
+	 * Publish the UVM integration hook. UVM checks this pointer before calling,
+	 * so the model can be cleanly loaded/unloaded without hard linker coupling.
+	 */
 	uvm_proc_jail_memlimit_check = secmodel_jail_enforce_memlimit;
 }
 
@@ -1007,6 +1021,7 @@ secmodel_jail_stop(void)
 	struct jail_entry *entry;
 
 	if (uvm_proc_jail_memlimit_check == secmodel_jail_enforce_memlimit)
+		/* Remove our UVM hook only if we still own the slot. */
 		uvm_proc_jail_memlimit_check = NULL;
 
 	kauth_unlisten_scope(l_process);
