@@ -1,0 +1,37 @@
+#!/bin/sh
+#	$NetBSD$
+#
+# PROVIDE: jailmgr
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+
+. /etc/rc.subr
+
+name="jailmgr"
+rcvar=$name
+command="/usr/sbin/jailmgr"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+: ${jailmgr:=NO}
+: ${jailmgr_conf:=/etc/jailmgr.conf}
+
+jailmgr_start()
+{
+	JAILMGR_CONF="${jailmgr_conf}" ${command} start --all
+}
+
+jailmgr_stop()
+{
+	JAILMGR_CONF="${jailmgr_conf}" ${command} stop --all
+}
+
+jailmgr_status()
+{
+	JAILMGR_CONF="${jailmgr_conf}" ${command} status
+}
+
+load_rc_config $name
+run_rc_command "$1"

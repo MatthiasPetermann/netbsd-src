@@ -46,7 +46,7 @@ environment variable.
 Most commands require superuser privileges.
 .Sh COMMANDS
 The following commands are supported:
-.Bl -tag -width "prepare name"
+.Bl -tag -width "restart --all"
 .It Cm bootstrap
 Download
 .Pa base.tar.xz
@@ -54,9 +54,6 @@ and
 .Pa etc.tar.xz
 from
 .Ev NETBSD_MIRROR
-and create a default
-.Pa /etc/jailmgr.conf
-if missing,
 after ensuring the
 .Li secmodel_jail
 kernel module is loaded,
@@ -65,11 +62,18 @@ and persist
 in
 .Pa /etc/modules.conf
 for future boots.
+Also ensure
+.Li jailmgr=
+exists in
+.Pa /etc/rc.conf
+and initialize it to
+.Dq NO
+if absent.
 Then
 extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
-.It Cm prepare Ar name
+.It Cm create Op Fl a Op Fl s Ar cmd Op Fl c Ar cpu-ms Op Fl m Ar bytes Op Fl p Ar pri Op Fl t Ar tag Ar name
 Create directories and metadata for one jail:
 .Pa root ,
 .Pa etc ,
@@ -86,15 +90,51 @@ is extracted into the jail-local
 copy.
 A jail-local shell configuration file is written to
 .Pa ${JAIL_DATA_DIR}/name/jail.conf .
+When
+.Fl a
+is provided,
+.Ev JAIL_AUTOSTART
+is initialized to
+.Dq YES
+in that generated
+.Pa jail.conf .
+When
+.Fl s
+is provided,
+.Ev JAIL_SUPERVISE_CMD
+is initialized to the specified command string in the generated
+.Pa jail.conf .
+When
+.Fl c
+or
+.Fl m
+is provided,
+the generated
+.Pa jail.conf
+stores the corresponding create-time
+.Xr jailctl 8
+resource limits.
+When
+.Fl p
+or
+.Fl t
+is provided,
+the generated
+.Pa jail.conf
+stores the corresponding
+.Xr jailctl 8
+supervisor logging settings.
 .It Cm start Ar name
 Mount the composed jail root and start the jail with
-.Xr jailctl 8 , using optional per-jail settings from
+.Xr jailctl 8 , using required per-jail settings from
 .Pa jail.conf .
 .It Cm start Cm --all
 Start all jails found under
 .Ev JAIL_DATA_DIR
 with a
-.Pa jail.conf .
+.Pa jail.conf
+and
+.Ev JAIL_AUTOSTART=YES .
 If one jail fails to start, processing continues with the next jail.
 .It Cm stop Ar name
 Terminate the corresponding
@@ -108,7 +148,9 @@ and unmount its root composition.
 Stop and unmount all jails found under
 .Ev JAIL_DATA_DIR
 with a
-.Pa jail.conf .
+.Pa jail.conf
+and
+.Ev JAIL_AUTOSTART=YES .
 .It Cm restart Ar name
 Run
 .Cm stop
@@ -123,19 +165,17 @@ Run
 .Cm stop Cm --all
 followed by
 .Cm start Cm --all .
+.It Cm list
+List all configured jails as a table with columns
+.Li NAME ,
+.Li ROOT ,
+.Li SUPERVISE_CMD ,
+and
+.Li AUTOSTART .
 .It Cm status
 Show
 .Xr jailctl 8
 status and mount status for all configured jails.
-.It Cm gen-rc Op Ar path
-Emit an
-.Xr rc.d 8
-wrapper script.
-If
-.Ar path
-is omitted,
-.Pa /etc/rc.d/jailmgr
-is used.
 .El
 .Sh CONFIGURATION
 .Nm
@@ -145,7 +185,7 @@ accepts shell-style variable assignments in
 .Ev JAILMGR_CONF ) .
 .Pp
 Important variables:
-.Bl -tag -width "JAIL_SUPERVISE_CMD"
+.Bl -tag -width "JAIL_DEFAULT_USER"
 .It Ev RELEASE
 NetBSD release used for set download paths.
 .It Ev MACHINE_ARCH
@@ -159,16 +199,7 @@ Directory containing per-jail writable state.
 .It Ev JAIL_RELEASE_DIR
 Directory containing downloaded set archives.
 .It Ev JAIL_DEFAULT_USER
-User account to ensure exists inside each prepared jail.
-.It Ev JAIL_SUPERVISE_CMD
-Required command (with optional arguments) passed to
-.Xr jailctl 8
-.Cm supervise
-after jail creation.
-Jails may override this with
-.Ev JAIL_SUPERVISE_CMD_LOCAL
-in their
-.Pa jail.conf .
+User account to ensure exists inside each created jail.
 .It Ev JAIL_LOCAL_DEV
 When set to
 .Dq YES
@@ -197,10 +228,47 @@ inside each jail-local
 .Pa /dev
 to support pseudo terminals.
 .El
+.Pp
+Each jail also has a jail-local configuration file at
+.Pa ${JAIL_DATA_DIR}/name/jail.conf
+that provides:
+.Bl -tag -width "JAIL_SUPERVISE_CMD"
+.It Ev JAIL_SUPERVISE_CMD
+Required command (with optional arguments) passed to
+.Xr jailctl 8
+.Cm supervise
+after jail creation.
+.It Ev JAIL_CREATE_CPU_MS
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl c .
+.It Ev JAIL_CREATE_MEMORY_BYTES
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl m .
+.It Ev JAIL_SUPERVISE_PRI
+Optional value forwarded to
+.Xr jailctl 8
+.Cm supervise Fl p .
+.It Ev JAIL_SUPERVISE_TAG
+Optional value forwarded to
+.Xr jailctl 8
+.Cm supervise Fl t .
+.It Ev JAIL_AUTOSTART
+When set to
+.Dq YES ,
+include that jail in
+.Cm start --all ,
+.Cm stop --all ,
+and
+.Cm restart --all .
+.El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
 .It Pa /etc/jailmgr.conf
 Default configuration file.
+.It Pa /etc/rc.d/jailmgr
+Service script for boot-time start/stop of autostart-enabled jails.
 .It Pa /usr/share/examples/jailmgr/jailmgr.conf.sample
 Sample configuration file.
 .It Pa /usr/share/examples/jailmgr/README
@@ -212,8 +280,10 @@ Prepare and start all configured jails:
 # cp /usr/share/examples/jailmgr/jailmgr.conf.sample /etc/jailmgr.conf
 # vi /etc/jailmgr.conf
 # jailmgr bootstrap
-# jailmgr prepare jail1
-# jailmgr prepare jail2
+# jailmgr create jail1
+# jailmgr create -a -s '/bin/sh /etc/rc' -c 250 -m 536870912 -p local3.info -t jail-web jail2
+# vi /var/jailmgr/jails/jail1/jail.conf
+# vi /var/jailmgr/jails/jail2/jail.conf
 # jailmgr start --all
 .Ed
 .Sh SEE ALSO
