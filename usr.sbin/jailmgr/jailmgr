@@ -51,7 +51,6 @@ NETBSD_MIRROR=
 JAIL_BASE_DIR=/var/jailmgr/base
 JAIL_DATA_DIR=/var/jailmgr/jails
 JAIL_RELEASE_DIR=/var/jailmgr/releases
-JAIL_DEFAULT_USER=user
 
 # Per-jail local /dev setup.
 JAIL_LOCAL_DEV=YES
@@ -304,25 +303,8 @@ setup_etc() {
 
 	mkdir -p "${ETC_DIR}/ssh"
 
-	grep -q '^sshd=YES' "${ETC_DIR}/rc.conf" 2>/dev/null ||
-		echo 'sshd=YES' >> "${ETC_DIR}/rc.conf"
-
 	grep -q '^hostname=' "${ETC_DIR}/rc.conf" 2>/dev/null ||
 		echo "hostname=${name}" >> "${ETC_DIR}/rc.conf"
-
-	if [ ! -f "${ETC_DIR}/master.passwd" ]; then
-		echo "warning: ${ETC_DIR}/master.passwd not found; user provisioning skipped" >&2
-		return
-	fi
-
-	if [ -z "${JAIL_DEFAULT_USER}" ]; then
-		return
-	fi
-
-	if ! awk -F: -v u="${JAIL_DEFAULT_USER}" '$1==u{found=1} END{exit !found}' "${ETC_DIR}/master.passwd"; then
-		echo "${JAIL_DEFAULT_USER}:*:1000:1000::0:0:Jail User:/home/${JAIL_DEFAULT_USER}:/bin/ksh" >> "${ETC_DIR}/master.passwd"
-		pwd_mkdb -d "${JAIL_DIR}" "${ETC_DIR}/master.passwd"
-	fi
 }
 
 # Compose the final jail root by overlaying writable per-jail directories on
@@ -374,9 +356,6 @@ create_jail() {
 	jail_paths "${name}"
 	mkdir -p "${ROOT_DIR}" "${ETC_DIR}" "${VAR_DIR}" "${TMP_DIR}" "${HOME_DIR}" "${ROOT_HOME_DIR}" "${PKG_DIR}" \
 		"${DEV_DIR}" "${VAR_DIR}/run" "${VAR_DIR}/log"
-	if [ -n "${JAIL_DEFAULT_USER}" ]; then
-		mkdir -p "${HOME_DIR}/${JAIL_DEFAULT_USER}"
-	fi
 	chmod 1777 "${TMP_DIR}"
 	setup_etc
 

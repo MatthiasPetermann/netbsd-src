@@ -187,7 +187,7 @@ accepts shell-style variable assignments in
 .Ev JAILMGR_CONF ) .
 .Pp
 Important variables:
-.Bl -tag -width "JAIL_DEFAULT_USER"
+.Bl -tag -width "JAIL_RELEASE_DIR"
 .It Ev RELEASE
 NetBSD release used for set download paths.
 .It Ev MACHINE_ARCH
@@ -200,8 +200,6 @@ Directory containing extracted shared base layers.
 Directory containing per-jail writable state.
 .It Ev JAIL_RELEASE_DIR
 Directory containing downloaded set archives.
-.It Ev JAIL_DEFAULT_USER
-User account to ensure exists inside each created jail.
 .It Ev JAIL_LOCAL_DEV
 When set to
 .Dq YES
