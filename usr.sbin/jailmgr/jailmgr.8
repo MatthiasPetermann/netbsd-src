@@ -21,14 +21,19 @@ It is designed for setups that use:
 a shared, read-only base filesystem extracted from
 .Pa base.tar.xz ,
 .It
-per-jail writable directories for
+a per-jail writable
+.Pa /.data
+mount for mutable state (with base-layer symlinks from
 .Pa /etc ,
 .Pa /var ,
 .Pa /tmp ,
 .Pa /home ,
 .Pa /root ,
-.Pa /usr/pkg ,
-and a jail-local
+and
+.Pa /usr/pkg
+into
+.Pa /.data ) ,
+a jail-local
 .Pa /dev ,
 and
 .It
@@ -77,19 +82,14 @@ into the configured shared base layer directory.
 .It Cm create Op Fl a Op Fl s Ar cmd Op Fl c Ar cpu-ms Op Fl m Ar bytes Op Fl p Ar pri Op Fl t Ar tag Ar name
 Create directories and metadata for one jail:
 .Pa root ,
-.Pa etc ,
-.Pa var ,
-.Pa tmp ,
-.Pa home ,
-.Pa root-home ,
-.Pa pkg ,
+.Pa data ,
 and
 .Pa dev .
 If necessary,
 .Pa etc.tar.xz
-is extracted into the jail-local
-.Pa etc
-copy.
+is extracted into
+.Pa data/etc
+for that jail.
 A jail-local shell configuration file is written to
 .Pa ${JAIL_DATA_DIR}/name/jail.conf .
 When

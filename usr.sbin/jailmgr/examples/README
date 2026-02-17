@@ -1,13 +1,9 @@
 # jailmgr (jailctl helper)
 
 `jailmgr` provisions and runs multiple `jailctl` jails from one host-side configuration.
-It uses one shared read-only base layer (from `base.tar.xz`) and per-jail writable state:
-
-- `etc`
-- `var`
-- `tmp`
-- `home`
-- optional jail-local `/dev` (tmpfs + `MAKEDEV`)
+It uses one shared read-only base layer (from `base.tar.xz`) and one per-jail writable data tree mounted at `/.data`.
+The base layer exposes writable paths via symlinks (`/etc`, `/var`, `/tmp`, `/home`, `/root`, `/usr/pkg` -> `/.data/...`).
+It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
 
 ## Important command semantics
 
