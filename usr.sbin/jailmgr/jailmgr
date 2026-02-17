@@ -32,7 +32,7 @@
 # Layout:
 #   /var/jailmgr/releases/<release>/<arch>/{base,etc}.tar.xz
 #   /var/jailmgr/base/<release>-<arch>/
-#   /var/jailmgr/jails/<name>/{root,etc,var,tmp,home,root-home,pkg}
+#   /var/jailmgr/jails/<name>/{root,data}
 #
 # Config:
 #   /etc/jailmgr.conf
@@ -197,6 +197,26 @@ ensure_secmodel_jail() {
 	fi
 }
 
+ensure_base_writable_links() {
+	# Writable jail paths live below /.data (mounted per-jail).  Keep these
+	# links in the shared read-only base so every jail sees the same layout.
+	if [ ! -d "${BASE_LAYER}" ]; then
+		echo "missing ${BASE_LAYER}; run bootstrap first" >&2
+		exit 1
+	fi
+
+	mkdir -p "${BASE_LAYER}/.data" "${BASE_LAYER}/usr"
+	rm -rf "${BASE_LAYER}/etc" "${BASE_LAYER}/var" "${BASE_LAYER}/tmp" \
+		"${BASE_LAYER}/home" "${BASE_LAYER}/root" "${BASE_LAYER}/usr/pkg"
+	ln -s ".data/etc" "${BASE_LAYER}/etc"
+	ln -s ".data/var" "${BASE_LAYER}/var"
+	ln -s ".data/tmp" "${BASE_LAYER}/tmp"
+	ln -s ".data/home" "${BASE_LAYER}/home"
+	ln -s ".data/root" "${BASE_LAYER}/root"
+	ln -s "../.data/usr/pkg" "${BASE_LAYER}/usr/pkg"
+}
+
+
 build_base() {
 	need_root
 	require_tools
@@ -207,19 +227,22 @@ build_base() {
 
 	mkdir -p "${BASE_LAYER}"
 	tar -xzp -f "${BASE_SET}" -C "${BASE_LAYER}"
+	ensure_base_writable_links
 	echo "Prepared base layer at ${BASE_LAYER}"
 }
+
 
 jail_paths() {
 	name=$1
 	JAIL_DIR="${JAIL_DATA_DIR}/${name}"
 	ROOT_DIR="${JAIL_DIR}/root"
-	ETC_DIR="${JAIL_DIR}/etc"
-	VAR_DIR="${JAIL_DIR}/var"
-	TMP_DIR="${JAIL_DIR}/tmp"
-	HOME_DIR="${JAIL_DIR}/home"
-	ROOT_HOME_DIR="${JAIL_DIR}/root-home"
-	PKG_DIR="${JAIL_DIR}/pkg"
+	DATA_DIR="${JAIL_DIR}/data"
+	DATA_ETC_DIR="${DATA_DIR}/etc"
+	DATA_VAR_DIR="${DATA_DIR}/var"
+	DATA_TMP_DIR="${DATA_DIR}/tmp"
+	DATA_HOME_DIR="${DATA_DIR}/home"
+	DATA_ROOT_DIR="${DATA_DIR}/root"
+	DATA_PKG_DIR="${DATA_DIR}/usr/pkg"
 	DEV_DIR="${JAIL_DIR}/dev"
 	JAIL_CONF="${JAIL_DIR}/jail.conf"
 }
@@ -296,40 +319,35 @@ setup_etc() {
 		exit 1
 	}
 
-	if [ ! -f "${ETC_DIR}/rc.conf" ]; then
+	if [ ! -f "${DATA_ETC_DIR}/rc.conf" ]; then
 		tar -xzp -f "${ETC_SET}" -C "${JAIL_DIR}"
+		rm -rf "${DATA_ETC_DIR}"
+		mv "${JAIL_DIR}/etc" "${DATA_ETC_DIR}"
 	fi
 
 
-	mkdir -p "${ETC_DIR}/ssh"
+	mkdir -p "${DATA_ETC_DIR}/ssh"
 
-	grep -q '^hostname=' "${ETC_DIR}/rc.conf" 2>/dev/null ||
-		echo "hostname=${name}" >> "${ETC_DIR}/rc.conf"
+	grep -q '^hostname=' "${DATA_ETC_DIR}/rc.conf" 2>/dev/null ||
+		echo "hostname=${name}" >> "${DATA_ETC_DIR}/rc.conf"
 }
 
 # Compose the final jail root by overlaying writable per-jail directories on
 # top of the shared read-only base layer.
 mount_jail_root() {
-	# Ensure mount targets exist in the base layer before mounting it read-only.
-	mkdir -p "${BASE_LAYER}/home"
-	mkdir -p "${BASE_LAYER}/usr/pkg"
+	ensure_base_writable_links
 
 	if mount | awk -v p="on ${ROOT_DIR} " 'index($0,p){found=1} END{exit !found}'; then
 		return
 	fi
 
 	mount -t null -o ro "${BASE_LAYER}" "${ROOT_DIR}"
-	mount -t null "${ETC_DIR}" "${ROOT_DIR}/etc"
-	mount -t null "${VAR_DIR}" "${ROOT_DIR}/var"
-	mount -t null "${TMP_DIR}" "${ROOT_DIR}/tmp"
-	mount -t null "${HOME_DIR}" "${ROOT_DIR}/home"
-	mount -t null "${ROOT_HOME_DIR}" "${ROOT_DIR}/root"
-	mount -t null "${PKG_DIR}" "${ROOT_DIR}/usr/pkg"
+	mount -t null "${DATA_DIR}" "${ROOT_DIR}/.data"
 	setup_local_dev
 }
 
 umount_jail_root() {
-	for d in dev/pts dev usr/pkg root home tmp var etc ""; do
+	for d in dev/pts dev .data ""; do
 		mp="${ROOT_DIR}${d:+/$d}"
 		if mount | awk -v p="on ${mp} " 'index($0,p){found=1} END{exit !found}'; then
 			umount "${mp}"
@@ -354,9 +372,9 @@ create_jail() {
 	escaped_supervise_tag=$(escape_dq "${supervise_tag}")
 
 	jail_paths "${name}"
-	mkdir -p "${ROOT_DIR}" "${ETC_DIR}" "${VAR_DIR}" "${TMP_DIR}" "${HOME_DIR}" "${ROOT_HOME_DIR}" "${PKG_DIR}" \
-		"${DEV_DIR}" "${VAR_DIR}/run" "${VAR_DIR}/log"
-	chmod 1777 "${TMP_DIR}"
+	mkdir -p "${ROOT_DIR}" "${DATA_VAR_DIR}" "${DATA_TMP_DIR}" "${DATA_HOME_DIR}" \
+		"${DATA_ROOT_DIR}" "${DATA_PKG_DIR}" "${DEV_DIR}" "${DATA_VAR_DIR}/run" "${DATA_VAR_DIR}/log"
+	chmod 1777 "${DATA_TMP_DIR}"
 	setup_etc
 
 	cat > "${JAIL_CONF}" <<CONF
