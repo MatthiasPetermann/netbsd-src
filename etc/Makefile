@@ -100,7 +100,7 @@ UTMPGRP= utmp
 BIN1+=	auto_master bootptab changelist csh.cshrc csh.login \
 	csh.logout daily daily.conf dm.conf envsys.conf floppytab ftpchroot \
 	ftpusers gettytab gpio.conf group hosts hosts.lpd inetd.conf \
-	locate.conf login.conf mailer.conf man.conf monthly monthly.conf \
+	jailmgr.conf locate.conf login.conf mailer.conf man.conf monthly monthly.conf \
 	mrouted.conf named.conf netconfig networks newsyslog.conf \
 	nsswitch.conf ntp.conf passwd.conf pkgpath.conf phones printcap \
 	profile protocols rbootd.conf rc rc.conf rc.local rc.subr \
