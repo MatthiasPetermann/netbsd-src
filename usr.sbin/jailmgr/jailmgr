@@ -32,7 +32,7 @@
 # Layout:
 #   /var/jailmgr/releases/<release>/<arch>/{base,etc}.tar.xz
 #   /var/jailmgr/base/<release>-<arch>/
-#   /var/jailmgr/jails/<name>/{root,etc,var,tmp,home,pkg}
+#   /var/jailmgr/jails/<name>/{root,etc,var,tmp,home,root-home,pkg}
 #
 # Config:
 #   /etc/jailmgr.conf
@@ -219,6 +219,7 @@ jail_paths() {
 	VAR_DIR="${JAIL_DIR}/var"
 	TMP_DIR="${JAIL_DIR}/tmp"
 	HOME_DIR="${JAIL_DIR}/home"
+	ROOT_HOME_DIR="${JAIL_DIR}/root-home"
 	PKG_DIR="${JAIL_DIR}/pkg"
 	DEV_DIR="${JAIL_DIR}/dev"
 	JAIL_CONF="${JAIL_DIR}/jail.conf"
@@ -340,12 +341,13 @@ mount_jail_root() {
 	mount -t null "${VAR_DIR}" "${ROOT_DIR}/var"
 	mount -t null "${TMP_DIR}" "${ROOT_DIR}/tmp"
 	mount -t null "${HOME_DIR}" "${ROOT_DIR}/home"
+	mount -t null "${ROOT_HOME_DIR}" "${ROOT_DIR}/root"
 	mount -t null "${PKG_DIR}" "${ROOT_DIR}/usr/pkg"
 	setup_local_dev
 }
 
 umount_jail_root() {
-	for d in dev/pts dev usr/pkg home tmp var etc ""; do
+	for d in dev/pts dev usr/pkg root home tmp var etc ""; do
 		mp="${ROOT_DIR}${d:+/$d}"
 		if mount | awk -v p="on ${mp} " 'index($0,p){found=1} END{exit !found}'; then
 			umount "${mp}"
@@ -370,7 +372,7 @@ create_jail() {
 	escaped_supervise_tag=$(escape_dq "${supervise_tag}")
 
 	jail_paths "${name}"
-	mkdir -p "${ROOT_DIR}" "${ETC_DIR}" "${VAR_DIR}" "${TMP_DIR}" "${HOME_DIR}" "${PKG_DIR}" \
+	mkdir -p "${ROOT_DIR}" "${ETC_DIR}" "${VAR_DIR}" "${TMP_DIR}" "${HOME_DIR}" "${ROOT_HOME_DIR}" "${PKG_DIR}" \
 		"${DEV_DIR}" "${VAR_DIR}/run" "${VAR_DIR}/log"
 	if [ -n "${JAIL_DEFAULT_USER}" ]; then
 		mkdir -p "${HOME_DIR}/${JAIL_DEFAULT_USER}"
