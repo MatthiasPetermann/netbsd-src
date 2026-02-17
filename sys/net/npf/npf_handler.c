@@ -59,6 +59,8 @@ __KERNEL_RCSID(0, "$NetBSD: npf_handler.c,v 1.49 2020/05/30 14:16:56 rmind Exp $
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include <netinet/ip_var.h>
 #include <netinet/ip6.h>
 #include <netinet6/ip6_var.h>
