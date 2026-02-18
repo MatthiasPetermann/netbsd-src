@@ -422,7 +422,8 @@ List/resolve:
 - bootstrap: load/persist module, fetch/extract base artifacts, build shared
   base layer.
 - create [options] <name>: create/update per-jail structure and persist
-  jail.conf metadata.
+  jail.conf metadata. During create, host /etc/resolv.conf is copied into
+  per-jail data/etc/resolv.conf when present.
 - start <name>|--all: mount, create jail, launch supervise command.
 - stop <name>|--all: stop supervise, destroy jail, unmount.
 - restart <name>|--all: stop then start.

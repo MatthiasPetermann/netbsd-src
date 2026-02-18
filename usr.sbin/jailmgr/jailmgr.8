@@ -90,6 +90,12 @@ If necessary,
 is extracted into
 .Pa data/etc
 for that jail.
+If host
+.Pa /etc/resolv.conf
+exists,
+it is copied to
+.Pa data/etc/resolv.conf
+at create time.
 A jail-local shell configuration file is written to
 .Pa ${JAIL_DATA_DIR}/name/jail.conf .
 When

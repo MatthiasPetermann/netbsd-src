@@ -366,6 +366,12 @@ setup_etc() {
 
 	mkdir -p "${DATA_ETC_DIR}/ssh"
 
+	# Keep jail DNS resolver config aligned with the host at create time.
+	# This provides working name resolution out-of-the-box for typical setups.
+	if [ -f /etc/resolv.conf ]; then
+		cp /etc/resolv.conf "${DATA_ETC_DIR}/resolv.conf"
+	fi
+
 	grep -q '^hostname=' "${DATA_ETC_DIR}/rc.conf" 2>/dev/null ||
 		echo "hostname=${name}" >> "${DATA_ETC_DIR}/rc.conf"
 }
