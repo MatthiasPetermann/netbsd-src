@@ -103,6 +103,13 @@ or
 .Ar name .
 The started command's standard output and standard error are forwarded to
 host syslog by a background supervisor process.
+The
+.Cm supervise
+command daemonizes itself, so callers do not need to wrap it with
+.Xr nohup 1
+or run it in the shell background.
+If the supervised command exits unexpectedly, the supervisor logs the failure
+and restarts it with an exponential backoff delay (capped at 10 seconds).
 .Pp
 The optional flags control supervisor logging:
 .Bl -tag -width Ds

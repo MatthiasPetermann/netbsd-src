@@ -497,11 +497,7 @@ start_jail() {
 	set -f
 	set -- "$@" ${effective_supervise_cmd}
 	set +f
-	# Start under nohup *and* in the background so rc(8)/run_rc_command does
-	# not keep it as the rc script foreground process.  Otherwise the
-	# supervisor can be tied to rc script lifetime and disappear once startup
-	# handling completes.
-	nohup "$@" >/dev/null 2>&1 &
+	"$@"
 	echo "Started jail ${name}"
 }
 
