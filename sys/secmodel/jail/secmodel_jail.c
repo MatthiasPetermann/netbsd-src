@@ -60,11 +60,18 @@ MODULE(MODULE_CLASS_SECMODEL, secmodel_jail, NULL);
 
 static kauth_listener_t l_process;
 static kauth_listener_t l_cred;
+static kauth_listener_t l_system;
 
 static secmodel_t jail_sm;
 static kauth_key_t jail_key;
 
 struct jail_config;
+
+enum jail_policy_profile {
+	JAIL_PROFILE_POLICY_LOW = JAIL_PROFILE_LOW,
+	JAIL_PROFILE_POLICY_MEDIUM = JAIL_PROFILE_MEDIUM,
+	JAIL_PROFILE_POLICY_HIGH = JAIL_PROFILE_HIGH,
+};
 
 enum jail_resource_mode {
 	JAIL_RESOURCE_RLIMIT = 0,
@@ -85,6 +92,8 @@ static bool	secmodel_jail_over_limit(jailid_t, const struct jail_config *,
 static int	secmodel_jail_enforce_memlimit(struct proc *, size_t);
 static void	secmodel_jail_log_veto(const char *, jailid_t,
 		    const struct jail_config *, uint64_t, uint64_t);
+static int	secmodel_jail_system_cb(kauth_cred_t, kauth_action_t, void *,
+		    void *, void *, void *, void *);
 
 static struct timeval secmodel_jail_veto_log_last;
 static const struct timeval secmodel_jail_veto_log_interval = { 5, 0 };
@@ -102,6 +111,7 @@ struct jail_entry {
 	bool je_has_mem_limit;
 	rlim_t je_cpu_limit;
 	rlim_t je_mem_limit;
+	enum jail_policy_profile je_profile;
 	LIST_ENTRY(jail_entry) je_entry;
 };
 
@@ -117,6 +127,7 @@ struct jail_config {
 	bool jc_has_mem_limit;
 	rlim_t jc_cpu_limit;
 	rlim_t jc_mem_limit;
+	enum jail_policy_profile jc_profile;
 };
 
 /*
@@ -252,6 +263,7 @@ secmodel_jail_get_config(jailid_t id, struct jail_config *config)
 	config->jc_has_mem_limit = entry->je_has_mem_limit;
 	config->jc_cpu_limit = entry->je_cpu_limit;
 	config->jc_mem_limit = entry->je_mem_limit;
+	config->jc_profile = entry->je_profile;
 	mutex_exit(&jail_lock);
 
 	return true;
@@ -293,6 +305,9 @@ secmodel_jail_create(const struct jail_create *create,
 		entry->je_has_mem_limit = config->jc_has_mem_limit;
 		entry->je_cpu_limit = config->jc_cpu_limit;
 		entry->je_mem_limit = config->jc_mem_limit;
+		entry->je_profile = config->jc_profile;
+	} else {
+		entry->je_profile = JAIL_PROFILE_POLICY_HIGH;
 	}
 	LIST_INSERT_HEAD(&jail_list, entry, je_entry);
 	mutex_exit(&jail_lock);
@@ -657,10 +672,27 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 
 		flags = create.jc_flags;
 		if ((flags & ~(JAIL_CREATE_MEMLIMIT |
-		    JAIL_CREATE_CPULIMIT)) != 0)
+		    JAIL_CREATE_CPULIMIT |
+		    JAIL_CREATE_PROFILE)) != 0)
 			return EINVAL;
 
 		memset(&config, 0, sizeof(config));
+		config.jc_profile = JAIL_PROFILE_POLICY_HIGH;
+		if ((flags & JAIL_CREATE_PROFILE) != 0) {
+			switch (create.jc_profile) {
+			case JAIL_PROFILE_LOW:
+				config.jc_profile = JAIL_PROFILE_POLICY_LOW;
+				break;
+			case JAIL_PROFILE_MEDIUM:
+				config.jc_profile = JAIL_PROFILE_POLICY_MEDIUM;
+				break;
+			case JAIL_PROFILE_HIGH:
+				config.jc_profile = JAIL_PROFILE_POLICY_HIGH;
+				break;
+			default:
+				return EINVAL;
+			}
+		}
 		if ((flags & JAIL_CREATE_MEMLIMIT) != 0) {
 			if (create.jc_mem_limit == 0)
 				return EINVAL;
@@ -694,8 +726,9 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 
 	if (newlen == sizeof(create)) {
 		log(LOG_INFO,
-		    "secmodel_jail: created jail id=%u name=\"%s\" root=\"%s\" by pid=%d euid=%u\n",
-		    id, create.jc_name, create.jc_root, l->l_proc->p_pid,
+		    "secmodel_jail: created jail id=%u name=\"%s\" root=\"%s\" profile=%u by pid=%d euid=%u\n",
+		    id, create.jc_name, create.jc_root,
+		    (unsigned)configp->jc_profile, l->l_proc->p_pid,
 		    kauth_cred_geteuid(l->l_cred));
 		create.jc_id = id;
 		if (oldp == NULL) {
@@ -1005,6 +1038,8 @@ secmodel_jail_start(void)
 	    secmodel_jail_process_cb, NULL);
 	l_cred = kauth_listen_scope(KAUTH_SCOPE_CRED,
 	    secmodel_jail_cred_cb, NULL);
+	l_system = kauth_listen_scope(KAUTH_SCOPE_SYSTEM,
+	    secmodel_jail_system_cb, NULL);
 	/*
 	 * Publish the UVM integration hook. UVM checks this pointer before calling,
 	 * so the model can be cleanly loaded/unloaded without hard linker coupling.
@@ -1026,6 +1061,7 @@ secmodel_jail_stop(void)
 
 	kauth_unlisten_scope(l_process);
 	kauth_unlisten_scope(l_cred);
+	kauth_unlisten_scope(l_system);
 	kauth_deregister_key(jail_key);
 
 	mutex_enter(&jail_lock);
@@ -1035,6 +1071,89 @@ secmodel_jail_stop(void)
 	}
 	mutex_exit(&jail_lock);
 	mutex_destroy(&jail_lock);
+}
+
+/*
+ * kauth(9) listener for system scope.
+ *
+ * Denies host-level administrative actions for jailed credentials while
+ * deferring host credentials and host root to other security models.
+ */
+static int
+secmodel_jail_system_cb(kauth_cred_t cred, kauth_action_t action,
+    void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
+{
+	enum kauth_system_req req;
+	struct jail_config config;
+
+	(void)cookie;
+	(void)arg1;
+	(void)arg2;
+	(void)arg3;
+
+	if (secmodel_jail_is_host_root(cred))
+		return KAUTH_RESULT_DEFER;
+
+	if (secmodel_jail_cred_id(cred) == JAILID_HOST)
+		return KAUTH_RESULT_DEFER;
+
+	if (!secmodel_jail_get_config(secmodel_jail_cred_id(cred), &config))
+		return KAUTH_RESULT_DEFER;
+
+	if (config.jc_profile == JAIL_PROFILE_POLICY_LOW)
+		return KAUTH_RESULT_DEFER;
+
+	req = (enum kauth_system_req)(uintptr_t)arg0;
+
+	switch (action) {
+	case KAUTH_SYSTEM_MOUNT: /* Deny mounting/unmounting or mount reconfiguration inside jail. */
+		switch (req) {
+		case KAUTH_REQ_SYSTEM_MOUNT_DEVICE: /* Block use of raw block devices as mount sources. */
+		case KAUTH_REQ_SYSTEM_MOUNT_NEW: /* Block creation of new mounts. */
+		case KAUTH_REQ_SYSTEM_MOUNT_UNMOUNT: /* Block unmounting existing filesystems. */
+		case KAUTH_REQ_SYSTEM_MOUNT_UPDATE: /* Block remount/update flag changes. */
+		case KAUTH_REQ_SYSTEM_MOUNT_UMAP: /* Block uid/gid remapping mount operations. */
+			return KAUTH_RESULT_DENY;
+		default:
+			return KAUTH_RESULT_DEFER;
+		}
+
+	case KAUTH_SYSTEM_MODULE: /* Block loading/unloading kernel modules from jail context. */
+	case KAUTH_SYSTEM_MKNOD: /* Block creation of device special files. */
+	case KAUTH_SYSTEM_FILEHANDLE: /* Block generation/use of kernel file handles. */
+	case KAUTH_SYSTEM_CHROOT: /* Block nested chroot/fchroot privilege operations. */
+	case KAUTH_SYSTEM_REBOOT: /* Block reboot or halt style host control actions. */
+	case KAUTH_SYSTEM_SWAPCTL: /* Block swap device/table administration. */
+	case KAUTH_SYSTEM_ACCOUNTING: /* Block kernel process accounting configuration. */
+	case KAUTH_SYSTEM_CPU: /* Block global CPU administrative state changes. */
+	case KAUTH_SYSTEM_PSET: /* Block processor-set management and binding controls. */
+	case KAUTH_SYSTEM_TIME: /* Block host clock/ntp/timecounter administration. */
+	case KAUTH_SYSTEM_SEMAPHORE: /* Block global kernel semaphore administration. */
+	case KAUTH_SYSTEM_MQUEUE: /* Block POSIX message queue subsystem administration. */
+	case KAUTH_SYSTEM_DEVMAPPER: /* Block device-mapper table/control operations. */
+	case KAUTH_SYSTEM_INTR: /* Block interrupt affinity and routing controls. */
+	case KAUTH_SYSTEM_KERNADDR: /* Block privileged kernel address disclosure access. */
+		return KAUTH_RESULT_DENY;
+
+	case KAUTH_SYSTEM_SYSVIPC: /* Block SysV IPC administrative bypass/override controls. */
+		if (config.jc_profile == JAIL_PROFILE_POLICY_MEDIUM)
+			return KAUTH_RESULT_DEFER;
+		return KAUTH_RESULT_DENY;
+
+	case KAUTH_SYSTEM_SYSCTL: /* Constrain jail writes to global kernel sysctl tree. */
+		switch (req) {
+		case KAUTH_REQ_SYSTEM_SYSCTL_ADD: /* Block runtime creation of sysctl nodes. */
+		case KAUTH_REQ_SYSTEM_SYSCTL_DELETE: /* Block runtime deletion of sysctl nodes. */
+		case KAUTH_REQ_SYSTEM_SYSCTL_MODIFY: /* Block writes to privileged sysctl values. */
+		case KAUTH_REQ_SYSTEM_SYSCTL_PRVT: /* Block reads of private/protected sysctls. */
+			return KAUTH_RESULT_DENY;
+		default:
+			return KAUTH_RESULT_DEFER;
+		}
+
+	default:
+		return KAUTH_RESULT_DEFER;
+	}
 }
 
 /*

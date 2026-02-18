@@ -78,7 +78,7 @@ Usage: $0 <command> [args]
 
 Commands:
   bootstrap                   Download sets and build shared base layer
-  create [-a] [-s cmd] [-c cpu-ms] [-m bytes] [-p pri] [-t tag] <name>
+  create [-a] [-s cmd] [-c cpu-ms] [-m bytes] [-P profile] [-p pri] [-t tag] <name>
                               Create jail instance directories and persist jail.conf
   start <name>                Mount jail root and supervise jail via jailctl
   start --all                 Start all configured jails
@@ -259,6 +259,7 @@ load_jail_conf() {
 	JAIL_SUPERVISE_CMD=
 	JAIL_CREATE_CPU_MS=
 	JAIL_CREATE_MEMORY_BYTES=
+	JAIL_CREATE_PROFILE=
 	JAIL_SUPERVISE_PRI=
 	JAIL_SUPERVISE_TAG=
 	JAIL_AUTOSTART=NO
@@ -365,8 +366,10 @@ create_jail() {
 	supervise_cmd=${3:-/bin/sh /etc/rc}
 	create_cpu_ms=${4:-}
 	create_memory_bytes=${5:-}
-	supervise_pri=${6:-}
-	supervise_tag=${7:-}
+	create_profile=${6:-}
+	supervise_pri=${7:-}
+	supervise_tag=${8:-}
+	escaped_create_profile=$(escape_dq "${create_profile}")
 	escaped_supervise_cmd=$(escape_dq "${supervise_cmd}")
 	escaped_supervise_pri=$(escape_dq "${supervise_pri}")
 	escaped_supervise_tag=$(escape_dq "${supervise_tag}")
@@ -386,6 +389,7 @@ JAIL_AUTOSTART=${autostart}
 # Optional jailctl create(8) resource controls:
 JAIL_CREATE_CPU_MS="${create_cpu_ms}"
 JAIL_CREATE_MEMORY_BYTES="${create_memory_bytes}"
+JAIL_CREATE_PROFILE="${escaped_create_profile}"
 # Optional jailctl supervise(8) logging controls:
 JAIL_SUPERVISE_PRI="${escaped_supervise_pri}"
 JAIL_SUPERVISE_TAG="${escaped_supervise_tag}"
@@ -431,6 +435,9 @@ start_jail() {
 	fi
 	if [ -n "${JAIL_CREATE_MEMORY_BYTES:-}" ]; then
 		set -- "$@" -m "${JAIL_CREATE_MEMORY_BYTES}"
+	fi
+	if [ -n "${JAIL_CREATE_PROFILE:-}" ]; then
+		set -- "$@" -p "${JAIL_CREATE_PROFILE}"
 	fi
 	set -- "$@" "${ROOT_DIR}"
 	"$@"
@@ -550,6 +557,7 @@ case "${cmd}" in
 		supervise_cmd="/bin/sh /etc/rc"
 		create_cpu_ms=
 		create_memory_bytes=
+		create_profile=
 		supervise_pri=
 		supervise_tag=
 		shift
@@ -572,6 +580,11 @@ case "${cmd}" in
 			-m)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				create_memory_bytes=$2
+				shift 2
+				;;
+			-P)
+				[ $# -ge 2 ] || { usage; exit 1; }
+				create_profile=$2
 				shift 2
 				;;
 			-p)
@@ -600,7 +613,7 @@ case "${cmd}" in
 		name=$1
 		create_jail "${name}" "${autostart}" "${supervise_cmd}" \
 		    "${create_cpu_ms}" "${create_memory_bytes}" \
-		    "${supervise_pri}" "${supervise_tag}"
+		    "${create_profile}" "${supervise_pri}" "${supervise_tag}"
 		;;
 	start)
 		if [ $# -eq 2 ] && [ "$2" = "--all" ]; then
