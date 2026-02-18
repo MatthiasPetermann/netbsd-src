@@ -216,6 +216,21 @@ option set, this rule is considered the last matching rule, and
 evaluation of subsequent rules is skipped.
 Otherwise, the last matching rule is used.
 .Pp
+The optional
+.Cm jail
+qualifier constrains rule matches to socket credentials that belong to
+the named jail.
+For inbound TCP/UDP traffic, NPF resolves the destination socket owner.
+If a
+.Cm jail
+qualifier is present, only sockets in that jail match.
+If no
+.Cm jail
+qualifier is present, inbound TCP/UDP matches are restricted to host
+(jail ID 0) sockets when owner context is available.
+For outbound traffic, the qualifier checks credentials of the originating
+socket.
+.Pp
 The
 .Cm proto
 keyword can be used to filter packets by layer 4 protocol (TCP, UDP, ICMP
@@ -598,6 +613,7 @@ npf-filter	= [ "family" family-opt ] [ proto ] ( "all" | filt-opts )
 static-rule	= ( "block" [ block-opts ] | "pass" )
 		  [ "stateful" | "stateful-all" ]
 		  [ "in" | "out" ] [ "final" ] [ "on" interface ]
+		  [ "jail" name-string ]
 		  ( npf-filter | "pcap-filter" pcap-filter-expr )
 		  [ "apply" proc-name ]
 

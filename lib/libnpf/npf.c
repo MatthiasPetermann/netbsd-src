@@ -722,6 +722,13 @@ npf_rule_setinfo(nl_rule_t *rl, const void *info, size_t len)
 }
 
 int
+npf_rule_setjail(nl_rule_t *rl, const char *name)
+{
+	nvlist_add_string(rl->rule_dict, "jail-name", name);
+	return nvlist_error(rl->rule_dict);
+}
+
+int
 npf_rule_setprio(nl_rule_t *rl, int pri)
 {
 	nvlist_add_number(rl->rule_dict, "prio", (uint64_t)pri);
@@ -835,6 +842,12 @@ const void *
 npf_rule_getinfo(nl_rule_t *rl, size_t *len)
 {
 	return dnvlist_get_binary(rl->rule_dict, "info", len, NULL, 0);
+}
+
+const char *
+npf_rule_getjail(nl_rule_t *rl)
+{
+	return dnvlist_get_string(rl->rule_dict, "jail-name", NULL);
 }
 
 const char *

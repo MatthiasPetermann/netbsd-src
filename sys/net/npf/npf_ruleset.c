@@ -109,9 +109,10 @@ struct npf_rule {
 		};
 	};
 
-	/* Rule ID, name and the optional key. */
+	/* Rule ID, name, optional jail qualifier and the optional key. */
 	uint64_t		r_id;
 	char			r_name[NPF_RULE_MAXNAMELEN];
+	char *			r_jailname;
 	uint8_t			r_key[NPF_RULE_MAXKEYLEN];
 
 	/* All-list entry and the auxiliary info. */
@@ -647,6 +648,12 @@ npf_rule_alloc(npf_t *npf, const nvlist_t *rule)
 		rl->r_ifid = 0;
 	}
 
+	/* Optional jail qualifier used by jail-aware runtime matching. */
+	if ((rname = dnvlist_get_string(rule, "jail-name", NULL)) != NULL) {
+		rl->r_jailname = kmem_alloc(strlen(rname) + 1, KM_SLEEP);
+		strlcpy(rl->r_jailname, rname, strlen(rname) + 1);
+	}
+
 	/* Key (optional). */
 	if ((key = dnvlist_get_binary(rule, "key", &len, NULL, 0)) != NULL) {
 		if (len > NPF_RULE_MAXKEYLEN) {
@@ -684,6 +691,9 @@ npf_rule_export(npf_t *npf, const npf_rule_t *rl)
 
 	if (rl->r_name[0]) {
 		nvlist_add_string(rule, "name", rl->r_name);
+	}
+	if (rl->r_jailname != NULL) {
+		nvlist_add_string(rule, "jail-name", rl->r_jailname);
 	}
 	if (NPF_DYNAMIC_RULE_P(rl->r_attr)) {
 		nvlist_add_binary(rule, "key", rl->r_key, NPF_RULE_MAXKEYLEN);
@@ -743,6 +753,9 @@ npf_rule_free(npf_rule_t *rl)
 		/* Release rule procedure. */
 		npf_rproc_release(rp);
 	}
+	if (rl->r_jailname) {
+		kmem_free(rl->r_jailname, strlen(rl->r_jailname) + 1);
+	}
 	if (rl->r_code) {
 		/* Free byte-code. */
 		kmem_free(rl->r_code, rl->r_clen);
@@ -785,6 +798,12 @@ npf_natpolicy_t *
 npf_rule_getnat(const npf_rule_t *rl)
 {
 	return rl->r_natp;
+}
+
+const char *
+npf_rule_getjailname(const npf_rule_t *rl)
+{
+	return rl->r_jailname;
 }
 
 /*

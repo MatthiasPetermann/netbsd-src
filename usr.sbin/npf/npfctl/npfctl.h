@@ -220,8 +220,8 @@ void		npfctl_build_alg(const char *);
 void		npfctl_build_rproc(const char *, npfvar_t *);
 void		npfctl_build_group(const char *, int, const char *, bool);
 void		npfctl_build_group_end(void);
-void		npfctl_build_rule(uint32_t, const char *, sa_family_t,
-		    const npfvar_t *, const filt_opts_t *,
+void		npfctl_build_rule(uint32_t, const char *, const char *,
+		    sa_family_t, const npfvar_t *, const filt_opts_t *,
 		    const char *, const char *);
 void		npfctl_build_natseg(int, int, unsigned, const char *,
 		    const addr_port_t *, const addr_port_t *,

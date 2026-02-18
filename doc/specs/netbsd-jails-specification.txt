@@ -315,7 +315,8 @@ Inbound (TCP/UDP service-owner context):
 
 Inbound with no local owner context:
 - With explicit jail qualifier: no match.
-- Without qualifier: legacy/non-jail-restricted behavior remains.
+- Without qualifier: behavior remains unchanged for traffic classes without
+  owner resolution (for example non-TCP/UDP paths).
 
 7.3 Runtime data path (simplified)
 

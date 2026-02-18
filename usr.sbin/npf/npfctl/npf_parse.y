@@ -130,6 +130,7 @@ yyerror(const char *fmt, ...)
 %token			INET4
 %token			INET6
 %token			INTERFACE
+%token			JAIL
 %token			INVALID
 %token			IPHASH
 %token			IPSET
@@ -183,7 +184,7 @@ yyerror(const char *fmt, ...)
 %token	<str>		VAR_ID
 
 %type	<str>		addr some_name table_store dynamic_ifaddrs
-%type	<str>		proc_param_val opt_apply ifname on_ifname ifref
+%type	<str>		proc_param_val opt_apply ifname on_ifname ifref opt_jail
 %type	<num>		port opt_final number afamily opt_family
 %type	<num>		block_or_pass rule_dir group_dir block_opts
 %type	<num>		maybe_not opt_stateful icmp_type table_type
@@ -547,17 +548,17 @@ rule_group
  */
 
 rule
-	: block_or_pass opt_stateful rule_dir opt_final on_ifname
+	: block_or_pass opt_stateful rule_dir opt_final on_ifname opt_jail
 	  opt_family opt_proto all_or_filt_opts opt_apply
 	{
-		npfctl_build_rule($1 | $2 | $3 | $4, $5,
-		    $6, $7, &$8, NULL, $9);
+		npfctl_build_rule($1 | $2 | $3 | $4, $5, $6,
+		    $7, $8, &$9, NULL, $10);
 	}
-	| block_or_pass opt_stateful rule_dir opt_final on_ifname
+	| block_or_pass opt_stateful rule_dir opt_final on_ifname opt_jail
 	  PCAP_FILTER STRING opt_apply
 	{
-		npfctl_build_rule($1 | $2 | $3 | $4, $5,
-		    AF_UNSPEC, NULL, NULL, $7, $8);
+		npfctl_build_rule($1 | $2 | $3 | $4, $5, $6,
+		    AF_UNSPEC, NULL, NULL, $8, $9);
 	}
 	;
 
@@ -676,6 +677,11 @@ opt_stateful
 opt_apply
 	: APPLY STRING	{ $$ = $2; }
 	|		{ $$ = NULL; }
+	;
+
+opt_jail
+	: JAIL some_name	{ $$ = $2; }
+	|			{ $$ = NULL; }
 	;
 
 block_opts
