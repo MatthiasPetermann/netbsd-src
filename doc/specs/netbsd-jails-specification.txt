@@ -43,6 +43,24 @@ Table of contents
 
 1. Conceptual model and goals
 -----------------------------
+1.0 Goals and scope (operational intent)
+- This design targets practical operations, not marketing claims.
+- Main goals:
+  - better service separation on a single host,
+  - fewer side effects between services,
+  - simpler lifecycle handling (start/stop/supervision),
+  - pragmatic resource controls (RAM/CPU) and explicit firewall policy with
+    NPF.
+- Non-goal:
+  - this is not positioned as a hard security barrier against actively
+    malicious workloads.
+- Isolation positioning:
+  - jails provide lightweight operational isolation and clearer service
+    boundaries,
+  - Xen remains the recommended escalation path where strong isolation is
+    required by the threat model.
+- The two models are complementary in practice.
+
 1.1 Primary goal: process-domain isolation
 - Each process belongs to a jail membership domain encoded in credentials.
 - Kernel policy gates process visibility and signal delivery across domains.
@@ -60,7 +78,15 @@ Table of contents
 - It targets practical service isolation and manageability.
 - It does not target hypervisor-grade tenancy isolation.
 
-1.4 Design intent summary
+1.4 Practical deployment perspective
+- A frequent home/small-host pattern is a hybrid model:
+  - strong Xen boundaries where needed,
+  - lightweight jail separation inside those boundaries for per-service
+    operational clarity.
+- This reduces VM sprawl/overhead while preserving the option to enforce hard
+  boundaries where required.
+
+1.5 Design intent summary
 - secmodel_jail: identity + isolation + policy checks.
 - UVM hook: hard memory-growth admission veto in aggregate mode.
 - NPF qualifier: explicit and readable service-ownership firewall policy.
@@ -393,13 +419,26 @@ List/resolve:
 - Supports global/per-jail supervised command selection
 
 9.4 Operations
-- bootstrap: load/persist module, fetch/extract base artifacts
-- prepare <name>: create per-jail structure and defaults
-- start <name>|--all: mount, create jail, launch supervise command
-- stop <name>|--all: stop supervise, destroy jail, unmount
-- restart <name>|--all: stop then start
-- status: jail list + mount state
-- gen-rc: generate rc.d wrapper
+- bootstrap: load/persist module, fetch/extract base artifacts, build shared
+  base layer.
+- create [options] <name>: create/update per-jail structure and persist
+  jail.conf metadata.
+- start <name>|--all: mount, create jail, launch supervise command.
+- stop <name>|--all: stop supervise, destroy jail, unmount.
+- restart <name>|--all: stop then start.
+- status: jail list + mount state.
+- list: print configured jails with root/cmd/autostart information.
+
+9.4.1 Resource option semantics (jailmgr create)
+- -c <cpu-percent>
+  - integer range: 0..100
+  - converted internally to jailctl cpu-ms via:
+    cpu_ms = cpu_percent * 10
+  - examples: 10 => 100ms/s, 25 => 250ms/s, 100 => 1000ms/s
+- -m <memory-mb>
+  - integer megabytes
+  - converted internally to bytes via:
+    mem_bytes = memory_mb * 1024 * 1024
 
 
 9.5 jailmgr start/stop orchestration map
@@ -430,7 +469,7 @@ Detailed control-flow:
 ----------------------------
 10.1 Provision and start flow
 
-jailmgr prepare/start
+jailmgr create/start
         |
         v
 filesystem layers prepared/mounted
@@ -502,16 +541,20 @@ normal UVM behavior             secmodel_jail memlimit check
 - Cross-jail process visibility/signal restrictions.
 - Explicit owner-based network exposure control with NPF qualifiers.
 - Optional jail-scoped resource admission checks.
+- Operational blast-radius reduction for multi-service hosts.
 
 12.2 What is intentionally not provided
 - Per-jail network namespaces/virtual stacks.
 - Full VM/hypervisor isolation semantics.
 - Universal owner resolution for all inbound traffic classes.
+- A guarantee of robust containment against actively malicious tenants.
 
 12.3 Practical implication
-- This stack is strong for lightweight service isolation and policy clarity.
-- For hard tenant isolation and deep virtualized networking requirements,
-  full virtualization remains the recommended escalation path.
+- This stack is designed for lightweight operational isolation and policy
+  clarity.
+- For threat models that require strong isolation, full virtualization (for
+  example Xen) remains the recommended escalation path.
+- In practical deployments, combining both approaches is often preferred.
 
 
 13. Design rationale and pattern selection guidance
@@ -538,5 +581,16 @@ normal UVM behavior             secmodel_jail memlimit check
 | Performance profile  | Minimal overhead, hot paths   | Extra indirection       |
 | Evolvability         | Narrow/specific hook surface  | Protocol-like extensible|
 +----------------------+-------------------------------+-------------------------+
+
+
+13.4 Personal/operational context (informative)
+- This design direction is motivated by long-term NetBSD operations and a
+  preference for systems that are understandable, reproducible, and operable
+  with minimal external dependencies.
+- In environments where Linux container/orchestration stacks are part of daily
+  work, this stack intentionally emphasizes local simplicity for private/home
+  operations.
+- The broader objective is technical self-reliance (source visibility,
+  reproducibility, and independent recoverability), not platform marketing.
 
 End of specification.
