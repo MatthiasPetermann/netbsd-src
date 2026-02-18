@@ -78,7 +78,7 @@ Usage: $0 <command> [args]
 
 Commands:
   bootstrap                   Download sets and build shared base layer
-  create [-a] [-s cmd] [-c cpu-ms] [-m bytes] [-P profile] [-p pri] [-t tag] <name>
+  create [-a] [-s cmd] [-c cpu-percent] [-m memory-mb] [-P profile] [-p pri] [-t tag] <name>
                               Create jail instance directories and persist jail.conf
   start <name>                Mount jail root and supervise jail via jailctl
   start --all                 Start all configured jails
@@ -91,6 +91,43 @@ Commands:
 
 Each jail stores its own config at: ${JAIL_DATA_DIR}/<name>/jail.conf
 USAGE
+}
+
+is_uint() {
+	case "$1" in
+	''|*[!0-9]*)
+		return 1
+		;;
+	*)
+		return 0
+		;;
+	esac
+}
+
+cpu_percent_to_ms() {
+	cpu_percent=$1
+	if ! is_uint "${cpu_percent}"; then
+		echo "cpu percent (-c) must be an integer (0-100)" >&2
+		exit 1
+	fi
+	if [ "${cpu_percent}" -gt 100 ]; then
+		echo "cpu percent (-c) must be in range 0-100" >&2
+		exit 1
+	fi
+
+	# secmodel_jail limits CPU in milliseconds per one-second window.
+	# 1% == 10ms/s, 25% == 250ms/s, 100% == 1000ms/s.
+	printf '%s' $((cpu_percent * 10))
+}
+
+memory_mb_to_bytes() {
+	memory_mb=$1
+	if ! is_uint "${memory_mb}"; then
+		echo "memory limit (-m) must be an integer megabyte count" >&2
+		exit 1
+	fi
+
+	printf '%s' $((memory_mb * 1024 * 1024))
 }
 
 # Guard helper used by all mutating operations; jail lifecycle changes are
@@ -328,6 +365,12 @@ setup_etc() {
 
 
 	mkdir -p "${DATA_ETC_DIR}/ssh"
+
+	# Keep jail DNS resolver config aligned with the host at create time.
+	# This provides working name resolution out-of-the-box for typical setups.
+	if [ -f /etc/resolv.conf ]; then
+		cp /etc/resolv.conf "${DATA_ETC_DIR}/resolv.conf"
+	fi
 
 	grep -q '^hostname=' "${DATA_ETC_DIR}/rc.conf" 2>/dev/null ||
 		echo "hostname=${name}" >> "${DATA_ETC_DIR}/rc.conf"
@@ -574,12 +617,20 @@ case "${cmd}" in
 				;;
 			-c)
 				[ $# -ge 2 ] || { usage; exit 1; }
-				create_cpu_ms=$2
+				[ -z "${create_cpu_ms}" ] || {
+					echo "cpu percent (-c) may be provided only once" >&2
+					exit 1
+				}
+				create_cpu_ms=$(cpu_percent_to_ms "$2")
 				shift 2
 				;;
 			-m)
 				[ $# -ge 2 ] || { usage; exit 1; }
-				create_memory_bytes=$2
+				[ -z "${create_memory_bytes}" ] || {
+					echo "memory limit (-m) may be provided only once" >&2
+					exit 1
+				}
+				create_memory_bytes=$(memory_mb_to_bytes "$2")
 				shift 2
 				;;
 			-P)
