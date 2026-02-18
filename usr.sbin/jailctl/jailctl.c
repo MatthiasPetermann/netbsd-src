@@ -323,6 +323,7 @@ jail_run_monitor_once(jailid_t id, const char *name, int outfd, int errfd,
 	bool outopen, erropen;
 	bool sent_sigterm, sent_sigkill;
 	bool have_deadline;
+	int flags;
 
 	/*
 	 * Monitor one supervised child execution:
@@ -332,6 +333,17 @@ jail_run_monitor_once(jailid_t id, const char *name, int outfd, int errfd,
 	sent_sigterm = false;
 	sent_sigkill = false;
 	have_deadline = false;
+
+	flags = fcntl(outfd, F_GETFL, 0);
+	if (flags == -1)
+		warn("fcntl outfd F_GETFL");
+	else if (fcntl(outfd, F_SETFL, flags | O_NONBLOCK) == -1)
+		warn("fcntl outfd O_NONBLOCK");
+	flags = fcntl(errfd, F_GETFL, 0);
+	if (flags == -1)
+		warn("fcntl errfd F_GETFL");
+	else if (fcntl(errfd, F_SETFL, flags | O_NONBLOCK) == -1)
+		warn("fcntl errfd O_NONBLOCK");
 
 	outused = 0;
 	errused = 0;
@@ -408,44 +420,46 @@ jail_run_monitor_once(jailid_t id, const char *name, int outfd, int errfd,
 			continue;
 
 		for (i = 0; i < nfd; i++) {
-			char buf[512];
-			ssize_t n;
 			bool *openp;
 
 			openp = pfd[i].fd == outfd ? &outopen : &erropen;
 
 			if (*openp == false)
 				continue;
+			if ((pfd[i].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) == 0)
+				continue;
 
-			if ((pfd[i].revents & POLLIN) == 0) {
-				if ((pfd[i].revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
+			for (;;) {
+				char buf[512];
+				ssize_t n;
+
+				n = read(pfd[i].fd, buf, sizeof(buf));
+				if (n > 0) {
+					if (pfd[i].fd == outfd)
+						log_stream_data(stdout_level, "stdout", id, name,
+						    outline, &outused, buf, (size_t)n);
+					else
+						log_stream_data(stderr_level, "stderr", id, name,
+						    errline, &errused, buf, (size_t)n);
+					continue;
+				}
+
+				if (n == 0) {
 					*openp = false;
 					close(pfd[i].fd);
+					break;
 				}
-				continue;
-			}
 
-			n = read(pfd[i].fd, buf, sizeof(buf));
-			if (n == 0) {
-				*openp = false;
-				close(pfd[i].fd);
-				continue;
-			}
-			if (n < 0) {
 				if (errno == EINTR)
 					continue;
+				if (errno == EAGAIN || errno == EWOULDBLOCK)
+					break;
+
 				warn("read");
 				*openp = false;
 				close(pfd[i].fd);
-				continue;
+				break;
 			}
-
-			if (pfd[i].fd == outfd)
-				log_stream_data(stdout_level, "stdout", id, name,
-				    outline, &outused, buf, (size_t)n);
-			else
-				log_stream_data(stderr_level, "stderr", id, name,
-				    errline, &errused, buf, (size_t)n);
 		}
 	}
 
