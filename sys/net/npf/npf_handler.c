@@ -64,12 +64,14 @@ __KERNEL_RCSID(0, "$NetBSD: npf_handler.c,v 1.49 2020/05/30 14:16:56 rmind Exp $
 #include <netinet/ip_var.h>
 #include <netinet/ip6.h>
 #include <netinet6/ip6_var.h>
+#if !defined(_NPF_TESTING)
 #include <netinet/in_pcb.h>
 #include <netinet/tcp_var.h>
 #include <netinet/udp_var.h>
 
 #include <secmodel/secmodel.h>
 #include <secmodel/jail/jail.h>
+#endif
 #endif
 
 #include "npf_impl.h"
@@ -137,7 +139,7 @@ npf_reassembly(npf_t *npf, npf_cache_t *npc, bool *mff)
 }
 
 
-#ifdef _KERNEL
+#if defined(_KERNEL) && !defined(_NPF_TESTING)
 
 static kauth_cred_t
 npf_get_outgoing_socket_cred(npf_cache_t *npc)
