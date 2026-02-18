@@ -68,6 +68,7 @@ static void	jail_spawn_detached(jailid_t, const char *, const char *,
 static int	parse_log_facility(const char *);
 static int	parse_log_level(const char *);
 static int	parse_log_priority(const char *);
+static uint32_t	parse_profile(const char *);
 static void	sanitize_field(const char *, char *, size_t);
 static bool	jail_lookup_by_name(const char *, struct jail_info *);
 static bool	jail_lookup_by_id(jailid_t, struct jail_info *);
@@ -632,6 +633,20 @@ parse_log_priority(const char *arg)
 	return parse_log_facility(pri) | parse_log_level(dot);
 }
 
+static uint32_t
+parse_profile(const char *arg)
+{
+	if (strcmp(arg, "low") == 0)
+		return JAIL_PROFILE_LOW;
+	if (strcmp(arg, "medium") == 0)
+		return JAIL_PROFILE_MEDIUM;
+	if (strcmp(arg, "high") == 0)
+		return JAIL_PROFILE_HIGH;
+
+	errx(1, "invalid profile '%s' (expected low|medium|high)", arg);
+	return JAIL_PROFILE_HIGH;
+}
+
 static int
 getnum(const char *str, uintmax_t *num)
 {
@@ -687,8 +702,9 @@ main(int argc, char *argv[])
 
 		memset(&create, 0, sizeof(create));
 		name = NULL;
+		create.jc_profile = JAIL_PROFILE_HIGH;
 		optind = 2;
-		while ((ch = getopt(argc, argv, "c:m:n:")) != -1) {
+		while ((ch = getopt(argc, argv, "c:m:n:p:")) != -1) {
 			switch (ch) {
 			case 'c':
 				errno = 0;
@@ -708,6 +724,10 @@ main(int argc, char *argv[])
 				break;
 			case 'n':
 				name = optarg;
+				break;
+			case 'p':
+				create.jc_flags |= JAIL_CREATE_PROFILE;
+				create.jc_profile = parse_profile(optarg);
 				break;
 			default:
 				usage();
@@ -800,7 +820,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-c cpu-ms] [-m bytes] -n name <root>\n"
+	    "usage: %s create [-c cpu-ms] [-m bytes] [-p low|medium|high] -n name <root>\n"
 	    "       %s supervise [-p pri] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"

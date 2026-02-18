@@ -35,8 +35,9 @@
 #include <secmodel/secmodel.h>
 
 /*
- * secmodel_jail enforces process visibility and signal delivery based on a
- * jail id stored in credentials. Host root (jail id 0) bypasses these checks.
+ * secmodel_jail enforces process visibility/signal delivery and
+ * jail-safe system authorization restrictions based on a jail id stored in
+ * credentials. Host root (jail id 0) bypasses these checks.
  */
 #define SECMODEL_JAIL_ID   "org.netbsd.secmodel.jail"
 #define SECMODEL_JAIL_NAME "NetBSD Jail"
