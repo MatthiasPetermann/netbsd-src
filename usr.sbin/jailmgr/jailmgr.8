@@ -79,7 +79,7 @@ Then
 extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
-.It Cm create Op Fl a Op Fl s Ar cmd Op Fl c Ar cpu-ms Op Fl m Ar bytes Op Fl P Ar profile Op Fl p Ar pri Op Fl t Ar tag Ar name
+.It Cm create Op Fl a Op Fl s Ar cmd Op Fl c Ar cpu-percent Op Fl m Ar memory-mb Op Fl P Ar profile Op Fl p Ar pri Op Fl t Ar tag Ar name
 Create directories and metadata for one jail:
 .Pa root ,
 .Pa data ,
@@ -108,14 +108,23 @@ is initialized to the specified command string in the generated
 .Pa jail.conf .
 When
 .Fl c
-or
+.Pq cpu percent from 0 to 100
+is provided,
+the generated
+.Pa jail.conf
+stores the corresponding create-time CPU limit used by
+.Xr jailctl 8
+.Pq internally converted to milliseconds per second; 1% = 10ms/s .
+When
 .Fl m
+.Pq megabytes
 is provided,
 the generated
 .Pa jail.conf
 stores the corresponding create-time
 .Xr jailctl 8
-resource limits.
+resource limits
+.Pq internally converted to bytes .
 When
 .Fl P
 is provided,
@@ -302,7 +311,7 @@ Prepare and start all configured jails:
 # vi /etc/jailmgr.conf
 # jailmgr bootstrap
 # jailmgr create jail1
-# jailmgr create -a -s '/bin/sh /etc/rc' -c 250 -m 536870912 -P medium -p local3.info -t jail-web jail2
+# jailmgr create -a -s '/bin/sh /etc/rc' -c 25 -m 512 -P medium -p local3.info -t jail-web jail2
 # vi /var/jailmgr/jails/jail1/jail.conf
 # vi /var/jailmgr/jails/jail2/jail.conf
 # jailmgr start --all
