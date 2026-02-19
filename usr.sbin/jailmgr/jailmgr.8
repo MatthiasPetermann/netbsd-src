@@ -276,6 +276,13 @@ Required command (with optional arguments) passed to
 .Xr jailctl 8
 .Cm supervise
 after jail creation.
+Only the supervised command's stdout/stderr are forwarded to host syslog.
+Programs that default to internal syslog logging (for example
+.Xr bozohttpd 8
+without
+.Fl s )
+must be configured to emit to stderr if those logs should be captured by
+.Nm .
 .It Ev JAIL_CREATE_CPU_MS
 Optional value forwarded to
 .Xr jailctl 8
