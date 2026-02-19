@@ -75,6 +75,15 @@ exists in
 and initialize it to
 .Dq NO
 if absent.
+If
+.Pa /etc/jailmgr.conf
+does not exist, create it using the running system release normalized to
+.Dq major.minor
+.Pq e.g. Dq 10.1
+so mirror URLs do not include suffixes like
+.Dq _STABLE
+or
+.Dq _RC1 .
 Then
 extract
 .Pa base.tar.xz
@@ -227,7 +236,10 @@ accepts shell-style variable assignments in
 Important variables:
 .Bl -tag -width "JAIL_RELEASE_DIR"
 .It Ev RELEASE
-NetBSD release used for set download paths.
+NetBSD release used for set download paths, in
+.Dq major.minor
+form only
+.Pq no suffixes such as Dq _STABLE , Dq _BETA , Dq _RC1 .
 .It Ev MACHINE_ARCH
 Machine architecture used for set download paths.
 .It Ev NETBSD_MIRROR

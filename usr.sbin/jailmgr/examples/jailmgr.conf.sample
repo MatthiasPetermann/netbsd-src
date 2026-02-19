@@ -1,6 +1,8 @@
 # Sample /etc/jailmgr.conf
+#
+# RELEASE should use only <major>.<minor> (e.g. 10.1, not 10.1_STABLE).
 
-RELEASE=10.0
+RELEASE=10.1
 MACHINE_ARCH=amd64
 
 # Optional override. If unset/empty, jailmgr derives:
