@@ -42,7 +42,8 @@
 .Ar root
 .Nm
 .Cm supervise
-.Op Fl p Ar pri
+.Op Fl o Ar stdout-pri
+.Op Fl e Ar stderr-pri
 .Op Fl t Ar tag
 .Ar jail-id | name
 .Ar command
@@ -103,7 +104,7 @@ When at least one jail reserves a given port, bind attempts for that port are
 allowed only from processes in the jail that reserved it.
 Ports not reserved by any jail remain unrestricted.
 .El
-.It Cm supervise Op Fl p Ar pri Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
+.It Cm supervise Op Fl o Ar stdout-pri Op Fl e Ar stderr-pri Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
 Start a command in an existing jail selected by
 .Ar jail-id
 or
@@ -120,15 +121,20 @@ and restarts it with an exponential backoff delay (capped at 10 seconds).
 .Pp
 The optional flags control supervisor logging:
 .Bl -tag -width Ds
-.It Fl p Ar pri
-Set the syslog priority used for forwarded output, compatible with
-.Xr logger 1 :
-either a numeric value or a
-.Dq facility.level
-pair (for example,
-.Dq local3.info ) .
+.It Fl o Ar stdout-pri
+Set the syslog priority used for forwarded standard output lines.
+Accepts the same syntax as
+.Xr logger 1
+.Pq numeric or Dq facility.level .
 The default is
 .Dq daemon.notice .
+.It Fl e Ar stderr-pri
+Set the syslog priority used for forwarded standard error lines.
+Accepts the same syntax as
+.Xr logger 1
+.Pq numeric or Dq facility.level .
+The default is
+.Dq daemon.err .
 .It Fl t Ar tag
 Set the syslog tag used for forwarded jailed-command output.
 If omitted,

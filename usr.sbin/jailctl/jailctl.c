@@ -62,11 +62,11 @@ static void	usage(void) __dead;
 
 static void	jail_exec(jailid_t, const char *, char *[]);
 static void	jail_run_monitor_once(jailid_t, const char *, int, int, pid_t,
-		    int, int, int *);
+			    int, int, int *);
 static void	jail_supervise_loop(jailid_t, const char *, const char *,
-		    const char *, char *[], int, int);
+			    const char *, char *[], int, int, int);
 static void	jail_spawn_detached(jailid_t, const char *, const char *,
-		    const char *, char *[], int, int);
+			    const char *, char *[], int, int, int);
 static int	parse_log_facility(const char *);
 static int	parse_log_level(const char *);
 static int	parse_log_priority(const char *);
@@ -313,7 +313,7 @@ log_stream_data(int priority, const char *stream, jailid_t id, const char *name,
 
 static void
 jail_run_monitor_once(jailid_t id, const char *name, int outfd, int errfd,
-    pid_t child, int stdout_level, int stderr_level, int *statusp)
+    pid_t child, int stdout_priority, int stderr_priority, int *statusp)
 {
 	const int kill_grace_ms = 5000;
 	char outline[JAILCTL_LOG_MAX];
@@ -437,10 +437,10 @@ jail_run_monitor_once(jailid_t id, const char *name, int outfd, int errfd,
 				n = read(pfd[i].fd, buf, sizeof(buf));
 				if (n > 0) {
 					if (pfd[i].fd == outfd)
-						log_stream_data(stdout_level, "stdout", id, name,
+						log_stream_data(stdout_priority, "stdout", id, name,
 						    outline, &outused, buf, (size_t)n);
 					else
-						log_stream_data(stderr_level, "stderr", id, name,
+						log_stream_data(stderr_priority, "stderr", id, name,
 						    errline, &errused, buf, (size_t)n);
 					continue;
 				}
@@ -465,10 +465,10 @@ jail_run_monitor_once(jailid_t id, const char *name, int outfd, int errfd,
 	}
 
 	if (outused > 0)
-		syslog(stdout_level, "jail=%s jid=%" PRIu32 " stdout: %.*s",
+		syslog(stdout_priority, "jail=%s jid=%" PRIu32 " stdout: %.*s",
 		    name, id, (int)outused, outline);
 	if (errused > 0)
-		syslog(stderr_level, "jail=%s jid=%" PRIu32 " stderr: %.*s",
+		syslog(stderr_priority, "jail=%s jid=%" PRIu32 " stderr: %.*s",
 		    name, id, (int)errused, errline);
 
 	if (waitpid(child, statusp, 0) == -1 && errno != ECHILD)
@@ -477,15 +477,14 @@ jail_run_monitor_once(jailid_t id, const char *name, int outfd, int errfd,
 
 static void
 jail_supervise_loop(jailid_t id, const char *root, const char *name,
-    const char *logtag, char *cmd[], int facility, int stdout_level)
+    const char *logtag, char *cmd[], int facility, int stdout_priority,
+    int stderr_priority)
 {
 	struct sigaction sa;
 	int next_backoff_sec;
-	int stderr_level;
 
 	setproctitle("jailctl supervise jail=%s jid=%" PRIu32, name, id);
 	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
-	stderr_level = stdout_level < LOG_ERR ? stdout_level : LOG_ERR;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = monitor_signal_handler;
@@ -552,7 +551,7 @@ jail_supervise_loop(jailid_t id, const char *root, const char *name,
 		    name, id);
 		status = 0;
 		jail_run_monitor_once(id, name, outpipe[0], errpipe[0], child,
-		    stdout_level, stderr_level, &status);
+		    stdout_priority, stderr_priority, &status);
 
 		if (monitor_shutdown_requested) {
 			syslog(LOG_NOTICE,
@@ -617,7 +616,8 @@ jail_supervise_loop(jailid_t id, const char *root, const char *name,
 
 static void
 jail_spawn_detached(jailid_t id, const char *root, const char *name,
-    const char *logtag, char *cmd[], int facility, int stdout_level)
+    const char *logtag, char *cmd[], int facility, int stdout_priority,
+    int stderr_priority)
 {
 	int devnull;
 	pid_t mgr;
@@ -648,7 +648,7 @@ jail_spawn_detached(jailid_t id, const char *root, const char *name,
 		if (devnull > STDERR_FILENO)
 			close(devnull);
 		jail_supervise_loop(id, root, name, logtag, cmd,
-		    facility, stdout_level);
+		    facility, stdout_priority, stderr_priority);
 	}
 	printf("jail %" PRIu32 "\n", id);
 }
@@ -907,16 +907,21 @@ main(int argc, char *argv[])
 
 	if (strcmp(argv[1], "supervise") == 0) {
 		char **cmd;
-		int ch, priority;
+		int ch;
+		int stdout_priority, stderr_priority;
 		char logtag[JAILCTL_TAG_MAX + 1];
 
-		priority = LOG_DAEMON | LOG_NOTICE;
+		stdout_priority = LOG_DAEMON | LOG_NOTICE;
+		stderr_priority = LOG_DAEMON | LOG_ERR;
 		strlcpy(logtag, "jailctl", sizeof(logtag));
 		optind = 2;
-		while ((ch = getopt(argc, argv, "p:t:")) != -1) {
+		while ((ch = getopt(argc, argv, "t:o:e:")) != -1) {
 			switch (ch) {
-			case 'p':
-				priority = parse_log_priority(optarg);
+			case 'o':
+				stdout_priority = parse_log_priority(optarg);
+				break;
+			case 'e':
+				stderr_priority = parse_log_priority(optarg);
 				break;
 			case 't':
 				sanitize_field(optarg, logtag, sizeof(logtag));
@@ -937,7 +942,7 @@ main(int argc, char *argv[])
 		cmd = &argv[optind];
 
 		jail_spawn_detached(id, ji.ji_root, ji.ji_name, logtag, cmd,
-		    LOG_FAC(priority), LOG_PRI(priority));
+		    LOG_DAEMON, stdout_priority, stderr_priority);
 		return 0;
 	}
 
@@ -976,7 +981,7 @@ usage(void)
 {
 	fprintf(stderr,
 	    "usage: %s create [-c cpu-ms] [-m bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>\n"
-	    "       %s supervise [-p pri] [-t tag] <jail-id|name> <command [args...]>\n"
+	    "       %s supervise [-o stdout-pri] [-e stderr-pri] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
 	    "       %s list\n",
