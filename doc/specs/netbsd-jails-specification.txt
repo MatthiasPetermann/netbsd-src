@@ -3,25 +3,20 @@ NetBSD Jails Specification
 
 Document purpose
 ----------------
-This document is a specification of a conceptual NetBSD jail architecture.
-It defines a coherent design idea and describes the intended structure,
-responsibilities, and interaction model of the proposed jail stack.
+This document specifies a conceptual NetBSD jail architecture. It 
+defines the core design idea, structural layers, responsibilities, and 
+interaction model of the proposed jail stack.
 
-The specification outlines how the system is meant to be composed across
-several conceptual layers:
+The architecture consists of a kernel security model (secmodel_jail), 
+broker-style interfaces within the secmodel core, UVM integration for 
+memory admission control, NPF integration for jail-aware rule matching, 
+a low-level control tool (jailctl), and a higher-level operational 
+manager (jailmgr).
 
-- a kernel-level security model (secmodel_jail),
-- broker-style security interfaces within the secmodel core,
-- integration with UVM for memory admission control,
-- integration with NPF for jail-aware rule matching,
-- a low-level userland control tool (jailctl),
-- and a higher-level operational manager (jailmgr).
-
-The purpose of this document is to describe the architecture, semantics,
-and boundaries of this idea in a clear and structured manner. It serves as a
-stable reference model that defines the intended behavior and constraints of
-the system, providing a foundation for discussion, refinement, and potential
-future implementation.
+The purpose of this document is to describe the architecture, 
+semantics, and boundaries of the system in a clear and structured 
+manner, providing a stable reference model for discussion, refinement, 
+and future implementation.
 
 
 Table of contents
