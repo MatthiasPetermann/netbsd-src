@@ -483,7 +483,9 @@ start_jail() {
 		set -- "$@" -p "${JAIL_CREATE_PROFILE}"
 	fi
 	set -- "$@" "${ROOT_DIR}"
-	"$@"
+	# jailctl create/supervise print "jail <jid>" on stdout; keep jailmgr
+	# output concise and only show the high-level status line below.
+	"$@" >/dev/null
 
 	set -- jailctl supervise
 	if [ -n "${JAIL_SUPERVISE_PRI:-}" ]; then
@@ -497,7 +499,7 @@ start_jail() {
 	set -f
 	set -- "$@" ${effective_supervise_cmd}
 	set +f
-	"$@"
+	"$@" >/dev/null
 	echo "Started jail ${name}"
 }
 
