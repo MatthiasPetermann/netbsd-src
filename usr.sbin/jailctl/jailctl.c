@@ -69,7 +69,7 @@ static void	jail_spawn_detached(jailid_t, const char *, const char *,
 			    const char *, char *[], int, int, int);
 static int	parse_log_facility(const char *);
 static int	parse_log_level(const char *);
-static int	parse_log_priority(const char *);
+static int	parse_log_level_arg(const char *);
 static uint32_t	parse_profile(const char *);
 static void	parse_port_list(struct jail_create *, const char *);
 static void	sanitize_field(const char *, char *, size_t);
@@ -718,31 +718,20 @@ parse_log_level(const char *name)
 }
 
 static int
-parse_log_priority(const char *arg)
+parse_log_level_arg(const char *arg)
 {
-	char pri[64], *dot;
 	long num;
 	char *endp;
 
-	/* Accept either a raw numeric priority or facility.level syntax. */
-	if (strlen(arg) >= sizeof(pri))
-		errx(1, "priority too long: %s", arg);
-	strlcpy(pri, arg, sizeof(pri));
-
 	errno = 0;
-	num = strtol(pri, &endp, 0);
-	if (errno == 0 && *pri != '\0' && *endp == '\0') {
-		if (num < 0 || num > (LOG_FACMASK | LOG_PRIMASK))
-			errx(1, "priority out of range: %s", arg);
+	num = strtol(arg, &endp, 0);
+	if (errno == 0 && *arg != '\0' && *endp == '\0') {
+		if (num < LOG_EMERG || num > LOG_DEBUG)
+			errx(1, "log level out of range: %s", arg);
 		return (int)num;
 	}
 
-	dot = strchr(pri, '.');
-	if (dot == NULL || dot == pri || dot[1] == '\0')
-		errx(1, "invalid priority: %s (expected facility.level)", arg);
-	*dot++ = '\0';
-
-	return parse_log_facility(pri) | parse_log_level(dot);
+	return parse_log_level(arg);
 }
 
 static uint32_t
@@ -908,20 +897,24 @@ main(int argc, char *argv[])
 	if (strcmp(argv[1], "supervise") == 0) {
 		char **cmd;
 		int ch;
-		int stdout_priority, stderr_priority;
+		int facility, stdout_level, stderr_level;
 		char logtag[JAILCTL_TAG_MAX + 1];
 
-		stdout_priority = LOG_DAEMON | LOG_NOTICE;
-		stderr_priority = LOG_DAEMON | LOG_ERR;
+		facility = LOG_DAEMON;
+		stdout_level = LOG_NOTICE;
+		stderr_level = LOG_ERR;
 		strlcpy(logtag, "jailctl", sizeof(logtag));
 		optind = 2;
-		while ((ch = getopt(argc, argv, "t:o:e:")) != -1) {
+		while ((ch = getopt(argc, argv, "f:t:o:e:")) != -1) {
 			switch (ch) {
+			case 'f':
+				facility = parse_log_facility(optarg);
+				break;
 			case 'o':
-				stdout_priority = parse_log_priority(optarg);
+				stdout_level = parse_log_level_arg(optarg);
 				break;
 			case 'e':
-				stderr_priority = parse_log_priority(optarg);
+				stderr_level = parse_log_level_arg(optarg);
 				break;
 			case 't':
 				sanitize_field(optarg, logtag, sizeof(logtag));
@@ -942,7 +935,7 @@ main(int argc, char *argv[])
 		cmd = &argv[optind];
 
 		jail_spawn_detached(id, ji.ji_root, ji.ji_name, logtag, cmd,
-		    LOG_DAEMON, stdout_priority, stderr_priority);
+		    facility, facility | stdout_level, facility | stderr_level);
 		return 0;
 	}
 
@@ -981,7 +974,7 @@ usage(void)
 {
 	fprintf(stderr,
 	    "usage: %s create [-c cpu-ms] [-m bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>\n"
-	    "       %s supervise [-o stdout-pri] [-e stderr-pri] [-t tag] <jail-id|name> <command [args...]>\n"
+	    "       %s supervise [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
 	    "       %s list\n",

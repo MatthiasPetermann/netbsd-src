@@ -78,7 +78,7 @@ Usage: $0 <command> [args]
 
 Commands:
   bootstrap                   Download sets and build shared base layer
-  create [-a] [-s cmd] [-c cpu-percent] [-m memory-mb] [-p profile] [-r port[,port...]] [-o stdout-pri] [-e stderr-pri] [-t tag] <name>
+  create [-a] [-s cmd] [-c cpu-percent] [-m memory-mb] [-p profile] [-r port[,port...]] [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <name>
                               Create jail instance directories and persist jail.conf
   start <name>                Mount jail root and supervise jail via jailctl
   start --all                 Start all configured jails
@@ -298,8 +298,9 @@ load_jail_conf() {
 	JAIL_CREATE_MEMORY_BYTES=
 	JAIL_CREATE_PROFILE=
 	JAIL_CREATE_RESERVED_PORTS=
-	JAIL_SUPERVISE_STDOUT_PRI=
-	JAIL_SUPERVISE_STDERR_PRI=
+	JAIL_SUPERVISE_FACILITY=
+	JAIL_SUPERVISE_STDOUT_LEVEL=
+	JAIL_SUPERVISE_STDERR_LEVEL=
 	JAIL_SUPERVISE_TAG=
 	JAIL_AUTOSTART=NO
 	# shellcheck disable=SC1090
@@ -413,14 +414,16 @@ create_jail() {
 	create_memory_bytes=${5:-}
 	create_profile=${6:-}
 	create_reserved_ports=${7:-}
-	supervise_stdout_pri=${8:-}
-	supervise_stderr_pri=${9:-}
-	supervise_tag=${10:-}
+	supervise_facility=${8:-}
+	supervise_stdout_level=${9:-}
+	supervise_stderr_level=${10:-}
+	supervise_tag=${11:-}
 	escaped_create_profile=$(escape_dq "${create_profile}")
 	escaped_create_reserved_ports=$(escape_dq "${create_reserved_ports}")
 	escaped_supervise_cmd=$(escape_dq "${supervise_cmd}")
-	escaped_supervise_stdout_pri=$(escape_dq "${supervise_stdout_pri}")
-	escaped_supervise_stderr_pri=$(escape_dq "${supervise_stderr_pri}")
+	escaped_supervise_facility=$(escape_dq "${supervise_facility}")
+	escaped_supervise_stdout_level=$(escape_dq "${supervise_stdout_level}")
+	escaped_supervise_stderr_level=$(escape_dq "${supervise_stderr_level}")
 	escaped_supervise_tag=$(escape_dq "${supervise_tag}")
 
 	jail_paths "${name}"
@@ -441,8 +444,9 @@ JAIL_CREATE_MEMORY_BYTES="${create_memory_bytes}"
 JAIL_CREATE_PROFILE="${escaped_create_profile}"
 JAIL_CREATE_RESERVED_PORTS="${escaped_create_reserved_ports}"
 # Optional jailctl supervise(8) logging controls:
-JAIL_SUPERVISE_STDOUT_PRI="${escaped_supervise_stdout_pri}"
-JAIL_SUPERVISE_STDERR_PRI="${escaped_supervise_stderr_pri}"
+JAIL_SUPERVISE_FACILITY="${escaped_supervise_facility}"
+JAIL_SUPERVISE_STDOUT_LEVEL="${escaped_supervise_stdout_level}"
+JAIL_SUPERVISE_STDERR_LEVEL="${escaped_supervise_stderr_level}"
 JAIL_SUPERVISE_TAG="${escaped_supervise_tag}"
 # Required command (with optional args) to supervise in this jail.
 # Example starts the normal NetBSD in-jail boot sequence:
@@ -499,11 +503,14 @@ start_jail() {
 	"$@" >/dev/null
 
 	set -- jailctl supervise
-	if [ -n "${JAIL_SUPERVISE_STDOUT_PRI:-}" ]; then
-		set -- "$@" -o "${JAIL_SUPERVISE_STDOUT_PRI}"
+	if [ -n "${JAIL_SUPERVISE_FACILITY:-}" ]; then
+		set -- "$@" -f "${JAIL_SUPERVISE_FACILITY}"
 	fi
-	if [ -n "${JAIL_SUPERVISE_STDERR_PRI:-}" ]; then
-		set -- "$@" -e "${JAIL_SUPERVISE_STDERR_PRI}"
+	if [ -n "${JAIL_SUPERVISE_STDOUT_LEVEL:-}" ]; then
+		set -- "$@" -o "${JAIL_SUPERVISE_STDOUT_LEVEL}"
+	fi
+	if [ -n "${JAIL_SUPERVISE_STDERR_LEVEL:-}" ]; then
+		set -- "$@" -e "${JAIL_SUPERVISE_STDERR_LEVEL}"
 	fi
 	if [ -n "${JAIL_SUPERVISE_TAG:-}" ]; then
 		set -- "$@" -t "${JAIL_SUPERVISE_TAG}"
@@ -614,8 +621,9 @@ case "${cmd}" in
 		create_memory_bytes=
 		create_profile=
 		create_reserved_ports=
-		supervise_stdout_pri=
-		supervise_stderr_pri=
+		supervise_facility=
+		supervise_stdout_level=
+		supervise_stderr_level=
 		supervise_tag=
 		shift
 		while [ $# -gt 0 ]; do
@@ -657,14 +665,19 @@ case "${cmd}" in
 				create_reserved_ports=$2
 				shift 2
 				;;
+			-f)
+				[ $# -ge 2 ] || { usage; exit 1; }
+				supervise_facility=$2
+				shift 2
+				;;
 			-o)
 				[ $# -ge 2 ] || { usage; exit 1; }
-				supervise_stdout_pri=$2
+				supervise_stdout_level=$2
 				shift 2
 				;;
 			-e)
 				[ $# -ge 2 ] || { usage; exit 1; }
-				supervise_stderr_pri=$2
+				supervise_stderr_level=$2
 				shift 2
 				;;
 			-t)
@@ -689,8 +702,8 @@ case "${cmd}" in
 		create_jail "${name}" "${autostart}" "${supervise_cmd}" \
 		    "${create_cpu_ms}" "${create_memory_bytes}" \
 		    "${create_profile}" "${create_reserved_ports}" \
-		    "${supervise_stdout_pri}" "${supervise_stderr_pri}" \
-		    "${supervise_tag}"
+		    "${supervise_facility}" "${supervise_stdout_level}" \
+		    "${supervise_stderr_level}" "${supervise_tag}"
 		;;
 	start)
 		if [ $# -eq 2 ] && [ "$2" = "--all" ]; then
