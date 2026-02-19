@@ -69,6 +69,10 @@ It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
 ## Notes
 
 - `jailmgr start` uses `jailctl create` followed by `jailctl supervise`.
+- `jailctl supervise` only forwards what the supervised process writes to
+  stdout/stderr. For `bozohttpd` (`/usr/libexec/httpd`), add `-s` if you want
+  request/error logs to go to stderr (otherwise `bozohttpd` logs via syslog
+  from inside the jail).
 - By default, bootstrap derives the set URL from `RELEASE` and `MACHINE_ARCH` as:
   `https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets`
   (override with `NETBSD_MIRROR`).
