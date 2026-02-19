@@ -399,6 +399,8 @@ Inbound packet:
 Create:
 - requires unique jail name
 - submits metadata and optional limits
+- with -r port[,port...], includes a reserved listening-port set in the
+  create payload sent to secmodel_jail
 
 Exec:
 - chdir(root) -> chroot(".") -> chdir("/")
@@ -414,6 +416,25 @@ Supervise:
 List/resolve:
 - list shows ID, process count, name, root
 - targets can be selected by numeric ID or name
+
+8.4 Port reservation via jailctl -r
+- Syntax:
+  - jailctl create -r 80,443 -n webjail <root>
+- Validation and ownership model:
+  - each listed value must be a concrete TCP/UDP port (1..65535)
+  - reservation is owned by the created jail and tracked by secmodel_jail
+  - reservation is exclusive across jails; create fails on duplicate claims
+- Runtime effect on bind(2):
+  - when a process binds a concrete local port that is reserved, only
+    processes whose credentials belong to the reserving jail are allowed
+  - host processes (jail ID 0) are denied for ports reserved by another jail
+  - processes in other jails are denied for ports they did not reserve
+  - unreserved ports continue to follow normal bind authorization rules
+  - ephemeral bind via port 0 is unchanged (not reservation-restricted)
+- Lifecycle:
+  - reservations become active when jail creation succeeds
+  - reservations are released when the jail is destroyed
+  - after release, those ports can be reserved by another jail
 
 
 9. jailmgr specification
