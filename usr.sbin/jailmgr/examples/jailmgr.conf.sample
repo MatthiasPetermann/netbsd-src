@@ -22,3 +22,8 @@ JAIL_PTYFS=YES
 
 # Per-jail create-time options are stored in each jail.conf, including
 # JAIL_CREATE_RESERVED_PORTS for exclusive listening-port reservations.
+
+# Per-jail supervise logging settings are stored in each jail.conf:
+#   JAIL_SUPERVISE_FACILITY (facility name, e.g. daemon/local0)
+#   JAIL_SUPERVISE_STDOUT_LEVEL (emerg..debug or 0..7)
+#   JAIL_SUPERVISE_STDERR_LEVEL (emerg..debug or 0..7)

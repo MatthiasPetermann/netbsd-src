@@ -25,7 +25,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"-
-.Dd September 24, 2025
+.Dd February 19, 2026
 .Dt JAILCTL 8
 .Os
 .Sh NAME
@@ -42,8 +42,9 @@
 .Ar root
 .Nm
 .Cm supervise
-.Op Fl o Ar stdout-pri
-.Op Fl e Ar stderr-pri
+.Op Fl f Ar facility
+.Op Fl o Ar stdout-level
+.Op Fl e Ar stderr-level
 .Op Fl t Ar tag
 .Ar jail-id | name
 .Ar command
@@ -104,7 +105,7 @@ When at least one jail reserves a given port, bind attempts for that port are
 allowed only from processes in the jail that reserved it.
 Ports not reserved by any jail remain unrestricted.
 .El
-.It Cm supervise Op Fl o Ar stdout-pri Op Fl e Ar stderr-pri Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
+.It Cm supervise Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
 Start a command in an existing jail selected by
 .Ar jail-id
 or
@@ -121,20 +122,33 @@ and restarts it with an exponential backoff delay (capped at 10 seconds).
 .Pp
 The optional flags control supervisor logging:
 .Bl -tag -width Ds
-.It Fl o Ar stdout-pri
-Set the syslog priority used for forwarded standard output lines.
-Accepts the same syntax as
-.Xr logger 1
-.Pq numeric or Dq facility.level .
+.It Fl f Ar facility
+Set the syslog facility used by the supervisor and for forwarded
+standard-output and standard-error lines.
 The default is
-.Dq daemon.notice .
-.It Fl e Ar stderr-pri
-Set the syslog priority used for forwarded standard error lines.
-Accepts the same syntax as
-.Xr logger 1
-.Pq numeric or Dq facility.level .
+.Dq daemon .
+.It Fl o Ar stdout-level
+Set the syslog level used for forwarded standard output lines.
+The level may be specified as one of
+.Dq emerg ,
+.Dq alert ,
+.Dq crit ,
+.Dq err ,
+.Dq warning ,
+.Dq notice ,
+.Dq info ,
+or
+.Dq debug ,
+or as a numeric level from 0 to 7.
 The default is
-.Dq daemon.err .
+.Dq notice .
+.It Fl e Ar stderr-level
+Set the syslog level used for forwarded standard error lines.
+The same values as
+.Fl o
+are accepted.
+The default is
+.Dq err .
 .It Fl t Ar tag
 Set the syslog tag used for forwarded jailed-command output.
 If omitted,

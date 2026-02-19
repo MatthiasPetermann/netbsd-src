@@ -390,7 +390,7 @@ Inbound packet:
 
 8.2 Command surface
 - create [-c cpu-ms] [-m bytes] [-r port[,port...]] -n name <root>
-- supervise [-p priority] [-t tag] <jail-id|name> <command...>
+- supervise [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <jail-id|name> <command...>
 - destroy <jail-id|name>
 - exec <jail-id|name> [command...]
 - list
@@ -408,6 +408,7 @@ Exec:
 Supervise:
 - detached monitor + child workload model
 - streams child stdout/stderr to syslog with jail context
+- logging options: -f selects facility, -o/-e select only levels
 - on stop signal: SIGTERM process group, then SIGKILL after timeout
 
 List/resolve:
