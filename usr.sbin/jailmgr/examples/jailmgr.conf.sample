@@ -19,3 +19,6 @@ JAIL_LOCAL_DEV=YES
 JAIL_DEV_SIZE=8m
 JAIL_DEVICES="std ptm"
 JAIL_PTYFS=YES
+
+# Per-jail create-time options are stored in each jail.conf, including
+# JAIL_CREATE_RESERVED_PORTS for exclusive listening-port reservations.

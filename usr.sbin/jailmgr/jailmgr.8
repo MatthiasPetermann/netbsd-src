@@ -79,7 +79,7 @@ Then
 extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
-.It Cm create Op Fl a Op Fl s Ar cmd Op Fl c Ar cpu-percent Op Fl m Ar memory-mb Op Fl P Ar profile Op Fl p Ar pri Op Fl t Ar tag Ar name
+.It Cm create Op Fl a Op Fl s Ar cmd Op Fl c Ar cpu-percent Op Fl m Ar memory-mb Op Fl P Ar profile Op Fl r Ar port[,port...] Op Fl p Ar pri Op Fl t Ar tag Ar name
 Create directories and metadata for one jail:
 .Pa root ,
 .Pa data ,
@@ -143,6 +143,15 @@ create profile
 .Dq medium ,
 or
 .Dq high .
+When
+.Fl r
+is provided,
+the generated
+.Pa jail.conf
+stores the corresponding
+.Xr jailctl 8
+create-time reserved listening ports
+.Pq comma-separated list forwarded to Cm create Fl r .
 When
 .Fl p
 or
@@ -282,6 +291,11 @@ Optional value forwarded to
 .Dq medium ,
 or
 .Dq high .
+.It Ev JAIL_CREATE_RESERVED_PORTS
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl r
+.Pq comma-separated TCP/UDP port list .
 .It Ev JAIL_SUPERVISE_PRI
 Optional value forwarded to
 .Xr jailctl 8
@@ -317,7 +331,7 @@ Prepare and start all configured jails:
 # vi /etc/jailmgr.conf
 # jailmgr bootstrap
 # jailmgr create jail1
-# jailmgr create -a -s '/bin/sh /etc/rc' -c 25 -m 512 -P medium -p local3.info -t jail-web jail2
+# jailmgr create -a -s '/bin/sh /etc/rc' -c 25 -m 512 -P medium -r 80,443 -p local3.info -t jail-web jail2
 # vi /var/jailmgr/jails/jail1/jail.conf
 # vi /var/jailmgr/jails/jail2/jail.conf
 # jailmgr start --all

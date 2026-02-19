@@ -12,6 +12,7 @@ It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
 - `create -s '<cmd ...>' <name>` initializes `JAIL_SUPERVISE_CMD` in `jail.conf`.
 - `create -c <cpu-percent>` sets CPU limits for `jailctl create` (0-100; internally 1% = 10ms/s).
 - `create -m <memory-mb>` sets memory limits for `jailctl create` (internally converted to bytes).
+- `create -r <port[,port...]>` reserves one or more listening ports for the jail (`jailctl create -r`).
 - `create -p <pri> -t <tag>` initializes logging options for `jailctl supervise`.
 - `start <name>` and `restart <name>` use per-jail settings from `${JAIL_DATA_DIR}/<name>/jail.conf`.
 - `start --all` / `stop --all` / `restart --all` work only on jails with `JAIL_AUTOSTART=YES`.
@@ -45,7 +46,7 @@ It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
    /usr/sbin/jailmgr create jail1
    /usr/sbin/jailmgr create -a jail2
    /usr/sbin/jailmgr create -a -s '/bin/sh /etc/rc' \
-       -c 25 -m 512 -p local3.info -t jail-web jail3
+       -c 25 -m 512 -r 80,443 -p local3.info -t jail-web jail3
    ```
 
    Then set at least `JAIL_SUPERVISE_CMD` and `JAIL_AUTOSTART` in each
