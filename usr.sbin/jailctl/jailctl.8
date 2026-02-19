@@ -37,6 +37,7 @@
 .Op Fl c Ar cpu-ms
 .Op Fl m Ar bytes
 .Op Fl p Ar profile
+.Op Fl r Ar port[,port...]
 .Fl n Ar name
 .Ar root
 .Nm
@@ -66,7 +67,7 @@ jail id, while the host root user (jail id 0) can access all processes.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Op Fl c Ar cpu-ms Op Fl m Ar bytes Op Fl p Ar profile Fl n Ar name Ar root
+.It Cm create Op Fl c Ar cpu-ms Op Fl m Ar bytes Op Fl p Ar profile Op Fl r Ar port[,port...] Fl n Ar name Ar root
 Create a new jail id, assign it the unique
 .Ar name ,
 and store jail name and root metadata in the kernel jail model.
@@ -95,6 +96,12 @@ keeps hardening but defers SysV IPC administrative checks,
 and
 .Dq high
 enforces full system-scope hardening.
+.It Fl r Ar port[,port...]
+Reserve one or more listening ports for this jail.
+The option may be repeated and accepts comma-separated lists.
+When at least one jail reserves a given port, bind attempts for that port are
+allowed only from processes in the jail that reserved it.
+Ports not reserved by any jail remain unrestricted.
 .El
 .It Cm supervise Op Fl p Ar pri Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
 Start a command in an existing jail selected by

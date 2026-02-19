@@ -78,7 +78,7 @@ Usage: $0 <command> [args]
 
 Commands:
   bootstrap                   Download sets and build shared base layer
-  create [-a] [-s cmd] [-c cpu-percent] [-m memory-mb] [-P profile] [-p pri] [-t tag] <name>
+  create [-a] [-s cmd] [-c cpu-percent] [-m memory-mb] [-P profile] [-r port[,port...]] [-p pri] [-t tag] <name>
                               Create jail instance directories and persist jail.conf
   start <name>                Mount jail root and supervise jail via jailctl
   start --all                 Start all configured jails
@@ -297,6 +297,7 @@ load_jail_conf() {
 	JAIL_CREATE_CPU_MS=
 	JAIL_CREATE_MEMORY_BYTES=
 	JAIL_CREATE_PROFILE=
+	JAIL_CREATE_RESERVED_PORTS=
 	JAIL_SUPERVISE_PRI=
 	JAIL_SUPERVISE_TAG=
 	JAIL_AUTOSTART=NO
@@ -410,9 +411,11 @@ create_jail() {
 	create_cpu_ms=${4:-}
 	create_memory_bytes=${5:-}
 	create_profile=${6:-}
-	supervise_pri=${7:-}
-	supervise_tag=${8:-}
+	create_reserved_ports=${7:-}
+	supervise_pri=${8:-}
+	supervise_tag=${9:-}
 	escaped_create_profile=$(escape_dq "${create_profile}")
+	escaped_create_reserved_ports=$(escape_dq "${create_reserved_ports}")
 	escaped_supervise_cmd=$(escape_dq "${supervise_cmd}")
 	escaped_supervise_pri=$(escape_dq "${supervise_pri}")
 	escaped_supervise_tag=$(escape_dq "${supervise_tag}")
@@ -433,6 +436,7 @@ JAIL_AUTOSTART=${autostart}
 JAIL_CREATE_CPU_MS="${create_cpu_ms}"
 JAIL_CREATE_MEMORY_BYTES="${create_memory_bytes}"
 JAIL_CREATE_PROFILE="${escaped_create_profile}"
+JAIL_CREATE_RESERVED_PORTS="${escaped_create_reserved_ports}"
 # Optional jailctl supervise(8) logging controls:
 JAIL_SUPERVISE_PRI="${escaped_supervise_pri}"
 JAIL_SUPERVISE_TAG="${escaped_supervise_tag}"
@@ -481,6 +485,9 @@ start_jail() {
 	fi
 	if [ -n "${JAIL_CREATE_PROFILE:-}" ]; then
 		set -- "$@" -p "${JAIL_CREATE_PROFILE}"
+	fi
+	if [ -n "${JAIL_CREATE_RESERVED_PORTS:-}" ]; then
+		set -- "$@" -r "${JAIL_CREATE_RESERVED_PORTS}"
 	fi
 	set -- "$@" "${ROOT_DIR}"
 	# jailctl create/supervise print "jail <jid>" on stdout; keep jailmgr
@@ -599,6 +606,7 @@ case "${cmd}" in
 		create_cpu_ms=
 		create_memory_bytes=
 		create_profile=
+		create_reserved_ports=
 		supervise_pri=
 		supervise_tag=
 		shift
@@ -634,6 +642,11 @@ case "${cmd}" in
 			-P)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				create_profile=$2
+				shift 2
+				;;
+			-r)
+				[ $# -ge 2 ] || { usage; exit 1; }
+				create_reserved_ports=$2
 				shift 2
 				;;
 			-p)

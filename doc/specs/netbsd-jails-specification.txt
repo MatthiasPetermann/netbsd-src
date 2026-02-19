@@ -136,6 +136,7 @@ Key principle:
   - root path metadata
   - optional CPU limit
   - optional memory limit
+  - optional reserved listening-port set
 
 3.2 Privilege model
 - Host root means effective UID 0 and jail ID 0.
@@ -152,20 +153,32 @@ Key principle:
 - KAUTH_PROCESS_SIGNAL denies cross-jail signaling.
 - Host root bypasses these restrictions by design.
 
-3.4 Credential lifecycle behavior
+3.4 Network bind reservation semantics
+- secmodel_jail registers a KAUTH_SCOPE_NETWORK listener for bind decisions.
+- Jail create payload may include a set of reserved listening ports.
+- Port reservations are exclusive across jails (duplicate reservation fails
+  at create time).
+- For each bind attempt with a concrete TCP/UDP port:
+  - if the port is reserved by at least one jail, only a process in the jail
+    that reserved the port is allowed to bind it;
+  - if the port is not reserved by any jail, bind is allowed by this policy.
+- Port 0 (kernel-assigned ephemeral bind) is not restricted by reservation.
+
+3.5 Credential lifecycle behavior
 - Newly initialized credentials default to jail ID 0.
 - Credential copies preserve jail ID.
 
-3.5 Jail lifecycle constraints
+3.6 Jail lifecycle constraints
 - Destroy is refused while processes (including zombies) still reference the
   target jail ID.
 
-3.6 Sysctl control API (security.models.jail.*)
+3.7 Sysctl control API (security.models.jail.*)
 - id
   - read current process jail ID
   - write requests entering target jail ID
 - create
   - create a jail (legacy integer or structured create payload)
+  - structured payload may include reserved listening ports
 - destroy
   - destroy by ID (empty only)
 - list
@@ -173,7 +186,7 @@ Key principle:
 - resource_mode
   - choose RLIMIT or aggregate model
 
-3.7 Logging model
+3.8 Logging model
 - Module load/unload events.
 - Successful create/destroy operations.
 - Rate-limited resource-veto informational messages.
@@ -376,7 +389,7 @@ Inbound packet:
 - Thin operational interface over security.models.jail sysctls.
 
 8.2 Command surface
-- create [-c cpu-ms] [-m bytes] -n name <root>
+- create [-c cpu-ms] [-m bytes] [-r port[,port...]] -n name <root>
 - supervise [-p priority] [-t tag] <jail-id|name> <command...>
 - destroy <jail-id|name>
 - exec <jail-id|name> [command...]
@@ -422,6 +435,7 @@ List/resolve:
 - bootstrap: load/persist module, fetch/extract base artifacts, build shared
   base layer.
 - create [options] <name>: create/update per-jail structure and persist
+  resource settings (including reserved ports) and
   jail.conf metadata. During create, host /etc/resolv.conf is copied into
   per-jail data/etc/resolv.conf when present.
 - start <name>|--all: mount, create jail, launch supervise command.
@@ -431,6 +445,7 @@ List/resolve:
 - list: print configured jails with root/cmd/autostart information.
 
 9.4.1 Resource option semantics (jailmgr create)
+- -r port[,port...]: persist reserved listening ports forwarded to jailctl create.
 - -c <cpu-percent>
   - integer range: 0..100
   - converted internally to jailctl cpu-ms via:

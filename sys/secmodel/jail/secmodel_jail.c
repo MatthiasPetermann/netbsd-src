@@ -61,6 +61,7 @@ MODULE(MODULE_CLASS_SECMODEL, secmodel_jail, NULL);
 static kauth_listener_t l_process;
 static kauth_listener_t l_cred;
 static kauth_listener_t l_system;
+static kauth_listener_t l_network;
 
 static secmodel_t jail_sm;
 static kauth_key_t jail_key;
@@ -94,6 +95,11 @@ static void	secmodel_jail_log_veto(const char *, jailid_t,
 		    const struct jail_config *, uint64_t, uint64_t);
 static int	secmodel_jail_system_cb(kauth_cred_t, kauth_action_t, void *,
 		    void *, void *, void *, void *);
+static int	secmodel_jail_network_cb(kauth_cred_t, kauth_action_t, void *,
+		    void *, void *, void *, void *);
+static bool	secmodel_jail_port_reserved_by_id(jailid_t, in_port_t);
+static bool	secmodel_jail_port_reserved_any(in_port_t);
+static bool	secmodel_jail_addr_port(const struct sockaddr *, in_port_t *);
 
 static struct timeval secmodel_jail_veto_log_last;
 static const struct timeval secmodel_jail_veto_log_interval = { 5, 0 };
@@ -112,6 +118,8 @@ struct jail_entry {
 	rlim_t je_cpu_limit;
 	rlim_t je_mem_limit;
 	enum jail_policy_profile je_profile;
+	uint16_t je_nports;
+	uint16_t je_ports[JAIL_PORTS_MAX];
 	LIST_ENTRY(jail_entry) je_entry;
 };
 
@@ -287,6 +295,22 @@ secmodel_jail_create(const struct jail_create *create,
 		return EEXIST;
 	}
 
+	if (create != NULL &&
+	    (create->jc_flags & JAIL_CREATE_PORTS) != 0) {
+		size_t i;
+
+		for (i = 0; i < create->jc_nports; i++) {
+			if (create->jc_ports[i] == 0) {
+				mutex_exit(&jail_lock);
+				return EINVAL;
+			}
+			if (secmodel_jail_port_reserved_any(htons(create->jc_ports[i]))) {
+				mutex_exit(&jail_lock);
+				return EEXIST;
+			}
+		}
+	}
+
 	if (jail_next_id == 0) {
 		mutex_exit(&jail_lock);
 		return EOVERFLOW;
@@ -299,6 +323,11 @@ secmodel_jail_create(const struct jail_create *create,
 	if (create != NULL) {
 		strlcpy(entry->je_name, create->jc_name, sizeof(entry->je_name));
 		strlcpy(entry->je_root, create->jc_root, sizeof(entry->je_root));
+		if ((create->jc_flags & JAIL_CREATE_PORTS) != 0) {
+			entry->je_nports = create->jc_nports;
+			memcpy(entry->je_ports, create->jc_ports,
+			    sizeof(create->jc_ports));
+		}
 	}
 	if (config != NULL) {
 		entry->je_has_cpu_limit = config->jc_has_cpu_limit;
@@ -314,6 +343,63 @@ secmodel_jail_create(const struct jail_create *create,
 
 	*idp = id;
 	return 0;
+}
+
+static bool
+secmodel_jail_port_reserved_by_id(jailid_t id, in_port_t lport)
+{
+	struct jail_entry *entry;
+	size_t i;
+
+	entry = secmodel_jail_lookup(id);
+	if (entry == NULL)
+		return false;
+
+	for (i = 0; i < entry->je_nports; i++) {
+		if (htons(entry->je_ports[i]) == lport)
+			return true;
+	}
+
+	return false;
+}
+
+static bool
+secmodel_jail_port_reserved_any(in_port_t lport)
+{
+	struct jail_entry *entry;
+	size_t i;
+
+	LIST_FOREACH(entry, &jail_list, je_entry) {
+		for (i = 0; i < entry->je_nports; i++) {
+			if (htons(entry->je_ports[i]) == lport)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+static bool
+secmodel_jail_addr_port(const struct sockaddr *sa, in_port_t *port)
+{
+	const struct sockaddr_in *sin;
+	const struct sockaddr_in6 *sin6;
+
+	if (sa == NULL || port == NULL)
+		return false;
+
+	switch (sa->sa_family) {
+	case AF_INET:
+		sin = (const struct sockaddr_in *)sa;
+		*port = sin->sin_port;
+		return true;
+	case AF_INET6:
+		sin6 = (const struct sockaddr_in6 *)sa;
+		*port = sin6->sin6_port;
+		return true;
+	default:
+		return false;
+	}
 }
 
 /*
@@ -673,8 +759,25 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 		flags = create.jc_flags;
 		if ((flags & ~(JAIL_CREATE_MEMLIMIT |
 		    JAIL_CREATE_CPULIMIT |
-		    JAIL_CREATE_PROFILE)) != 0)
+		    JAIL_CREATE_PROFILE |
+		    JAIL_CREATE_PORTS)) != 0)
 			return EINVAL;
+		if ((flags & JAIL_CREATE_PORTS) != 0) {
+			size_t i, j;
+
+			if (create.jc_nports == 0 || create.jc_nports > JAIL_PORTS_MAX)
+				return EINVAL;
+			for (i = 0; i < create.jc_nports; i++) {
+				if (create.jc_ports[i] == 0)
+					return EINVAL;
+				for (j = i + 1; j < create.jc_nports; j++) {
+					if (create.jc_ports[i] == create.jc_ports[j])
+						return EINVAL;
+				}
+			}
+		} else if (create.jc_nports != 0) {
+			return EINVAL;
+		}
 
 		memset(&config, 0, sizeof(config));
 		config.jc_profile = JAIL_PROFILE_POLICY_HIGH;
@@ -1040,6 +1143,8 @@ secmodel_jail_start(void)
 	    secmodel_jail_cred_cb, NULL);
 	l_system = kauth_listen_scope(KAUTH_SCOPE_SYSTEM,
 	    secmodel_jail_system_cb, NULL);
+	l_network = kauth_listen_scope(KAUTH_SCOPE_NETWORK,
+	    secmodel_jail_network_cb, NULL);
 	/*
 	 * Publish the UVM integration hook. UVM checks this pointer before calling,
 	 * so the model can be cleanly loaded/unloaded without hard linker coupling.
@@ -1062,6 +1167,7 @@ secmodel_jail_stop(void)
 	kauth_unlisten_scope(l_process);
 	kauth_unlisten_scope(l_cred);
 	kauth_unlisten_scope(l_system);
+	kauth_unlisten_scope(l_network);
 	kauth_deregister_key(jail_key);
 
 	mutex_enter(&jail_lock);
@@ -1071,6 +1177,47 @@ secmodel_jail_stop(void)
 	}
 	mutex_exit(&jail_lock);
 	mutex_destroy(&jail_lock);
+}
+
+static int
+secmodel_jail_network_cb(kauth_cred_t cred, kauth_action_t action,
+    void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
+{
+	enum kauth_network_req req;
+	in_port_t lport;
+	jailid_t id;
+
+	(void)cookie;
+	(void)arg1;
+	(void)arg3;
+
+	if (action != KAUTH_NETWORK_BIND)
+		return KAUTH_RESULT_DEFER;
+
+	req = (enum kauth_network_req)(uintptr_t)arg0;
+	if (req != KAUTH_REQ_NETWORK_BIND_PORT &&
+	    req != KAUTH_REQ_NETWORK_BIND_PRIVPORT)
+		return KAUTH_RESULT_DEFER;
+
+	if (!secmodel_jail_addr_port((const struct sockaddr *)arg2, &lport))
+		return KAUTH_RESULT_DEFER;
+	if (lport == 0)
+		return KAUTH_RESULT_DEFER;
+
+	id = secmodel_jail_cred_id(cred);
+
+	mutex_enter(&jail_lock);
+	if (!secmodel_jail_port_reserved_any(lport)) {
+		mutex_exit(&jail_lock);
+		return KAUTH_RESULT_DEFER;
+	}
+	if (secmodel_jail_port_reserved_by_id(id, lport)) {
+		mutex_exit(&jail_lock);
+		return KAUTH_RESULT_ALLOW;
+	}
+	mutex_exit(&jail_lock);
+
+	return KAUTH_RESULT_DENY;
 }
 
 /*

@@ -45,6 +45,9 @@ typedef uint32_t jailid_t;
 #define JAIL_CREATE_MEMLIMIT	0x00000001
 #define JAIL_CREATE_CPULIMIT	0x00000002
 #define JAIL_CREATE_PROFILE	0x00000004
+#define JAIL_CREATE_PORTS	0x00000008
+
+#define JAIL_PORTS_MAX	32
 
 #define JAIL_PROFILE_LOW	0
 #define JAIL_PROFILE_MEDIUM	1
@@ -56,6 +59,8 @@ struct jail_create {
 	uint32_t jc_profile;
 	uint64_t jc_mem_limit;
 	uint64_t jc_cpu_limit;
+	uint16_t jc_nports;
+	uint16_t jc_ports[JAIL_PORTS_MAX];
 	char jc_name[JAIL_NAME_MAX + 1];
 	char jc_root[JAIL_ROOT_MAX + 1];
 };

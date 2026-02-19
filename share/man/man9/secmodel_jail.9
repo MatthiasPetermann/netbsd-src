@@ -89,6 +89,12 @@ asynchronously signalled by aggregate CPU policy.
 .El
 .Pp
 The default is aggregate mode.
+A structured
+.Vt struct jail_create
+request can include an optional set of reserved listening ports.
+Reserved ports are exclusive per jail and are enforced during
+.Dv KAUTH_NETWORK_BIND
+authorization.
 .Sh MODE TRANSITIONS
 Changing
 .Va resource_mode

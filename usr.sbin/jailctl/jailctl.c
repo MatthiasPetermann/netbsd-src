@@ -71,6 +71,7 @@ static int	parse_log_facility(const char *);
 static int	parse_log_level(const char *);
 static int	parse_log_priority(const char *);
 static uint32_t	parse_profile(const char *);
+static void	parse_port_list(struct jail_create *, const char *);
 static void	sanitize_field(const char *, char *, size_t);
 static bool	jail_lookup_by_name(const char *, struct jail_info *);
 static bool	jail_lookup_by_id(jailid_t, struct jail_info *);
@@ -758,6 +759,46 @@ parse_profile(const char *arg)
 	return JAIL_PROFILE_HIGH;
 }
 
+static void
+parse_port_list(struct jail_create *create, const char *arg)
+{
+	char *list, *tok, *sp;
+	unsigned long port;
+
+	list = strdup(arg);
+	if (list == NULL)
+		err(1, "strdup");
+
+	for (tok = strtok_r(list, ",", &sp); tok != NULL;
+	    tok = strtok_r(NULL, ",", &sp)) {
+		char *endp;
+		size_t i;
+
+		errno = 0;
+		port = strtoul(tok, &endp, 10);
+		if (errno != 0 || *tok == '\0' || *endp != '\0' ||
+		    port == 0 || port > UINT16_MAX) {
+			free(list);
+			errx(1, "invalid reserved port: %s", tok);
+		}
+		for (i = 0; i < create->jc_nports; i++) {
+			if (create->jc_ports[i] == (uint16_t)port) {
+				free(list);
+				errx(1, "duplicate reserved port: %lu", port);
+			}
+		}
+		if (create->jc_nports >= JAIL_PORTS_MAX) {
+			free(list);
+			errx(1, "too many reserved ports (max %u)", JAIL_PORTS_MAX);
+		}
+		create->jc_ports[create->jc_nports++] = (uint16_t)port;
+	}
+
+	free(list);
+	if (create->jc_nports > 0)
+		create->jc_flags |= JAIL_CREATE_PORTS;
+}
+
 static int
 getnum(const char *str, uintmax_t *num)
 {
@@ -815,7 +856,7 @@ main(int argc, char *argv[])
 		name = NULL;
 		create.jc_profile = JAIL_PROFILE_HIGH;
 		optind = 2;
-		while ((ch = getopt(argc, argv, "c:m:n:p:")) != -1) {
+		while ((ch = getopt(argc, argv, "c:m:n:p:r:")) != -1) {
 			switch (ch) {
 			case 'c':
 				errno = 0;
@@ -839,6 +880,9 @@ main(int argc, char *argv[])
 			case 'p':
 				create.jc_flags |= JAIL_CREATE_PROFILE;
 				create.jc_profile = parse_profile(optarg);
+				break;
+			case 'r':
+				parse_port_list(&create, optarg);
 				break;
 			default:
 				usage();
@@ -931,7 +975,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-c cpu-ms] [-m bytes] [-p low|medium|high] -n name <root>\n"
+	    "usage: %s create [-c cpu-ms] [-m bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>\n"
 	    "       %s supervise [-p pri] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
