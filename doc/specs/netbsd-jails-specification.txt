@@ -484,19 +484,19 @@ stop:
 
 Detailed control-flow:
 
-+-----------+      +--------------+      +------------------+
++------------+      +--------------+      +------------------+
 | jailmgr    |----->| filesystem   |----->| jailctl create   |
 | start      |      | mount stack  |      | (kernel sysctl)  |
-+-----------+      +--------------+      +---------+--------+
-                                                      |
-                                                      v
-                                             +------------------+
-                                             | jailctl supervise |
-                                             | + monitor process |
-                                             +---------+--------+
-                                                       |
-                                                       v
-                                               workload in jail
++------------+      +--------------+      +---------+--------+
+                                                    |
+                                                    v
+                                          +------------------+
+                                          | jailctl supervise |
+                                          | + monitor process |
+                                          +---------+--------+
+                                                    |
+                                                    v
+                                            workload in jail
 
 10. End-to-end runtime flows
 ----------------------------
