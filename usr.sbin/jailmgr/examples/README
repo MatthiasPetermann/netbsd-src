@@ -45,12 +45,18 @@ It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
    ```sh
    /usr/sbin/jailmgr create jail1
    /usr/sbin/jailmgr create -a jail2
-   /usr/sbin/jailmgr create -a -s '/bin/sh /etc/rc' \
+   /usr/sbin/jailmgr create -a -s '/bin/sleep 60' \
        -c 25 -m 512 -r 80,443 -f local3 -o info -e err -t jail-web jail3
    ```
 
    Then set at least `JAIL_SUPERVISE_CMD` and `JAIL_AUTOSTART` in each
    jail-local `jail.conf`.
+
+   Real-world example for jail `www`:
+
+   ```sh
+   JAIL_SUPERVISE_CMD="/usr/libexec/httpd -I 8080 -X -s -f /srv/www"
+   ```
 
 5. Start jails:
 
