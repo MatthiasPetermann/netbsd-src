@@ -61,8 +61,10 @@ __RCSID("$NetBSD$");
 static void	usage(void) __dead;
 
 static void	jail_exec(jailid_t, const char *, char *[]);
-static void	jail_run_monitor(jailid_t, const char *, const char *, int, int,
-		    pid_t, int, int);
+static void	jail_run_monitor_once(jailid_t, const char *, int, int, pid_t,
+		    int, int, int *);
+static void	jail_supervise_loop(jailid_t, const char *, const char *,
+		    const char *, char *[], int, int);
 static void	jail_spawn_detached(jailid_t, const char *, const char *,
 		    const char *, char *[], int, int);
 static int	parse_log_facility(const char *);
@@ -309,53 +311,39 @@ log_stream_data(int priority, const char *stream, jailid_t id, const char *name,
 }
 
 static void
-jail_run_monitor(jailid_t id, const char *name, const char *logtag,
-    int outfd, int errfd,
-    pid_t child, int facility, int stdout_level)
+jail_run_monitor_once(jailid_t id, const char *name, int outfd, int errfd,
+    pid_t child, int stdout_level, int stderr_level, int *statusp)
 {
 	const int kill_grace_ms = 5000;
 	char outline[JAILCTL_LOG_MAX];
 	char errline[JAILCTL_LOG_MAX];
-	struct sigaction sa;
 	struct timespec now;
 	struct timespec shutdown_deadline;
 	size_t outused, errused;
 	bool outopen, erropen;
 	bool sent_sigterm, sent_sigkill;
 	bool have_deadline;
-	int stderr_level;
-	int status;
+	int flags;
 
 	/*
-	 * The monitor owns lifecycle and logging for the supervised jail command:
+	 * Monitor one supervised child execution:
 	 * - forward stdout/stderr to syslog with jail context
 	 * - on shutdown request, terminate process group gracefully then forcefully
 	 */
-	setproctitle("jailctl supervise jail=%s jid=%" PRIu32, name, id);
-	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
-	stderr_level = stdout_level < LOG_ERR ? stdout_level : LOG_ERR;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_handler = monitor_signal_handler;
-	sigemptyset(&sa.sa_mask);
-	if (sigaction(SIGTERM, &sa, NULL) == -1 ||
-	    sigaction(SIGINT, &sa, NULL) == -1 ||
-	    sigaction(SIGQUIT, &sa, NULL) == -1)
-		err(1, "sigaction");
-
-	/*
-	 * Keep supervise mode detached from caller terminal/session lifetime.
-	 * If started via rc(8), startup completion can trigger SIGHUP delivery
-	 * to background jobs; treating SIGHUP as shutdown would stop the jail.
-	 */
-	sa.sa_handler = SIG_IGN;
-	if (sigaction(SIGHUP, &sa, NULL) == -1)
-		err(1, "sigaction");
-
-	monitor_shutdown_requested = 0;
 	sent_sigterm = false;
 	sent_sigkill = false;
 	have_deadline = false;
+
+	flags = fcntl(outfd, F_GETFL, 0);
+	if (flags == -1)
+		warn("fcntl outfd F_GETFL");
+	else if (fcntl(outfd, F_SETFL, flags | O_NONBLOCK) == -1)
+		warn("fcntl outfd O_NONBLOCK");
+	flags = fcntl(errfd, F_GETFL, 0);
+	if (flags == -1)
+		warn("fcntl errfd F_GETFL");
+	else if (fcntl(errfd, F_SETFL, flags | O_NONBLOCK) == -1)
+		warn("fcntl errfd O_NONBLOCK");
 
 	outused = 0;
 	errused = 0;
@@ -432,44 +420,46 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 			continue;
 
 		for (i = 0; i < nfd; i++) {
-			char buf[512];
-			ssize_t n;
 			bool *openp;
 
 			openp = pfd[i].fd == outfd ? &outopen : &erropen;
 
 			if (*openp == false)
 				continue;
+			if ((pfd[i].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) == 0)
+				continue;
 
-			if ((pfd[i].revents & POLLIN) == 0) {
-				if ((pfd[i].revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
+			for (;;) {
+				char buf[512];
+				ssize_t n;
+
+				n = read(pfd[i].fd, buf, sizeof(buf));
+				if (n > 0) {
+					if (pfd[i].fd == outfd)
+						log_stream_data(stdout_level, "stdout", id, name,
+						    outline, &outused, buf, (size_t)n);
+					else
+						log_stream_data(stderr_level, "stderr", id, name,
+						    errline, &errused, buf, (size_t)n);
+					continue;
+				}
+
+				if (n == 0) {
 					*openp = false;
 					close(pfd[i].fd);
+					break;
 				}
-				continue;
-			}
 
-			n = read(pfd[i].fd, buf, sizeof(buf));
-			if (n == 0) {
-				*openp = false;
-				close(pfd[i].fd);
-				continue;
-			}
-			if (n < 0) {
 				if (errno == EINTR)
 					continue;
+				if (errno == EAGAIN || errno == EWOULDBLOCK)
+					break;
+
 				warn("read");
 				*openp = false;
 				close(pfd[i].fd);
-				continue;
+				break;
 			}
-
-			if (pfd[i].fd == outfd)
-				log_stream_data(stdout_level, "stdout", id, name,
-				    outline, &outused, buf, (size_t)n);
-			else
-				log_stream_data(stderr_level, "stderr", id, name,
-				    errline, &errused, buf, (size_t)n);
 		}
 	}
 
@@ -480,36 +470,62 @@ jail_run_monitor(jailid_t id, const char *name, const char *logtag,
 		syslog(stderr_level, "jail=%s jid=%" PRIu32 " stderr: %.*s",
 		    name, id, (int)errused, errline);
 
-	if (waitpid(child, &status, 0) == -1 && errno != ECHILD)
+	if (waitpid(child, statusp, 0) == -1 && errno != ECHILD)
 		warn("waitpid %jd", (intmax_t)child);
-
-	closelog();
-	_exit(0);
 }
 
 static void
-jail_spawn_detached(jailid_t id, const char *root, const char *name,
+jail_supervise_loop(jailid_t id, const char *root, const char *name,
     const char *logtag, char *cmd[], int facility, int stdout_level)
 {
-	int outpipe[2], errpipe[2], devnull;
-	pid_t child, mgr;
+	struct sigaction sa;
+	int next_backoff_sec;
+	int stderr_level;
+
+	setproctitle("jailctl supervise jail=%s jid=%" PRIu32, name, id);
+	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
+	stderr_level = stdout_level < LOG_ERR ? stdout_level : LOG_ERR;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = monitor_signal_handler;
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(SIGTERM, &sa, NULL) == -1 ||
+	    sigaction(SIGINT, &sa, NULL) == -1 ||
+	    sigaction(SIGQUIT, &sa, NULL) == -1)
+		err(1, "sigaction");
 
 	/*
-	 * Double-fork model:
-	 * - manager child supervises logging and signal orchestration
-	 * - workload child gets a new session and executes inside jail context
+	 * Keep supervise mode detached from caller terminal/session lifetime.
+	 * If started via rc(8), startup completion can trigger SIGHUP delivery
+	 * to background jobs; treating SIGHUP as shutdown would stop the jail.
 	 */
-	if (pipe(outpipe) == -1 || pipe(errpipe) == -1)
-		err(1, "pipe");
+	sa.sa_handler = SIG_IGN;
+	if (sigaction(SIGHUP, &sa, NULL) == -1)
+		err(1, "sigaction");
 
-	mgr = fork();
-	if (mgr == -1)
-		err(1, "fork");
-	if (mgr == 0) {
+	monitor_shutdown_requested = 0;
+	next_backoff_sec = 1;
+
+	for (;;) {
+		int outpipe[2], errpipe[2], status;
+		struct timespec started, elapsed;
+		pid_t child;
+
+		if (monitor_shutdown_requested)
+			break;
+
+		if (pipe(outpipe) == -1 || pipe(errpipe) == -1)
+			err(1, "pipe");
+
+		if (clock_gettime(CLOCK_MONOTONIC, &started) == -1)
+			err(1, "clock_gettime");
+
 		child = fork();
 		if (child == -1)
 			err(1, "fork");
 		if (child == 0) {
+			int devnull;
+
 			close(outpipe[0]);
 			close(errpipe[0]);
 			if (setsid() == -1)
@@ -530,14 +546,109 @@ jail_spawn_detached(jailid_t id, const char *root, const char *name,
 
 		close(outpipe[1]);
 		close(errpipe[1]);
-		jail_run_monitor(id, name, logtag, outpipe[0], errpipe[0], child,
-		    facility, stdout_level);
+
+		syslog(LOG_INFO, "jail=%s jid=%" PRIu32 " starting supervised command",
+		    name, id);
+		status = 0;
+		jail_run_monitor_once(id, name, outpipe[0], errpipe[0], child,
+		    stdout_level, stderr_level, &status);
+
+		if (monitor_shutdown_requested) {
+			syslog(LOG_NOTICE,
+			    "jail=%s jid=%" PRIu32 " supervise shutdown requested",
+			    name, id);
+			break;
+		}
+
+		if (WIFEXITED(status)) {
+			syslog(LOG_WARNING,
+			    "jail=%s jid=%" PRIu32 " supervised command exited status=%d",
+			    name, id, WEXITSTATUS(status));
+		} else if (WIFSIGNALED(status)) {
+			syslog(LOG_WARNING,
+			    "jail=%s jid=%" PRIu32 " supervised command killed by signal=%d",
+			    name, id, WTERMSIG(status));
+		} else {
+			syslog(LOG_WARNING,
+			    "jail=%s jid=%" PRIu32 " supervised command ended unexpectedly",
+			    name, id);
+		}
+
+		if (clock_gettime(CLOCK_MONOTONIC, &elapsed) == -1)
+			err(1, "clock_gettime");
+		elapsed.tv_sec -= started.tv_sec;
+		elapsed.tv_nsec -= started.tv_nsec;
+		if (elapsed.tv_nsec < 0) {
+			elapsed.tv_sec--;
+			elapsed.tv_nsec += 1000000000L;
+		}
+
+		if (elapsed.tv_sec >= 30)
+			next_backoff_sec = 1;
+
+		syslog(LOG_NOTICE,
+		    "jail=%s jid=%" PRIu32 " restarting supervised command in %d seconds",
+		    name, id, next_backoff_sec);
+
+		{
+			int delay_sec;
+
+			for (delay_sec = next_backoff_sec;
+			    delay_sec > 0 && !monitor_shutdown_requested;
+			    delay_sec--) {
+				struct timespec delay = { .tv_sec = 1, .tv_nsec = 0 };
+
+				if (nanosleep(&delay, NULL) == -1 && errno != EINTR)
+					warn("nanosleep");
+			}
+		}
+
+		if (elapsed.tv_sec < 30) {
+			next_backoff_sec *= 2;
+			if (next_backoff_sec > 10)
+				next_backoff_sec = 10;
+		}
 	}
 
-	close(outpipe[0]);
-	close(outpipe[1]);
-	close(errpipe[0]);
-	close(errpipe[1]);
+	closelog();
+	_exit(0);
+}
+
+static void
+jail_spawn_detached(jailid_t id, const char *root, const char *name,
+    const char *logtag, char *cmd[], int facility, int stdout_level)
+{
+	int devnull;
+	pid_t mgr;
+
+	/*
+	 * Supervise mode daemonizes itself so callers (for example rc(8) helpers)
+	 * do not need nohup/background wrappers.
+	 */
+	mgr = fork();
+	if (mgr == -1)
+		err(1, "fork");
+	if (mgr == 0) {
+		mgr = fork();
+		if (mgr == -1)
+			err(1, "fork");
+		if (mgr != 0)
+			_exit(0);
+
+		if (setsid() == -1)
+			err(1, "setsid");
+		devnull = open(_PATH_DEVNULL, O_RDWR);
+		if (devnull == -1)
+			err(1, "%s", _PATH_DEVNULL);
+		if (dup2(devnull, STDIN_FILENO) == -1 ||
+		    dup2(devnull, STDOUT_FILENO) == -1 ||
+		    dup2(devnull, STDERR_FILENO) == -1)
+			err(1, "dup2");
+		if (devnull > STDERR_FILENO)
+			close(devnull);
+		jail_supervise_loop(id, root, name, logtag, cmd,
+		    facility, stdout_level);
+	}
 	printf("jail %" PRIu32 "\n", id);
 }
 
