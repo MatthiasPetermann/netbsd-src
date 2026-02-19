@@ -348,7 +348,7 @@ Prepare and start all configured jails:
 # vi /etc/jailmgr.conf
 # jailmgr bootstrap
 # jailmgr create jail1
-# jailmgr create -a -s '/bin/sh /etc/rc' -c 25 -m 512 -p medium -r 80,443 -f local3 -o info -e err -t jail-web jail2
+# jailmgr create -a -s '/bin/sleep 60' -c 25 -m 512 -p medium -r 80,443 -f local3 -o info -e err -t jail-web jail2
 # vi /var/jailmgr/jails/jail1/jail.conf
 # vi /var/jailmgr/jails/jail2/jail.conf
 # jailmgr start --all

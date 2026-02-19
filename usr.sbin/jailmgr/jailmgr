@@ -409,7 +409,7 @@ create_jail() {
 	require_tools
 	name=$1
 	autostart=${2:-NO}
-	supervise_cmd=${3:-/bin/sh /etc/rc}
+	supervise_cmd=${3:-/bin/sleep 60}
 	create_cpu_ms=${4:-}
 	create_memory_bytes=${5:-}
 	create_profile=${6:-}
@@ -449,7 +449,7 @@ JAIL_SUPERVISE_STDOUT_LEVEL="${escaped_supervise_stdout_level}"
 JAIL_SUPERVISE_STDERR_LEVEL="${escaped_supervise_stderr_level}"
 JAIL_SUPERVISE_TAG="${escaped_supervise_tag}"
 # Required command (with optional args) to supervise in this jail.
-# Example starts the normal NetBSD in-jail boot sequence:
+# Example placeholder that keeps the jail alive until a real service command is configured:
 JAIL_SUPERVISE_CMD="${escaped_supervise_cmd}"
 CONF
 
@@ -471,7 +471,7 @@ start_jail() {
 	load_jail_conf "${name}"
 	effective_supervise_cmd=${JAIL_SUPERVISE_CMD:-}
 	if [ -z "${effective_supervise_cmd}" ]; then
-		echo "JAIL_SUPERVISE_CMD must be set in ${JAIL_CONF} (example: /bin/sh /etc/rc)" >&2
+		echo "JAIL_SUPERVISE_CMD must be set in ${JAIL_CONF} (example: /bin/sleep 60)" >&2
 		exit 1
 	fi
 
@@ -616,7 +616,7 @@ case "${cmd}" in
 		;;
 	create)
 		autostart=NO
-		supervise_cmd="/bin/sh /etc/rc"
+		supervise_cmd="/bin/sleep 60"
 		create_cpu_ms=
 		create_memory_bytes=
 		create_profile=
