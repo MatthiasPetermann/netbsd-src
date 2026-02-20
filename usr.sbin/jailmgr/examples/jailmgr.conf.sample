@@ -1,0 +1,31 @@
+# Sample /etc/jailmgr.conf
+#
+# RELEASE should use only <major>.<minor> (e.g. 10.1, not 10.1_STABLE).
+
+RELEASE=10.1
+MACHINE_ARCH=amd64
+
+# Optional override. If unset/empty, jailmgr derives:
+# https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets
+NETBSD_MIRROR="https://cdn.netbsd.org/pub/NetBSD/NetBSD-${RELEASE}/${MACHINE_ARCH}/binary/sets"
+
+JAIL_BASE_DIR=/var/jailmgr/base
+JAIL_DATA_DIR=/var/jailmgr/jails
+JAIL_RELEASE_DIR=/var/jailmgr/releases
+
+# Jail-specific settings are stored in ${JAIL_DATA_DIR}/<name>/jail.conf
+# and created/updated by: jailmgr create <name>
+
+# Per-jail local /dev setup (tmpfs + MAKEDEV)
+JAIL_LOCAL_DEV=YES
+JAIL_DEV_SIZE=8m
+JAIL_DEVICES="std ptm"
+JAIL_PTYFS=YES
+
+# Per-jail create-time options are stored in each jail.conf, including
+# JAIL_CREATE_RESERVED_PORTS for exclusive listening-port reservations.
+
+# Per-jail supervise logging settings are stored in each jail.conf:
+#   JAIL_SUPERVISE_FACILITY (facility name, e.g. daemon/local0)
+#   JAIL_SUPERVISE_STDOUT_LEVEL (emerg..debug or 0..7)
+#   JAIL_SUPERVISE_STDERR_LEVEL (emerg..debug or 0..7)
