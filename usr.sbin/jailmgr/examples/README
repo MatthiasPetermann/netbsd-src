@@ -12,6 +12,7 @@ It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
 - `create -s '<cmd ...>' <name>` initializes `JAIL_SUPERVISE_CMD` in `jail.conf`.
 - `create -c <cpu-percent>` sets CPU limits for `jailctl create` (0-100; internally 1% = 10ms/s).
 - `create -m <memory-mb>` sets memory limits for `jailctl create` (internally converted to bytes).
+- CPU and memory limits are enforced through per-process `RLIMIT` values when entering the jail.
 - `create -r <port[,port...]>` reserves one or more listening ports for the jail (`jailctl create -r`).
 - `create -f <facility> -o <stdout-level> -e <stderr-level> -t <tag>` initializes logging options for `jailctl supervise`.
 - `start <name>` and `restart <name>` use per-jail settings from `${JAIL_DATA_DIR}/<name>/jail.conf`.

@@ -75,7 +75,9 @@ Create a new jail id, assign it the unique
 and store jail name and root metadata in the kernel jail model.
 This command only creates the jail and prints the resulting jail id.
 .Pp
-The optional flags set per-jail resource limits at creation time:
+The optional flags set per-jail resource limits at creation time.
+In the current implementation these limits are applied as per-process
+.Xr getrlimit 2 values when a process enters the jail:
 .Bl -tag -width Ds
 .It Fl c Ar cpu-ms
 Set a CPU time limit (in milliseconds) for processes in the jail.
