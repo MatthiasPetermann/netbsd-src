@@ -24,12 +24,12 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .
-.Dd February 8, 2026
+.Dd February 20, 2026
 .Dt SECMODEL_JAIL 9
 .Os
 .Sh NAME
 .Nm secmodel_jail
-.Nd jail security model with per-jail visibility and resource policies
+.Nd jail security model with per-jail visibility and policy controls
 .Sh DESCRIPTION
 .Nm
 implements a jail-oriented security model on top of
@@ -48,7 +48,7 @@ These controls are intended for host-root administration.
 .Sh SYSCTL INTERFACE
 The following nodes are created under
 .Dv security.models.jail :
-.Bl -tag -width resource_mode
+.Bl -tag -width create
 .It Va id
 Read the current process jail id, or write a jail id to request entry to that
 jail.
@@ -57,98 +57,50 @@ Create a new jail id.
 The write side accepts either a legacy integer form or a
 .Vt struct jail_create
 request.
+.Pp
+In the legacy form, writing an integer creates a jail id with default policy.
+In the structured form, callers provide jail metadata and optional settings,
+including:
+.Bl -tag -width JAIL_CREATE_MEMLIMIT
+.It Dv JAIL_CREATE_MEMLIMIT
+Set a per-process address-space limit for processes that enter the jail.
+.It Dv JAIL_CREATE_CPULIMIT
+Set a per-process CPU-time limit for processes that enter the jail.
+.It Dv JAIL_CREATE_PROFILE
+Select one of the supported policy profiles
+.Po low, medium, high .Pc .
+.It Dv JAIL_CREATE_PORTS
+Reserve one or more listening ports for this jail.
+When at least one jail reserves a port, bind attempts for that port are
+allowed only from members of the jail that reserved it.
+.El
 .It Va destroy
 Destroy a jail id that has no remaining process members.
 .It Va list
 Read-only list of active jail ids and reference counts.
-.It Va resource_mode
-Selects how configured jail CPU/memory limits are enforced:
-.Bl -tag -width 0xN
-.It 0
-Per-process
-.Xr setrlimit 2
-style enforcement
-.Pq RLIMIT mode .
-When a process enters a jail, configured limits are applied via
+.El
+.Sh RESOURCE ENFORCEMENT DESIGN
+.Nm
+applies configured limits when a process enters a jail.
+If configured, limits are translated to
 .Dv RLIMIT_CPU
 and
 .Dv RLIMIT_AS
-for that process.
+with
+.Xr setrlimit 2 .
 Because
 .Dv RLIMIT_CPU
 is second-granular, CPU limits configured in milliseconds are rounded up to
-the next whole second when translated for this mode.
-.It 1
-Aggregate per-jail enforcement.
-The model computes jail-wide usage by summing per-process accounting, and
-rejects operations that would exceed configured limits.
-In this mode, CPU over-limit handling is admission-oriented: jail entry and
-fork checks are denied when over limit, but already running members are not
-asynchronously signalled by aggregate CPU policy.
-.El
-.El
+the next whole second.
 .Pp
-The default is aggregate mode.
-A structured
-.Vt struct jail_create
-request can include an optional set of reserved listening ports.
-Reserved ports are exclusive per jail and are enforced during
-.Dv KAUTH_NETWORK_BIND
-authorization.
-.Sh MODE TRANSITIONS
-Changing
-.Va resource_mode
-affects subsequent policy decisions.
-It does not retroactively rewrite existing per-process
-.Dv RLIMIT_CPU
-or
-.Dv RLIMIT_AS
-values for processes that are already running.
-.Pp
-Operationally, this means that switching to RLIMIT mode influences processes
-as they enter a jail under that mode, while switching to aggregate mode causes
-future fork/enter and memory-growth checks to use jail-wide accounting.
-.Sh RESOURCE ENFORCEMENT DESIGN
-.Nm
-supports two complementary enforcement paths:
-.Bl -enum
-.It
-Process-scope checks via
-.Xr kauth 9
-listeners.
-In aggregate mode, fork and jail-entry checks can be denied when the target
-jail is already at or above configured limits.
-For CPU limits specifically, this is an admission check and not a runtime
-preemption mechanism for already-running jail members.
-.It
-Memory-growth checks via a UVM callback hook.
-.Nm
-installs an optional callback consulted by UVM growth paths
-.Po e.g.,
-.Xr mmap 2 ,
-.Xr brk 2 ,
-and automatic stack growth
-.Pc .
-If the callback reports that a requested growth would exceed the jail memory
-limit, the operation fails with
-.Er ENOMEM .
-.El
-.Pp
-The UVM hook is intentionally generic: UVM provides call sites while
-.Nm
-provides policy.
+Limits are not retroactively rewritten for processes that are already running
+in the jail when configuration changes occur.
 .Sh OPERATIONAL LOGGING
 .Nm
 emits concise kernel log entries for high-value lifecycle events:
 module load/unload and successful jail create/destroy operations.
-In addition, when resource policy vetoes an operation
-.Po
-for example, fork/enter denial in aggregate mode or memory-growth denial
-.Pc ,
-it emits a rate-limited informational message so administrators can identify
-resource-pressure decisions in failure analysis.
 These messages are intended to help administrators correlate policy and
-resource-management actions during incident analysis without excessive noise.
+management actions during incident analysis without excessive noise.
 .Sh SEE ALSO
 .Xr kauth 9 ,
 .Xr secmodel 9 ,
