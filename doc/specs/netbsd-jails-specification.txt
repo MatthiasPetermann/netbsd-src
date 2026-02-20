@@ -1,123 +1,43 @@
-NetBSD Jails Specification
-==========================
+NetBSD jails specification (current model)
+==========================================
 
-Document purpose
-----------------
-This document specifies a conceptual NetBSD jail architecture. It 
-defines the core design idea, structural layers, responsibilities, and 
-interaction model of the proposed jail stack.
+Status
+------
+This document describes the currently implemented jail stack in this tree:
+- secmodel_jail (kernel policy model)
+- jailctl (low-level operational interface)
+- jailmgr (multi-jail provisioning/operations)
 
-The architecture consists of a kernel security model (secmodel_jail), 
-broker-style interfaces within the secmodel core, UVM integration for 
-memory admission control, NPF integration for jail-aware rule matching, 
-a low-level control tool (jailctl), and a higher-level operational 
-manager (jailmgr).
-
-The purpose of this document is to describe the architecture, 
-semantics, and boundaries of the system in a clear and structured 
-manner, providing a stable reference model for discussion, refinement, 
-and future implementation.
-
-
-Table of contents
------------------
-1. Conceptual model and goals
-2. Layered architecture
-3. secmodel_jail kernel specification
-4. Resource enforcement model (RLIMIT vs aggregate)
-5. secmodel core integration (registration and eval)
-6. UVM integration pattern (callback hook)
-7. NPF integration pattern (jail rule qualifier)
-8. jailctl specification
-9. jailmgr specification
-10. End-to-end runtime flows
-11. Behavior matrix and fallback semantics
-12. Security properties, limits, and non-goals
-13. Design rationale and pattern selection guidance
+The former prototype integrations with UVM callback hooks and NPF jail
+qualifiers are no longer part of the active code and are documented only as
+future ideas (see section 8).
 
 
 1. Conceptual model and goals
 -----------------------------
-1.0 Goals and scope (operational intent)
-- This design targets practical operations, not marketing claims.
-- Main goals:
-  - better service separation on a single host,
-  - fewer side effects between services,
-  - simpler lifecycle handling (start/stop/supervision),
-  - pragmatic resource controls (RAM/CPU) and explicit firewall policy with
-    NPF.
-- Non-goal:
-  - this is not positioned as a hard security barrier against actively
-    malicious workloads.
-- Isolation positioning:
-  - jails provide lightweight operational isolation and clearer service
-    boundaries,
-  - Xen remains the recommended escalation path where strong isolation is
-    required by the threat model.
-- The two models are complementary in practice.
-
-1.1 Primary goal: process-domain isolation
-- Each process belongs to a jail membership domain encoded in credentials.
-- Kernel policy gates process visibility and signal delivery across domains.
-- Host root remains an explicit global control plane.
-
-1.2 Explicit networking model: host stack, not network namespaces
-- No per-jail TCP/IP stack.
-- No per-jail interfaces/routing namespaces.
-- Jails share host networking primitives.
-- External exposure control is moved to NPF policy, where service ownership can
-  be stated explicitly via jail qualifiers.
-
-1.3 Operational simplicity over full virtualization
-- The stack is intentionally lightweight (kauth + sysctl + chroot workflows).
-- It targets practical service isolation and manageability.
-- It does not target hypervisor-grade tenancy isolation.
-
-1.4 Practical deployment perspective
-- A frequent home/small-host pattern is a hybrid model:
-  - strong Xen boundaries where needed,
-  - lightweight jail separation inside those boundaries for per-service
-    operational clarity.
-- This reduces VM sprawl/overhead while preserving the option to enforce hard
-  boundaries where required.
-
-1.5 Design intent summary
-- secmodel_jail: identity + isolation + policy checks.
-- UVM hook: hard memory-growth admission veto in aggregate mode.
-- NPF qualifier: explicit and readable service-ownership firewall policy.
+- Lightweight process isolation based on a per-credential jail ID.
+- Host context is jail ID 0.
+- Host root (euid 0 + jail ID 0) remains the privileged control-plane actor.
+- Isolation focus:
+  - process visibility/signal boundaries
+  - system-scope hardening by profile
+  - optional per-jail reserved listening-port ownership
+  - per-process resource limits via RLIMIT application on jail entry
 
 
-2. Layered architecture
------------------------
-
-+---------------------------------------------------------------------+
-| Userland operations                                                 |
-|  - jailmgr (multi-jail lifecycle, FS composition, service workflows)|
-|  - jailctl (create/exec/supervise/list/destroy via sysctl)          |
-+-----------------------------|---------------------------------------+
-                              v
-+--------------------------------------------------------------------+
-| Kernel security/control plane                                       |
-|  secmodel_jail                                                      |
-|   - jail metadata + IDs                                             |
-|   - kauth policy listeners (cansee/signal, etc.)                    |
-|   - credential lifecycle hooks                                      |
-|   - optional UVM memlimit policy callback provider                  |
-|   - secmodel eval endpoint for external consumers                   |
-+-------------------|--------------------------|----------------------+
-                    v                          v
-         +---------------------+      +-----------------------------+
-         | UVM                 |      | NPF                         |
-         | - growth call sites |      | - rule parser/runtime       |
-         | - callback slot     |      | - jail qualifier matching   |
-         +---------------------+      +-----------------------------+
-                    ^                          |
-                    |                          v
-                    +---------- secmodel core (register/eval broker)
-
-Key principle:
-- Different subsystems use different integration mechanisms based on their
-  policy role and performance/coupling needs.
+2. High-level architecture
+--------------------------
+- secmodel_jail:
+  - owns jail metadata and policy decisions
+  - exposes sysctl control API under security.models.jail.*
+  - enforces policy via kauth listeners
+- jailctl:
+  - creates/destroys/lists jails
+  - enters jails and executes workloads
+  - provides supervised process mode with syslog forwarding
+- jailmgr:
+  - prepares base filesystem layout for many jails
+  - persists per-jail configuration and automates start/stop/restart
 
 
 3. secmodel_jail kernel specification
@@ -125,505 +45,143 @@ Key principle:
 3.1 Jail identity and metadata
 - Jail IDs are monotonic uint32 values starting at 1.
 - Jail ID 0 is host context.
-- Each jail records at least:
+- Each jail tracks:
   - jail ID
   - jail name
-  - root path metadata
-  - optional CPU limit
-  - optional memory limit
+  - jail root metadata
+  - optional CPU limit (ms; mapped to RLIMIT_CPU seconds)
+  - optional memory limit (bytes; mapped to RLIMIT_AS)
+  - profile (low/medium/high)
   - optional reserved listening-port set
 
 3.2 Privilege model
-- Host root means effective UID 0 and jail ID 0.
-- Only host root may perform control-plane operations:
-  - create jail
-  - destroy jail
-  - read/write jail ID control sysctl
-  - list jails
-  - change resource mode
-- Entering a jail is privileged.
+- Host root (euid 0, jail ID 0) can:
+  - create/destroy/list jails
+  - read/write current jail ID control
+  - enter target jail IDs
+- Non-host-root credentials are denied those control operations.
 
 3.3 Process isolation semantics
-- KAUTH_PROCESS_CANSEE denies cross-jail process visibility.
+- KAUTH_PROCESS_CANSEE denies cross-jail visibility.
 - KAUTH_PROCESS_SIGNAL denies cross-jail signaling.
-- Host root bypasses these restrictions by design.
+- Host root bypasses these checks.
 
-3.4 Network bind reservation semantics
-- secmodel_jail registers a KAUTH_SCOPE_NETWORK listener for bind decisions.
-- Jail create payload may include a set of reserved listening ports.
-- Port reservations are exclusive across jails (duplicate reservation fails
-  at create time).
-- For each bind attempt with a concrete TCP/UDP port:
-  - if the port is reserved by at least one jail, only a process in the jail
-    that reserved the port is allowed to bind it;
-  - if the port is not reserved by any jail, bind is allowed by this policy.
-- Port 0 (kernel-assigned ephemeral bind) is not restricted by reservation.
+3.4 System hardening semantics
+- System-scope kauth requests are filtered for jailed credentials.
+- Profile behavior:
+  - low: keeps process-isolation semantics, defers additional hardening
+  - medium: hardening enabled, SysV IPC administrative requests deferred
+  - high: full hardening set
 
-3.5 Credential lifecycle behavior
-- Newly initialized credentials default to jail ID 0.
-- Credential copies preserve jail ID.
+3.5 Network bind reservation semantics
+- secmodel_jail listens on KAUTH_SCOPE_NETWORK bind checks.
+- If a concrete local port is reserved by any jail:
+  - bind allowed only for credentials in the jail that owns reservation.
+- Unreserved ports are deferred to normal authorization behavior.
+- Port 0 (ephemeral assignment) is not reservation-restricted.
 
-3.6 Jail lifecycle constraints
-- Destroy is refused while processes (including zombies) still reference the
-  target jail ID.
+3.6 Resource enforcement semantics (active implementation)
+- Resource controls are RLIMIT-based only.
+- On jail entry, configured per-jail limits are applied to the entering
+  process:
+  - CPU limit -> RLIMIT_CPU (rounded from milliseconds to whole seconds)
+  - memory limit -> RLIMIT_AS (bytes)
+- No jail-wide aggregate accounting mode is active.
+- No resource mode switch sysctl exists in the active model.
 
-3.7 Sysctl control API (security.models.jail.*)
+3.7 Credential lifecycle behavior
+- New credentials initialize with jail ID 0.
+- Credential copies retain jail ID.
+
+3.8 Jail lifecycle constraints
+- Destroy is refused while live or zombie processes still reference the jail.
+
+3.9 Sysctl control API (security.models.jail.*)
 - id
-  - read current process jail ID
-  - write requests entering target jail ID
+  - read: current process jail ID
+  - write: request jail entry
 - create
-  - create a jail (legacy integer or structured create payload)
-  - structured payload may include reserved listening ports
+  - legacy integer payload or structured payload
+  - structured payload supports metadata, limits, profile, reserved ports
 - destroy
-  - destroy by ID (empty only)
+  - destroy by ID (only when empty)
 - list
-  - enumerate jail metadata + process references
-- resource_mode
-  - choose RLIMIT or aggregate model
+  - enumerate jail metadata and process reference counters
 
-3.8 Logging model
-- Module load/unload events.
-- Successful create/destroy operations.
-- Rate-limited resource-veto informational messages.
+3.10 Logging model
+- Module load/unload messages.
+- Create/destroy audit messages.
+- No aggregate-resource veto logging in active model.
 
 
-4. Resource enforcement model (RLIMIT vs aggregate)
----------------------------------------------------
-4.1 Mode selector
-security.models.jail.resource_mode:
-- 0 = RLIMIT mode
-- 1 = aggregate mode (default)
-
-4.2 RLIMIT mode
-- Limits are applied to entering process on jail entry:
-  - RLIMIT_CPU (ms rounded up to seconds)
-  - RLIMIT_AS
-- Changing mode later does not retroactively rewrite existing process limits.
-
-4.3 Aggregate mode
-- Jail-wide usage snapshot is computed by summing member processes.
-- Admission-oriented checks:
-  - deny jail entry when over configured budget
-  - deny fork when over configured budget
-- Memory-growth hard gate:
-  - secmodel_jail provides a UVM callback used before address-space growth
-    succeeds
-  - violating growth returns ENOMEM
-- CPU handling in aggregate mode is admission-oriented only:
-  - no asynchronous kill/throttle of already-running members solely from
-    aggregate CPU accounting
-
-4.4 Resource decision flow (aggregate mode)
-
-Process action (enter/fork/mmap/sbrk/stack growth)
-                |
-                v
-      Determine caller's jail membership
-                |
-                v
-      Compute projected jail-wide usage
-                |
-       +--------+---------+
-       |                  |
-   within limit      exceeds limit
-       |                  |
-       v                  v
-   allow action       deny action
-                    (e.g., ENOMEM on
-                     memory growth)
-
-
-4.5 Aggregate resource accounting internals (conceptual)
-
-+----------------------+         +------------------------------+
-| Jail member process A|         | Jail member process B        |
-| - p_rtime            |         | - p_rtime                    |
-| - vm_map.size        |         | - vm_map.size                |
-+----------+-----------+         +---------------+--------------+
-           |                                     |
-           +----------------+  +----------------+
-                            v  v
-                      +------------------+
-                      | secmodel_jail    |
-                      | usage aggregator |
-                      +------------------+
-                             |
-                             v
-              +----------------------------------+
-              | Compare against jail config caps |
-              |  - cpu_ms                        |
-              |  - mem_bytes                     |
-              +----------------+-----------------+
-                               |
-                     +---------+---------+
-                     | allow / deny gate |
-                     +-------------------+
-
-5. secmodel core integration (registration and eval)
-----------------------------------------------------
-5.1 Broker model
-- secmodel core provides a registry and query dispatch interface.
-- Security models register descriptors with callbacks such as:
-  - sm_eval
-  - sm_setinfo
-
-5.2 Why secmodel_jail must register sm_eval
-- External consumers (like NPF) query jail semantics via secmodel_eval.
-- If sm_eval is NULL, secmodel_eval cannot answer jail queries.
-- Therefore secmodel_jail must register an eval handler for brokered queries.
-
-5.3 Query contract shape
-- Consumer provides:
-  - secmodel ID
-  - query name (what)
-  - typed args/result structure
-- Provider returns success/failure and result payload.
-
-
-6. UVM integration pattern (callback hook)
-------------------------------------------
-6.1 Mechanism
-- UVM exposes optional callback slot:
-  - uvm_proc_jail_memlimit_check
-- Default is NULL.
-- secmodel_jail installs callback at start and removes it at stop.
-- UVM call sites check pointer presence before calling.
-
-6.2 Scope and objective
-- Enforce deterministic memory admission checks at VM growth choke points.
-- Cover multiple growth paths through one hook strategy.
-
-6.3 Properties
-- No hard linker dependency from UVM to secmodel_jail internals.
-- Very low per-call overhead.
-- Safe no-op behavior when secmodel_jail is absent (NULL pointer path).
-
-6.4 Trade-offs
-- Tighter subsystem contract than brokered query interfaces.
-- Single-hook-slot composability limits.
-
-
-6.5 UVM call-chain view (simplified)
-
-Userspace allocator/syscall
-          |
-          v
-    VM growth request
-          |
-          v
-+-----------------------------+
-| UVM growth path             |
-| (mmap/brk/stack expansion)  |
-+-------------+---------------+
-              |
-              v
-  if (uvm_proc_jail_memlimit_check != NULL)
-              |
-     +--------+---------+
-     | callback present |
-     v                  v
-secmodel_jail check    no callback
-(projected mem cap)    (model absent)
-     |                  |
-     v                  v
-allow or ENOMEM       normal UVM path
-
-7. NPF integration pattern (jail rule qualifier)
-------------------------------------------------
-7.1 User-visible rule feature
-- Optional rule qualifier:
-  - jail <name>
-- Internal metadata key:
-  - jail-name
-
-7.2 Semantics
-Outbound:
-- If qualifier exists, packet's originating socket credentials must match jail
-  name.
-- Without qualifier, no jail-name restriction is applied.
-
-Inbound (TCP/UDP service-owner context):
-- NPF resolves local service socket owner via PCB lookup.
-- With qualifier, resolved owner credentials must match given jail name.
-- Without qualifier, host-only semantics apply when owner context exists.
-
-Inbound with no local owner context:
-- With explicit jail qualifier: no match.
-- Without qualifier: behavior remains unchanged for traffic classes without
-  owner resolution (for example non-TCP/UDP paths).
-
-7.3 Runtime data path (simplified)
-
-Outbound packet:
-  socket -> PACKET_TAG_SO -> NPF rule eval -> secmodel_eval(jail cred match)
-
-Inbound packet:
-  packet -> PCB owner lookup -> owner cred (if found)
-            |                           |
-            | found                     | not found
-            v                           v
-      jail/host match logic      explicit jail => no match
-                                 no qualifier => legacy behavior
-
-7.4 secmodel coupling style
-- NPF does not directly link against jail internals for matching decisions.
-- It asks secmodel core broker:
-  - secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CRED_MATCHES, ...)
-- This yields loose coupling and explicit fallback handling when provider is
-  absent.
-
-7.5 Security intent
-- Make service ownership explicit in firewall policy.
-- Reduce accidental host/jail exposure overlap.
-- Preserve compatibility for traffic classes without resolvable owner context.
-
-
-8. jailctl specification
+4. jailctl specification
 ------------------------
-8.1 Role
-- Thin operational interface over security.models.jail sysctls.
+4.1 Scope
+- Thin userland controller over security.models.jail sysctls.
 
-8.2 Command surface
-- create [-c cpu-ms] [-m bytes] [-r port[,port...]] -n name <root>
-- supervise [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <jail-id|name> <command...>
+4.2 Core operations
+- create [-c cpu-ms] [-m bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>
 - destroy <jail-id|name>
-- exec <jail-id|name> [command...]
+- exec <jail-id|name> [command [args...]]
+- supervise [logging flags] <jail-id|name> <command> [args...]
 - list
 
-8.3 Core behaviors
-Create:
-- requires unique jail name
-- submits metadata and optional limits
-- with -r port[,port...], includes a reserved listening-port set in the
-  create payload sent to secmodel_jail
+4.3 Resource options
+- -c and -m configure limits passed through create payload.
+- Effective enforcement remains per-process RLIMIT behavior in kernel.
 
-Exec:
-- chdir(root) -> chroot(".") -> chdir("/")
-- writes jail ID sysctl to enter jail
-- exec command or interactive shell
-
-Supervise:
-- detached monitor + child workload model
-- streams child stdout/stderr to syslog with jail context
-- logging options: -f selects facility, -o/-e select only levels
-- on stop signal: SIGTERM process group, then SIGKILL after timeout
-
-List/resolve:
-- list shows ID, process count, name, root
-- targets can be selected by numeric ID or name
-
-8.4 Port reservation via jailctl -r
-- Syntax:
-  - jailctl create -r 80,443 -n webjail <root>
-- Validation and ownership model:
-  - each listed value must be a concrete TCP/UDP port (1..65535)
-  - reservation is owned by the created jail and tracked by secmodel_jail
-  - reservation is exclusive across jails; create fails on duplicate claims
-- Runtime effect on bind(2):
-  - when a process binds a concrete local port that is reserved, only
-    processes whose credentials belong to the reserving jail are allowed
-  - host processes (jail ID 0) are denied for ports reserved by another jail
-  - processes in other jails are denied for ports they did not reserve
-  - unreserved ports continue to follow normal bind authorization rules
-  - ephemeral bind via port 0 is unchanged (not reservation-restricted)
-- Lifecycle:
-  - reservations become active when jail creation succeeds
-  - reservations are released when the jail is destroyed
-  - after release, those ports can be reserved by another jail
+4.4 Reserved port options
+- -r accepts comma-separated lists and can be repeated.
+- Values are validated as 1..65535 and deduplicated per create call.
 
 
-9. jailmgr specification
+5. jailmgr specification
 ------------------------
-9.1 Role
-- Higher-level multi-jail lifecycle manager built on jailctl.
+5.1 Scope
+- Operational orchestration around jailctl and filesystem layout.
 
-9.2 Filesystem composition model
-- Shared read-only base layer (from base.tar.xz)
-- Per-jail writable layers (etc/var/tmp/home/usr/pkg)
-- Optional per-jail /dev via tmpfs + MAKEDEV
-- Root composition via mount_null overlays
+5.2 Bootstrap/startup behavior
+- Ensures secmodel_jail module is loaded.
+- Ensures secmodel_jail is listed in /etc/modules.conf for persistence.
+- Prepares shared base layer and per-jail directories.
 
-9.3 Configuration model
-- Global config: /etc/jailmgr.conf (or JAILMGR_CONF override)
-- Per-jail config: ${JAIL_DATA_DIR}/<name>/jail.conf
-- Supports global/per-jail supervised command selection
-
-9.4 Operations
-- bootstrap: load/persist module, fetch/extract base artifacts, build shared
-  base layer.
-- create [options] <name>: create/update per-jail structure and persist
-  resource settings (including reserved ports) and
-  jail.conf metadata. During create, host /etc/resolv.conf is copied into
-  per-jail data/etc/resolv.conf when present.
-- start <name>|--all: mount, create jail, launch supervise command.
-- stop <name>|--all: stop supervise, destroy jail, unmount.
-- restart <name>|--all: stop then start.
-- status: jail list + mount state.
-- list: print configured jails with root/cmd/autostart information.
-
-9.4.1 Resource option semantics (jailmgr create)
-- -r port[,port...]: persist reserved listening ports forwarded to jailctl create.
-- -c <cpu-percent>
-  - integer range: 0..100
-  - converted internally to jailctl cpu-ms via:
-    cpu_ms = cpu_percent * 10
-  - examples: 10 => 100ms/s, 25 => 250ms/s, 100 => 1000ms/s
-- -m <memory-mb>
-  - integer megabytes
-  - converted internally to bytes via:
-    mem_bytes = memory_mb * 1024 * 1024
+5.3 Per-jail configuration model
+- Persists autostart and supervise command.
+- Persists optional create-time CPU/memory/profile/reserved-port settings.
+- Forwards create settings to jailctl create when starting jail.
 
 
-9.5 jailmgr start/stop orchestration map
-
-start:
-  jail.conf -> mount overlays -> jailctl create -> jailctl supervise -> service
-
-stop:
-  locate monitor -> signal monitor -> jailctl destroy -> unmount overlays
-
-Detailed control-flow:
-
-+------------+      +--------------+      +------------------+
-| jailmgr    |----->| filesystem   |----->| jailctl create   |
-| start      |      | mount stack  |      | (kernel sysctl)  |
-+------------+      +--------------+      +---------+--------+
-                                                    |
-                                                    v
-                                          +------------------+
-                                          | jailctl supervise |
-                                          | + monitor process |
-                                          +---------+--------+
-                                                    |
-                                                    v
-                                            workload in jail
-
-10. End-to-end runtime flows
-----------------------------
-10.1 Provision and start flow
-
-jailmgr create/start
-        |
-        v
-filesystem layers prepared/mounted
-        |
-        v
-jailctl create -> secmodel_jail.create sysctl
-        |
-        v
-jailctl supervise/exec
-  chroot + enter jail ID
-        |
-        v
-workload runs with credential jail membership
-
-10.2 Inbound service policy flow
-
-Inbound packet
-    |
-    v
-NPF rule evaluation
-    |
-    +--> resolve local socket owner (TCP/UDP)
-    |
-    +--> if rule has jail <name>:
-    |       secmodel_eval -> secmodel_jail credential match
-    |
-    +--> if rule has no jail:
-            host-only check when owner exists,
-            else legacy behavior for non-owner-context traffic
-
-10.3 Memory growth policy flow
-
-Process in jail requests memory growth
-        |
-        v
-UVM growth path checks installed hook pointer
-        |
-   +----+-----------------------------+
-   | pointer NULL                     | pointer installed
-   | (model absent/inactive)          | (aggregate enforcement active)
-   v                                  v
-normal UVM behavior             secmodel_jail memlimit check
-                                      |
-                                allow or ENOMEM
+6. Threat-model note
+--------------------
+- This model provides process-level containment and policy hardening but does
+  not provide full virtualization guarantees.
+- For stronger isolation requirements, prefer stronger primitives
+  (virtualization, hardware partitioning, etc.) where appropriate.
 
 
-11. Behavior matrix and fallback semantics
-------------------------------------------
-11.1 secmodel_jail loaded
-- Process isolation checks active.
-- Jail lifecycle sysctl controls active.
-- UVM aggregate memory veto can be active (mode-dependent).
-- NPF jail qualifier queries can be answered through secmodel_eval.
-
-11.2 secmodel_jail absent
-- UVM hook remains NULL; no jail memlimit callback enforcement.
-- NPF secmodel_eval jail query fails and applies explicit fallback:
-  - explicit jail qualifier rules do not match
-  - unqualified behavior remains per existing NPF semantics
-
-11.3 Safety properties in absence/failure
-- UVM avoids null-dereference via pointer presence checks.
-- NPF handles secmodel_eval errors through rule-level fallback logic.
+7. Operational summary
+----------------------
+- Normal lifecycle:
+  1) jailmgr create (or direct jailctl create)
+  2) jailctl supervise / jailmgr start
+  3) jailctl destroy / jailmgr stop after workloads exit
+- Control-plane operations remain host-root only.
+- Resource control in active code is RLIMIT-based.
 
 
-12. Security properties, limits, and non-goals
-----------------------------------------------
-12.1 What is strengthened
-- Cross-jail process visibility/signal restrictions.
-- Explicit owner-based network exposure control with NPF qualifiers.
-- Optional jail-scoped resource admission checks.
-- Operational blast-radius reduction for multi-service hosts.
+8. Future ideas (historical prototype references)
+-------------------------------------------------
+The following topics were implemented in an earlier prototype but are not part
+of the active code anymore.
 
-12.2 What is intentionally not provided
-- Per-jail network namespaces/virtual stacks.
-- Full VM/hypervisor isolation semantics.
-- Universal owner resolution for all inbound traffic classes.
-- A guarantee of robust containment against actively malicious tenants.
+8.1 UVM integration idea (prototype)
+- Prototype pattern used a callback hook from UVM growth paths into
+  secmodel_jail for projected jail-wide memory admission checks.
+- Prototype outcome on limit breach: ENOMEM before growth commit.
+- Current tree status: removed; kept here only as design reference.
 
-12.3 Practical implication
-- This stack is designed for lightweight operational isolation and policy
-  clarity.
-- For threat models that require strong isolation, full virtualization (for
-  example Xen) remains the recommended escalation path.
-- In practical deployments, combining both approaches is often preferred.
-
-
-13. Design rationale and pattern selection guidance
----------------------------------------------------
-13.1 Why two integration styles coexist
-- UVM path solves hard, high-frequency admission control in VM internals.
-- NPF path solves flexible policy classification in a rule engine.
-- One mechanism would not optimize both concerns equally well.
-
-13.2 Rule of thumb for future integrations
-- Use direct callback hooks for deterministic subsystem choke-point vetoes.
-- Use secmodel_eval broker queries for cross-model policy composition and
-  looser modular coupling.
-
-13.3 Conceptual comparison
-
-+----------------------+-------------------------------+-------------------------+
-| Dimension            | UVM integration               | NPF integration         |
-+----------------------+-------------------------------+-------------------------+
-| Mechanism            | Function pointer callback     | secmodel_eval query     |
-| Coupling             | Tighter subsystem contract    | Looser broker boundary  |
-| Policy role          | Hard resource admission gate  | Rule classification     |
-| Absence behavior     | NULL hook => no-op            | Query fail => fallback  |
-| Performance profile  | Minimal overhead, hot paths   | Extra indirection       |
-| Evolvability         | Narrow/specific hook surface  | Protocol-like extensible|
-+----------------------+-------------------------------+-------------------------+
-
-
-13.4 Personal/operational context (informative)
-- This design direction is motivated by long-term NetBSD operations and a
-  preference for systems that are understandable, reproducible, and operable
-  with minimal external dependencies.
-- In environments where Linux container/orchestration stacks are part of daily
-  work, this stack intentionally emphasizes local simplicity for private/home
-  operations.
-- The broader objective is technical self-reliance (source visibility,
-  reproducibility, and independent recoverability), not platform marketing.
-
-End of specification.
+8.2 NPF integration idea (prototype)
+- Prototype pattern used jail-aware firewall qualification via secmodel_eval
+  broker queries (credential-to-jail matching for rule decisions).
+- Intended use was explicit service ownership policy in packet filtering.
+- Current tree status: removed; kept here only as design reference.
