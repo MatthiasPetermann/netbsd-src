@@ -395,10 +395,10 @@ Operational notes and quick-start guidance.
 Bring a host to operational readiness and deploy one web jail:
 .Bd -literal -offset indent
 # jailmgr bootstrap
-# jailmgr create -a -s '/usr/libexec/httpd -I 8080 -X -f -s /srv/www' -c 25 -m 512 -p medium -r 8080 -f local3 -o info -e err -t jail-web web
+# jailmgr create -a -s '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -c 25 -m 512 -p medium -r 8080 -f local3 -o info -e err -t jail-web web
 # jailmgr apply --ephemeral web <<'APPLY'
-mkdir -p /srv/www
-echo "<html>Hello NetBSD!</html>" > /srv/www/index.html
+mkdir -p /var/www/mysite
+echo "<html>Hello NetBSD!</html>" > /var/www/mysite/index.html
 APPLY
 # jailmgr config web
 # jailmgr start --all
