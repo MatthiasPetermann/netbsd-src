@@ -222,6 +222,12 @@ using
 and
 .Pa /bin/sh .
 If the jail is not running, it is started first.
+When started by
+.Cm apply ,
+only the jail runtime is created;
+the configured
+.Cm jailctl supervise
+process is not launched.
 The script can be provided as a filesystem path, as
 .Cm -
 to read from standard input, or omitted when standard input is not a terminal

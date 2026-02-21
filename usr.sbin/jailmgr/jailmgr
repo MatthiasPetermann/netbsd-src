@@ -517,15 +517,17 @@ jail_exists() {
 }
 
 # Start sequence: load config, mount root overlays, allocate kernel jail ID
-# through jailctl create, then launch supervised workload with jailctl supervise.
-start_jail() {
+# through jailctl create, then optionally launch supervised workload with
+# jailctl supervise.
+start_jail_internal() {
 	need_root
 	require_tools
 	name=$1
+	supervise=${2:-YES}
 
 	load_jail_conf "${name}"
 	effective_supervise_cmd=${JAIL_SUPERVISE_CMD:-}
-	if [ -z "${effective_supervise_cmd}" ]; then
+	if [ "${supervise}" = "YES" ] && [ -z "${effective_supervise_cmd}" ]; then
 		echo "JAIL_SUPERVISE_CMD must be set in ${JAIL_CONF} (example: /bin/sleep 60)" >&2
 		exit 1
 	fi
@@ -557,26 +559,32 @@ start_jail() {
 	# output concise and only show the high-level status line below.
 	"$@" >/dev/null
 
-	set -- jailctl supervise
-	if [ -n "${JAIL_SUPERVISE_FACILITY:-}" ]; then
-		set -- "$@" -f "${JAIL_SUPERVISE_FACILITY}"
+	if [ "${supervise}" = "YES" ]; then
+		set -- jailctl supervise
+		if [ -n "${JAIL_SUPERVISE_FACILITY:-}" ]; then
+			set -- "$@" -f "${JAIL_SUPERVISE_FACILITY}"
+		fi
+		if [ -n "${JAIL_SUPERVISE_STDOUT_LEVEL:-}" ]; then
+			set -- "$@" -o "${JAIL_SUPERVISE_STDOUT_LEVEL}"
+		fi
+		if [ -n "${JAIL_SUPERVISE_STDERR_LEVEL:-}" ]; then
+			set -- "$@" -e "${JAIL_SUPERVISE_STDERR_LEVEL}"
+		fi
+		if [ -n "${JAIL_SUPERVISE_TAG:-}" ]; then
+			set -- "$@" -t "${JAIL_SUPERVISE_TAG}"
+		fi
+		set -- "$@" "${name}"
+		# shellcheck disable=SC2086
+		set -f
+		set -- "$@" ${effective_supervise_cmd}
+		set +f
+		"$@" >/dev/null
 	fi
-	if [ -n "${JAIL_SUPERVISE_STDOUT_LEVEL:-}" ]; then
-		set -- "$@" -o "${JAIL_SUPERVISE_STDOUT_LEVEL}"
-	fi
-	if [ -n "${JAIL_SUPERVISE_STDERR_LEVEL:-}" ]; then
-		set -- "$@" -e "${JAIL_SUPERVISE_STDERR_LEVEL}"
-	fi
-	if [ -n "${JAIL_SUPERVISE_TAG:-}" ]; then
-		set -- "$@" -t "${JAIL_SUPERVISE_TAG}"
-	fi
-	set -- "$@" "${name}"
-	# shellcheck disable=SC2086
-	set -f
-	set -- "$@" ${effective_supervise_cmd}
-	set +f
-	"$@" >/dev/null
 	echo "Started jail ${name}"
+}
+
+start_jail() {
+	start_jail_internal "$1" "YES"
 }
 
 # Stop sequence mirrors startup in reverse: stop supervisor, destroy kernel
@@ -704,7 +712,7 @@ apply_jail_script() {
 
 	started_by_apply=NO
 	if ! jail_exists "${name}"; then
-		start_jail "${name}"
+		start_jail_internal "${name}" "NO"
 		started_by_apply=YES
 	fi
 
