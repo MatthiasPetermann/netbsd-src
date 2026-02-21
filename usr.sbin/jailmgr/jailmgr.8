@@ -214,6 +214,44 @@ Run
 .Cm stop Cm --all
 followed by
 .Cm start Cm --all .
+.It Cm apply Op Cm --ephemeral Ar name Op Ar script | Cm - Op Cm -- Ar arg ...
+Execute a shell script inside jail
+.Ar name
+using
+.Xr jexec 8
+and
+.Pa /bin/sh .
+If the jail is not running, it is started first.
+The script can be provided as a filesystem path, as
+.Cm -
+to read from standard input, or omitted when standard input is not a terminal
+.Pq for heredoc use .
+The script is copied into jail
+.Pa /tmp
+with a unique temporary filename before execution and removed afterwards.
+Arguments after
+.Cm --
+are passed through to the script.
+By default, a jail started for
+.Cm apply
+remains running.
+When
+.Cm --ephemeral
+is specified, a jail that was started by
+.Cm apply
+is stopped again after script execution.
+.It Cm config Ar name
+Open
+.Pa ${JAIL_DATA_DIR}/name/jail.conf
+for editing in the standard editor for the current environment.
+.Nm
+uses
+.Ev VISUAL
+when set,
+otherwise
+.Ev EDITOR ,
+and falls back to
+.Cm vi .
 .It Cm list
 List all configured jails as a table with columns
 .Li NAME ,
@@ -354,15 +392,15 @@ Sample configuration file.
 Operational notes and quick-start guidance.
 .El
 .Sh EXAMPLES
-Prepare and start all configured jails:
+Bring a host to operational readiness and deploy one web jail:
 .Bd -literal -offset indent
-# cp /usr/share/examples/jailmgr/jailmgr.conf.sample /etc/jailmgr.conf
-# vi /etc/jailmgr.conf
 # jailmgr bootstrap
-# jailmgr create jail1
-# jailmgr create -a -s '/bin/sleep 60' -c 25 -m 512 -p medium -r 80,443 -f local3 -o info -e err -t jail-web jail2
-# vi /var/jailmgr/jails/jail1/jail.conf
-# vi /var/jailmgr/jails/jail2/jail.conf
+# jailmgr create -a -s '/usr/libexec/httpd -I 8080 -X -f -s /srv/www' -c 25 -m 512 -p medium -r 8080 -f local3 -o info -e err -t jail-web web
+# jailmgr apply --ephemeral web <<'APPLY'
+mkdir -p /srv/www
+echo "<html>Hello NetBSD!</html>" > /srv/www/index.html
+APPLY
+# jailmgr config web
 # jailmgr start --all
 .Ed
 .Sh SEE ALSO
