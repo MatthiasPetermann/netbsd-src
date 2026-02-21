@@ -138,6 +138,9 @@ Commands:
   stop --all                  Stop all configured jails
   restart <name>              Stop and start one jail
   restart --all               Stop and start all configured jails
+  apply [--ephemeral] <name> [script|-] [-- arg ...]
+                              Execute shell script inside jail (path or stdin)
+  config <name>               Open jail.conf for jail in standard editor
   status                      Show jailctl list and mount status
   list                        List configured jails as table
 
@@ -626,6 +629,143 @@ stop_all() {
 	done
 }
 
+jail_jid_by_name() {
+	name=$1
+	jailctl list | awk -v n="${name}" '$3==n{print $1; exit}'
+}
+
+require_apply_tools() {
+	for t in jexec mktemp cp; do
+		command -v "${t}" >/dev/null 2>&1 || {
+			echo "missing required tool: ${t}" >&2
+			exit 1
+		}
+	done
+}
+
+apply_jail_script() {
+	need_root
+	require_tools
+	require_apply_tools
+
+	ephemeral=NO
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--ephemeral)
+			ephemeral=YES
+			shift
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			usage
+			exit 1
+			;;
+		*)
+			break
+			;;
+		esac
+	done
+
+	if [ $# -lt 1 ]; then
+		usage
+		exit 1
+	fi
+
+	name=$1
+	shift
+
+	script_source=
+	if [ $# -gt 0 ] && [ "$1" != "--" ]; then
+		script_source=$1
+		shift
+	fi
+	if [ $# -gt 0 ] && [ "$1" = "--" ]; then
+		shift
+	fi
+
+	if [ -z "${script_source}" ]; then
+		if [ -t 0 ]; then
+			echo "apply: missing script path (or use stdin with '-')" >&2
+			exit 1
+		fi
+		script_source=-
+	fi
+
+	if [ "${script_source}" != "-" ] && [ ! -r "${script_source}" ]; then
+		echo "apply: cannot read script: ${script_source}" >&2
+		exit 1
+	fi
+
+	load_jail_conf "${name}"
+	jail_paths "${name}"
+
+	started_by_apply=NO
+	if ! jail_exists "${name}"; then
+		start_jail "${name}"
+		started_by_apply=YES
+	fi
+
+	jail_paths "${name}"
+	jail_jid=$(jail_jid_by_name "${name}" || true)
+	if [ -z "${jail_jid}" ]; then
+		echo "apply: failed to resolve JID for jail ${name}" >&2
+		exit 1
+	fi
+
+	if command -v uuidgen >/dev/null 2>&1; then
+		script_id=$(uuidgen | tr -d '-')
+	else
+		script_id="$(date +%s)-$$"
+	fi
+
+	jail_script="/tmp/jailmgr-apply-${script_id}.sh"
+	host_script="${ROOT_DIR}${jail_script}"
+	stdin_tmp=
+
+	cleanup_apply() {
+		rm -f "${host_script}"
+		if [ -n "${stdin_tmp}" ]; then
+			rm -f "${stdin_tmp}"
+		fi
+	}
+	trap cleanup_apply EXIT INT TERM HUP
+
+	if [ "${script_source}" = "-" ]; then
+		stdin_tmp=$(mktemp /tmp/jailmgr-apply-stdin.XXXXXX)
+		cat > "${stdin_tmp}"
+		if [ ! -s "${stdin_tmp}" ]; then
+			echo "apply: stdin script is empty" >&2
+			exit 1
+		fi
+		cp "${stdin_tmp}" "${host_script}"
+	else
+		cp "${script_source}" "${host_script}"
+	fi
+	chmod 700 "${host_script}"
+
+	set -- jexec "${jail_jid}" /bin/sh "${jail_script}" "$@"
+	if "$@"; then
+		apply_rc=0
+	else
+		apply_rc=$?
+	fi
+
+	stop_rc=0
+	if [ "${ephemeral}" = "YES" ] && [ "${started_by_apply}" = "YES" ]; then
+		if ! stop_jail "${name}"; then
+			stop_rc=$?
+		fi
+	fi
+
+	if [ "${apply_rc}" -ne 0 ]; then
+		return "${apply_rc}"
+	fi
+	return "${stop_rc}"
+}
+
 restart_jail() {
 	name=$1
 
@@ -636,6 +776,13 @@ restart_jail() {
 restart_all() {
 	stop_all
 	start_all
+}
+
+edit_jail_config() {
+	name=$1
+	load_jail_conf "${name}"
+	editor=${VISUAL:-${EDITOR:-vi}}
+	"${editor}" "${JAIL_CONF}"
 }
 
 # Operational snapshot that combines kernel jail table output with mount view
@@ -783,6 +930,18 @@ case "${cmd}" in
 			restart_all
 		elif [ $# -eq 2 ]; then
 			restart_jail "$2"
+		else
+			usage
+			exit 1
+		fi
+		;;
+	apply)
+		shift
+		apply_jail_script "$@"
+		;;
+	config)
+		if [ $# -eq 2 ]; then
+			edit_jail_config "$2"
 		else
 			usage
 			exit 1
