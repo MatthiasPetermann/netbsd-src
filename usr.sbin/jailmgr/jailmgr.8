@@ -96,9 +96,21 @@ and
 .Pa dev .
 If necessary,
 .Pa etc.tar.xz
-is extracted into
-.Pa data/etc
-for that jail.
+is extracted for that jail, but only the
+.Pa ./etc ,
+.Pa ./root ,
+.Pa ./var
+and
+.Pa ./dev
+entries are unpacked into
+.Pa data/ .
+For local jail
+.Pa /dev
+setup,
+.Pa data/dev/MAKEDEV
+and
+.Pa data/dev/MAKEDEV.local
+are used.
 If host
 .Pa /etc/resolv.conf
 exists,
