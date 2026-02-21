@@ -299,12 +299,15 @@ ensure_base_writable_links() {
 
 	mkdir -p "${BASE_LAYER}/.data" "${BASE_LAYER}/usr"
 	rm -rf "${BASE_LAYER}/etc" "${BASE_LAYER}/var" "${BASE_LAYER}/tmp" \
-		"${BASE_LAYER}/home" "${BASE_LAYER}/root" "${BASE_LAYER}/usr/pkg"
+		"${BASE_LAYER}/home" "${BASE_LAYER}/root" "${BASE_LAYER}/usr/pkg" \
+		"${BASE_LAYER}/.cshrc" "${BASE_LAYER}/.profile"
 	ln -s ".data/etc" "${BASE_LAYER}/etc"
 	ln -s ".data/var" "${BASE_LAYER}/var"
 	ln -s ".data/tmp" "${BASE_LAYER}/tmp"
 	ln -s ".data/home" "${BASE_LAYER}/home"
 	ln -s ".data/root" "${BASE_LAYER}/root"
+	ln -s ".data/.cshrc" "${BASE_LAYER}/.cshrc"
+	ln -s ".data/.profile" "${BASE_LAYER}/.profile"
 	ln -s "../.data/usr/pkg" "${BASE_LAYER}/usr/pkg"
 }
 
