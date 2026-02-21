@@ -338,8 +338,6 @@ jail_paths() {
 	DATA_HOME_DIR="${DATA_DIR}/home"
 	DATA_ROOT_DIR="${DATA_DIR}/root"
 	DATA_PKG_DIR="${DATA_DIR}/usr/pkg"
-	DATA_DEV_DIR="${DATA_DIR}/dev"
-	DEV_DIR="${JAIL_DIR}/dev"
 	JAIL_CONF="${JAIL_DIR}/jail.conf"
 }
 
@@ -491,7 +489,7 @@ create_jail() {
 
 	jail_paths "${name}"
 	mkdir -p "${ROOT_DIR}" "${DATA_VAR_DIR}" "${DATA_TMP_DIR}" "${DATA_HOME_DIR}" \
-		"${DATA_ROOT_DIR}" "${DATA_PKG_DIR}" "${DEV_DIR}" "${DATA_VAR_DIR}/run" "${DATA_VAR_DIR}/log"
+		"${DATA_ROOT_DIR}" "${DATA_PKG_DIR}" "${DATA_VAR_DIR}/run" "${DATA_VAR_DIR}/log"
 	chmod 1777 "${DATA_TMP_DIR}"
 	setup_etc
 
@@ -511,8 +509,7 @@ JAIL_SUPERVISE_FACILITY="${escaped_supervise_facility}"
 JAIL_SUPERVISE_STDOUT_LEVEL="${escaped_supervise_stdout_level}"
 JAIL_SUPERVISE_STDERR_LEVEL="${escaped_supervise_stderr_level}"
 JAIL_SUPERVISE_TAG="${escaped_supervise_tag}"
-# Required command (with optional args) to supervise in this jail.
-# Example placeholder that keeps the jail alive until a real service command is configured:
+# Required command (with optional args) to supervise in this jail:
 JAIL_SUPERVISE_CMD="${escaped_supervise_cmd}"
 CONF
 
