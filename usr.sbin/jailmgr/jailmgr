@@ -335,6 +335,7 @@ jail_paths() {
 	DATA_HOME_DIR="${DATA_DIR}/home"
 	DATA_ROOT_DIR="${DATA_DIR}/root"
 	DATA_PKG_DIR="${DATA_DIR}/usr/pkg"
+	DATA_DEV_DIR="${DATA_DIR}/dev"
 	DEV_DIR="${JAIL_DIR}/dev"
 	JAIL_CONF="${JAIL_DIR}/jail.conf"
 }
@@ -388,14 +389,18 @@ setup_local_dev() {
 		mount_tmpfs -s "${JAIL_DEV_SIZE}" tmpfs "${ROOT_DIR}/dev"
 	fi
 
-	if [ -f "${ROOT_DIR}/dev/MAKEDEV" ]; then
-		:
-	elif [ -f /dev/MAKEDEV ]; then
-		cp /dev/MAKEDEV "${ROOT_DIR}/dev/MAKEDEV"
+	if [ ! -f "${ROOT_DIR}/dev/MAKEDEV" ]; then
+		if [ ! -f "${DATA_DEV_DIR}/MAKEDEV" ]; then
+			echo "warning: ${DATA_DEV_DIR}/MAKEDEV not found; skipping /dev node creation" >&2
+			return
+		fi
+
+		cp "${DATA_DEV_DIR}/MAKEDEV" "${ROOT_DIR}/dev/MAKEDEV"
 		chmod 555 "${ROOT_DIR}/dev/MAKEDEV"
-	else
-		echo "warning: MAKEDEV not found; skipping /dev node creation" >&2
-		return
+		if [ -f "${DATA_DEV_DIR}/MAKEDEV.local" ]; then
+			cp "${DATA_DEV_DIR}/MAKEDEV.local" "${ROOT_DIR}/dev/MAKEDEV.local"
+			chmod 444 "${ROOT_DIR}/dev/MAKEDEV.local"
+		fi
 	fi
 
 	# shellcheck disable=SC2086
@@ -416,9 +421,7 @@ setup_etc() {
 	}
 
 	if [ ! -f "${DATA_ETC_DIR}/rc.conf" ]; then
-		tar -xzp -f "${ETC_SET}" -C "${JAIL_DIR}"
-		rm -rf "${DATA_ETC_DIR}"
-		mv "${JAIL_DIR}/etc" "${DATA_ETC_DIR}"
+		tar -xzp -f "${ETC_SET}" -C "${DATA_DIR}" ./etc ./root ./var ./dev
 	fi
 
 

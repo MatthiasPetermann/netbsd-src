@@ -52,6 +52,10 @@ It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
 
    Then set at least `JAIL_SUPERVISE_CMD` and `JAIL_AUTOSTART` in each
    jail-local `jail.conf`.
+   During creation, `jailmgr` unpacks `./etc`, `./root`, `./var`, and
+   `./dev` from `etc.tar.xz` into the jail's writable `data/` tree.
+   For local `/dev` setup it uses `data/dev/MAKEDEV*` from that set.
+
 
    Real-world example for jail `www`:
 
