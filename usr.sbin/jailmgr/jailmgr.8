@@ -100,17 +100,19 @@ is extracted for that jail, but only the
 .Pa ./etc ,
 .Pa ./root ,
 .Pa ./var
-and
-.Pa ./dev
 entries are unpacked into
 .Pa data/ .
 For local jail
 .Pa /dev
 setup,
-.Pa data/dev/MAKEDEV
-and
-.Pa data/dev/MAKEDEV.local
-are used.
+.Pa ./dev/MAKEDEV
+and optional
+.Pa ./dev/MAKEDEV.local
+are extracted directly from
+.Pa etc.tar.xz
+into the jail's mounted
+.Pa /dev
+tmpfs.
 If host
 .Pa /etc/resolv.conf
 exists,

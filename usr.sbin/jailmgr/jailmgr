@@ -393,15 +393,15 @@ setup_local_dev() {
 	fi
 
 	if [ ! -f "${ROOT_DIR}/dev/MAKEDEV" ]; then
-		if [ ! -f "${DATA_DEV_DIR}/MAKEDEV" ]; then
-			echo "warning: ${DATA_DEV_DIR}/MAKEDEV not found; skipping /dev node creation" >&2
+		[ -f "${ETC_SET}" ] || {
+			echo "warning: ${ETC_SET} not found; skipping /dev node creation" >&2
 			return
-		fi
+		}
 
-		cp "${DATA_DEV_DIR}/MAKEDEV" "${ROOT_DIR}/dev/MAKEDEV"
+		tar -xzp -f "${ETC_SET}" -C "${ROOT_DIR}" ./dev/MAKEDEV
 		chmod 555 "${ROOT_DIR}/dev/MAKEDEV"
-		if [ -f "${DATA_DEV_DIR}/MAKEDEV.local" ]; then
-			cp "${DATA_DEV_DIR}/MAKEDEV.local" "${ROOT_DIR}/dev/MAKEDEV.local"
+		if tar -tzp -f "${ETC_SET}" ./dev/MAKEDEV.local >/dev/null 2>&1; then
+			tar -xzp -f "${ETC_SET}" -C "${ROOT_DIR}" ./dev/MAKEDEV.local
 			chmod 444 "${ROOT_DIR}/dev/MAKEDEV.local"
 		fi
 	fi
@@ -428,7 +428,7 @@ setup_etc() {
 		# Extract those link targets too so tar does not abort with missing
 		# hard-link target errors while unpacking ./root.
 		tar -xzp -f "${ETC_SET}" -C "${DATA_DIR}" \
-			./.cshrc ./.profile ./etc ./root ./var ./dev
+			./.cshrc ./.profile ./etc ./root ./var
 	fi
 
 
