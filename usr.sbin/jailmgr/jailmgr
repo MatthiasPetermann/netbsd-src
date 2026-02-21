@@ -421,11 +421,13 @@ setup_etc() {
 	}
 
 	if [ ! -f "${DATA_ETC_DIR}/rc.conf" ]; then
-		tar -xzp -f "${ETC_SET}" -C "${DATA_DIR}" ./etc ./root ./var ./dev
+		# etc.tar.xz stores root dotfiles as hardlinks to ./.cshrc/.profile.
+		# Extract those link targets too so tar does not abort with missing
+		# hard-link target errors while unpacking ./root.
+		tar -xzp -f "${ETC_SET}" -C "${DATA_DIR}" \
+			./.cshrc ./.profile ./etc ./root ./var ./dev
 	fi
 
-
-	mkdir -p "${DATA_ETC_DIR}/ssh"
 
 	# Keep jail DNS resolver config aligned with the host at create time.
 	# This provides working name resolution out-of-the-box for typical setups.
@@ -540,27 +542,36 @@ start_jail_internal() {
 	mount_jail_root
 
 	if jail_exists "${name}"; then
-		echo "Jail ${name} already running"
-		return
-	fi
+		jid=$(jailctl list | awk -v n="${name}" '$3==n{print $1; exit}')
+		if [ "${supervise}" != "YES" ]; then
+			echo "Jail ${name} already running"
+			return
+		fi
 
-	set -- jailctl create -n "${name}"
-	if [ -n "${JAIL_CREATE_CPU_MS:-}" ]; then
-		set -- "$@" -c "${JAIL_CREATE_CPU_MS}"
+		monitor_pid=$(jail_monitor_pid "${name}" "${jid}" || true)
+		if [ -n "${monitor_pid}" ]; then
+			echo "Jail ${name} already running"
+			return
+		fi
+	else
+		set -- jailctl create -n "${name}"
+		if [ -n "${JAIL_CREATE_CPU_MS:-}" ]; then
+			set -- "$@" -c "${JAIL_CREATE_CPU_MS}"
+		fi
+		if [ -n "${JAIL_CREATE_MEMORY_BYTES:-}" ]; then
+			set -- "$@" -m "${JAIL_CREATE_MEMORY_BYTES}"
+		fi
+		if [ -n "${JAIL_CREATE_PROFILE:-}" ]; then
+			set -- "$@" -p "${JAIL_CREATE_PROFILE}"
+		fi
+		if [ -n "${JAIL_CREATE_RESERVED_PORTS:-}" ]; then
+			set -- "$@" -r "${JAIL_CREATE_RESERVED_PORTS}"
+		fi
+		set -- "$@" "${ROOT_DIR}"
+		# jailctl create/supervise print "jail <jid>" on stdout; keep jailmgr
+		# output concise and only show the high-level status line below.
+		"$@" >/dev/null
 	fi
-	if [ -n "${JAIL_CREATE_MEMORY_BYTES:-}" ]; then
-		set -- "$@" -m "${JAIL_CREATE_MEMORY_BYTES}"
-	fi
-	if [ -n "${JAIL_CREATE_PROFILE:-}" ]; then
-		set -- "$@" -p "${JAIL_CREATE_PROFILE}"
-	fi
-	if [ -n "${JAIL_CREATE_RESERVED_PORTS:-}" ]; then
-		set -- "$@" -r "${JAIL_CREATE_RESERVED_PORTS}"
-	fi
-	set -- "$@" "${ROOT_DIR}"
-	# jailctl create/supervise print "jail <jid>" on stdout; keep jailmgr
-	# output concise and only show the high-level status line below.
-	"$@" >/dev/null
 
 	if [ "${supervise}" = "YES" ]; then
 		set -- jailctl supervise
