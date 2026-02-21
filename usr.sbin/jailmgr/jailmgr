@@ -635,7 +635,7 @@ jail_jid_by_name() {
 }
 
 require_apply_tools() {
-	for t in jexec mktemp cp; do
+	for t in jailctl mktemp cp; do
 		command -v "${t}" >/dev/null 2>&1 || {
 			echo "missing required tool: ${t}" >&2
 			exit 1
@@ -746,7 +746,7 @@ apply_jail_script() {
 	fi
 	chmod 700 "${host_script}"
 
-	set -- jexec "${jail_jid}" /bin/sh "${jail_script}" "$@"
+	set -- jailctl exec "${jail_jid}" /bin/sh "${jail_script}" "$@"
 	if "$@"; then
 		apply_rc=0
 	else
