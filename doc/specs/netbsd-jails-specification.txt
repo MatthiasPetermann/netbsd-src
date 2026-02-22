@@ -141,17 +141,17 @@ jails-v2 jail-scoped control path.
 - Thin userland controller over security.models.jail sysctls.
 
 4.2 Core operations
-- create [-q cpu.quota] [-C cpu.period] [-M memory.max-bytes]
-         [-P proc.max] [-F fd.max] [-S sockbuf.max-bytes]
-         [-p low|medium|high] [-r port[,port...]] -n name <root>
+- create [-q cpu.quota] [-c cpu.period] [-m memory.max-bytes]
+         [-p proc.max] [-d fd.max] [-s sockbuf.max-bytes]
+         [-l low|medium|high] [-r port[,port...]] -n name <root>
 - destroy <jail-id|name>
 - exec <jail-id|name> [command [args...]]
 - supervise [logging flags] <jail-id|name> <command> [args...]
 - list
 
 4.3 Resource options
-- -q and -C configure cpu.quota/cpu.period and must be provided together.
-- -M/-P/-F/-S configure memory/proc/fd/sockbuf jail-scoped ceilings.
+- -q and -c configure cpu.quota/cpu.period and must be provided together.
+- -m/-p/-d/-s configure memory/proc/fd/sockbuf jail-scoped ceilings.
 - Values are forwarded unchanged to kernel create payload.
 
 4.4 Reserved port options

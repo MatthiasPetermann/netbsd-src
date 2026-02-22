@@ -839,7 +839,7 @@ main(int argc, char *argv[])
 		name = NULL;
 		create.jc_profile = JAIL_PROFILE_HIGH;
 		optind = 2;
-		while ((ch = getopt(argc, argv, "q:C:M:P:F:S:n:p:r:")) != -1) {
+		while ((ch = getopt(argc, argv, "q:c:m:p:d:s:n:l:r:")) != -1) {
 			switch (ch) {
 			case 'q':
 				errno = 0;
@@ -849,7 +849,7 @@ main(int argc, char *argv[])
 				create.jc_flags |= JAIL_CREATE_CPU_QUOTA;
 				create.jc_cpu_quota = num;
 				break;
-			case 'C':
+			case 'c':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
 				if (errno != 0 || *endp != '\0')
@@ -857,7 +857,7 @@ main(int argc, char *argv[])
 				create.jc_flags |= JAIL_CREATE_CPU_PERIOD;
 				create.jc_cpu_period = num;
 				break;
-			case 'M':
+			case 'm':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
 				if (errno != 0 || *endp != '\0')
@@ -865,7 +865,7 @@ main(int argc, char *argv[])
 				create.jc_flags |= JAIL_CREATE_MEMORY_MAX;
 				create.jc_memory_max = num;
 				break;
-			case 'P':
+			case 'p':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
 				if (errno != 0 || *endp != '\0')
@@ -873,7 +873,7 @@ main(int argc, char *argv[])
 				create.jc_flags |= JAIL_CREATE_PROC_MAX;
 				create.jc_proc_max = num;
 				break;
-			case 'F':
+			case 'd':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
 				if (errno != 0 || *endp != '\0')
@@ -881,7 +881,7 @@ main(int argc, char *argv[])
 				create.jc_flags |= JAIL_CREATE_FD_MAX;
 				create.jc_fd_max = num;
 				break;
-			case 'S':
+			case 's':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
 				if (errno != 0 || *endp != '\0')
@@ -892,7 +892,7 @@ main(int argc, char *argv[])
 			case 'n':
 				name = optarg;
 				break;
-			case 'p':
+			case 'l':
 				create.jc_flags |= JAIL_CREATE_PROFILE;
 				create.jc_profile = parse_profile(optarg);
 				break;
@@ -1003,7 +1003,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-q cpu.quota -C cpu.period] [-M memory.max-bytes] [-P proc.max] [-F fd.max] [-S sockbuf.max-bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>\n"
+	    "usage: %s create [-q cpu.quota -c cpu.period] [-m memory.max-bytes] [-p proc.max] [-d fd.max] [-s sockbuf.max-bytes] [-l low|medium|high] [-r port[,port...]] -n name <root>\n"
 	    "       %s supervise [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"

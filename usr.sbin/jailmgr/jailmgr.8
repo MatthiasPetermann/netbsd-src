@@ -88,7 +88,7 @@ Then
 extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
-.It Cm create Op Fl a Op Fl s Ar cmd Op Fl q Ar cpu.quota Op Fl C Ar cpu.period Op Fl M Ar memory.max-bytes Op Fl P Ar proc.max Op Fl F Ar fd.max Op Fl S Ar sockbuf.max-bytes Op Fl p Ar profile Op Fl r Ar port[,port...] Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar name
+.It Cm create Op Fl a Op Fl x Ar cmd Op Fl q Ar cpu.quota Op Fl c Ar cpu.period Op Fl m Ar memory.max-bytes Op Fl p Ar proc.max Op Fl d Ar fd.max Op Fl s Ar sockbuf.max-bytes Op Fl l Ar profile Op Fl r Ar port[,port...] Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar name
 Create directories and metadata for one jail:
 .Pa root ,
 .Pa data ,
@@ -130,7 +130,7 @@ is initialized to
 in that generated
 .Pa jail.conf .
 When
-.Fl s
+.Fl x
 is provided,
 .Ev JAIL_SUPERVISE_CMD
 is initialized to the specified command string in the generated
@@ -138,18 +138,18 @@ is initialized to the specified command string in the generated
 When
 .Fl q
 and
-.Fl C
+.Fl c
 are provided,
 .Nm
 persists jail CPU quota and period window values and forwards them unchanged to
 .Xr jailctl 8
 at start time.
 When
-.Fl M ,
-.Fl P ,
-.Fl F ,
+.Fl m ,
+.Fl p ,
+.Fl d ,
 and
-.Fl S
+.Fl s
 are provided,
 .Nm
 persists jail-scoped memory/process/fd/socket-buffer ceilings and forwards them unchanged to
@@ -157,7 +157,7 @@ persists jail-scoped memory/process/fd/socket-buffer ceilings and forwards them 
 at start time.
 
 When
-.Fl p
+.Fl l
 is provided,
 the generated
 .Pa jail.conf
@@ -420,7 +420,7 @@ Operational notes and quick-start guidance.
 Bring a host to operational readiness and deploy one web jail:
 .Bd -literal -offset indent
 # jailmgr bootstrap
-# jailmgr create -a -s '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -q 200 -C 1000000 -M 536870912 -P 512 -F 8192 -S 134217728 -p medium -r 8080 -f local3 -o info -e err -t jail-web web
+# jailmgr create -a -x '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -q 200 -c 1000000 -m 536870912 -p 512 -d 8192 -s 134217728 -l medium -r 8080 -f local3 -o info -e err -t jail-web web
 # jailmgr apply --ephemeral web <<'APPLY'
 mkdir -p /var/www/mysite
 echo "<html>Hello NetBSD!</html>" > /var/www/mysite/index.html

@@ -130,9 +130,9 @@ Usage: $0 <command> [args]
 
 Commands:
   bootstrap                   Download sets and build shared base layer
-  create [-a] [-s cmd] [-q cpu.quota] [-C cpu.period]
-         [-M memory.max-bytes] [-P proc.max] [-F fd.max]
-         [-S sockbuf.max-bytes] [-p profile] [-r port[,port...]]
+  create [-a] [-x cmd] [-q cpu.quota] [-c cpu.period]
+         [-m memory.max-bytes] [-p proc.max] [-d fd.max]
+         [-s sockbuf.max-bytes] [-l profile] [-r port[,port...]]
          [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <name>
                               Create jail instance directories and persist jail.conf
   start <name>                Mount jail root and supervise jail via jailctl
@@ -550,22 +550,22 @@ start_jail_internal() {
 			set -- "$@" -q "${JAIL_CREATE_CPU_QUOTA}"
 		fi
 		if [ -n "${JAIL_CREATE_CPU_PERIOD:-}" ]; then
-			set -- "$@" -C "${JAIL_CREATE_CPU_PERIOD}"
+			set -- "$@" -c "${JAIL_CREATE_CPU_PERIOD}"
 		fi
 		if [ -n "${JAIL_CREATE_MEMORY_MAX:-}" ]; then
-			set -- "$@" -M "${JAIL_CREATE_MEMORY_MAX}"
+			set -- "$@" -m "${JAIL_CREATE_MEMORY_MAX}"
 		fi
 		if [ -n "${JAIL_CREATE_PROC_MAX:-}" ]; then
-			set -- "$@" -P "${JAIL_CREATE_PROC_MAX}"
+			set -- "$@" -p "${JAIL_CREATE_PROC_MAX}"
 		fi
 		if [ -n "${JAIL_CREATE_FD_MAX:-}" ]; then
-			set -- "$@" -F "${JAIL_CREATE_FD_MAX}"
+			set -- "$@" -d "${JAIL_CREATE_FD_MAX}"
 		fi
 		if [ -n "${JAIL_CREATE_SOCKBUF_MAX:-}" ]; then
-			set -- "$@" -S "${JAIL_CREATE_SOCKBUF_MAX}"
+			set -- "$@" -s "${JAIL_CREATE_SOCKBUF_MAX}"
 		fi
 		if [ -n "${JAIL_CREATE_PROFILE:-}" ]; then
-			set -- "$@" -p "${JAIL_CREATE_PROFILE}"
+			set -- "$@" -l "${JAIL_CREATE_PROFILE}"
 		fi
 		if [ -n "${JAIL_CREATE_RESERVED_PORTS:-}" ]; then
 			set -- "$@" -r "${JAIL_CREATE_RESERVED_PORTS}"
@@ -861,7 +861,7 @@ case "${cmd}" in
 				autostart=YES
 				shift
 				;;
-			-s)
+			-x)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				supervise_cmd=$2
 				shift 2
@@ -879,72 +879,72 @@ case "${cmd}" in
 				create_cpu_quota=$2
 				shift 2
 				;;
-			-C)
+			-c)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				[ -z "${create_cpu_period}" ] || {
-					echo "cpu period (-C) may be provided only once" >&2
+					echo "cpu period (-c) may be provided only once" >&2
 					exit 1
 				}
 				is_uint "$2" || {
-					echo "cpu period (-C) must be an integer" >&2
+					echo "cpu period (-c) must be an integer" >&2
 					exit 1
 				}
 				create_cpu_period=$2
 				shift 2
 				;;
-			-M)
+			-m)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				[ -z "${create_memory_max}" ] || {
-					echo "memory.max (-M) may be provided only once" >&2
+					echo "memory.max (-m) may be provided only once" >&2
 					exit 1
 				}
 				is_uint "$2" || {
-					echo "memory.max (-M) must be an integer" >&2
+					echo "memory.max (-m) must be an integer" >&2
 					exit 1
 				}
 				create_memory_max=$2
 				shift 2
 				;;
-			-P)
+			-p)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				[ -z "${create_proc_max}" ] || {
-					echo "proc.max (-P) may be provided only once" >&2
+					echo "proc.max (-p) may be provided only once" >&2
 					exit 1
 				}
 				is_uint "$2" || {
-					echo "proc.max (-P) must be an integer" >&2
+					echo "proc.max (-p) must be an integer" >&2
 					exit 1
 				}
 				create_proc_max=$2
 				shift 2
 				;;
-			-F)
+			-d)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				[ -z "${create_fd_max}" ] || {
-					echo "fd.max (-F) may be provided only once" >&2
+					echo "fd.max (-d) may be provided only once" >&2
 					exit 1
 				}
 				is_uint "$2" || {
-					echo "fd.max (-F) must be an integer" >&2
+					echo "fd.max (-d) must be an integer" >&2
 					exit 1
 				}
 				create_fd_max=$2
 				shift 2
 				;;
-			-S)
+			-s)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				[ -z "${create_sockbuf_max}" ] || {
-					echo "sockbuf.max (-S) may be provided only once" >&2
+					echo "sockbuf.max (-s) may be provided only once" >&2
 					exit 1
 				}
 				is_uint "$2" || {
-					echo "sockbuf.max (-S) must be an integer" >&2
+					echo "sockbuf.max (-s) must be an integer" >&2
 					exit 1
 				}
 				create_sockbuf_max=$2
 				shift 2
 				;;
-			-p)
+			-l)
 				[ $# -ge 2 ] || { usage; exit 1; }
 				create_profile=$2
 				shift 2
@@ -989,7 +989,7 @@ case "${cmd}" in
 		fi
 		if { [ -n "${create_cpu_quota}" ] && [ -z "${create_cpu_period}" ]; } ||
 		   { [ -z "${create_cpu_quota}" ] && [ -n "${create_cpu_period}" ]; }; then
-			echo "cpu quota (-q) and cpu period (-C) must be specified together" >&2
+			echo "cpu quota (-q) and cpu period (-c) must be specified together" >&2
 			exit 1
 		fi
 		name=$1
