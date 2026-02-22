@@ -82,6 +82,7 @@ static int	secmodel_jail_network_cb(kauth_cred_t, kauth_action_t, void *,
 static bool	secmodel_jail_port_reserved_by_id(jailid_t, in_port_t);
 static bool	secmodel_jail_port_reserved_any(in_port_t);
 static bool	secmodel_jail_addr_port(const struct sockaddr *, in_port_t *);
+static bool	secmodel_jail_has_entries(void);
 
 /*
  * Each jail is tracked by an entry in a global list. The entry only stores the
@@ -379,6 +380,21 @@ secmodel_jail_addr_port(const struct sockaddr *sa, in_port_t *port)
 	default:
 		return false;
 	}
+}
+
+/*
+ * Check whether any jail ids still exist.
+ */
+static bool
+secmodel_jail_has_entries(void)
+{
+	bool has_entries;
+
+	mutex_enter(&jail_lock);
+	has_entries = LIST_FIRST(&jail_list) != NULL;
+	mutex_exit(&jail_lock);
+
+	return has_entries;
 }
 
 /*
@@ -1177,6 +1193,9 @@ secmodel_jail_modcmd(modcmd_t cmd, void *arg)
 		break;
 
 	case MODULE_CMD_FINI:
+		if (secmodel_jail_has_entries())
+			return EBUSY;
+
 		log(LOG_INFO, "secmodel_jail: unloading\n");
 		secmodel_jail_stop();
 
