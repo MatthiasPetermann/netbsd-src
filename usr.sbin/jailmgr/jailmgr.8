@@ -405,6 +405,116 @@ include that jail in
 and
 .Cm restart --all .
 .El
+.Sh RESOURCE QUOTA TUNING
+The resource values accepted by
+.Nm
+are forwarded to
+.Xr jailctl 8
+as-is.
+That means quota tuning should follow application behaviour,
+not generic defaults.
+.Pp
+Quick meaning of the create-time quota flags:
+.Bl -tag -width "Fl s Ar sockbuf.max-bytes"
+.It Fl m Ar memory.max-bytes
+Maximum memory growth admitted for the jail.
+If this is too low,
+processes can fail allocations
+.Pq often seen as Dv ENOMEM .
+.It Fl p Ar proc.max
+Maximum number of processes in the jail.
+Too low usually appears as failed forks or missing worker processes
+.Pq Dv EAGAIN .
+.It Fl d Ar fd.max
+Maximum number of file descriptors across jail processes.
+Too low causes
+.Dv EMFILE
+and accept/connect/open failures.
+.It Fl s Ar sockbuf.max-bytes
+Maximum socket-buffer reservation for the jail.
+Too low limits throughput under many concurrent connections.
+.It Fl q Ar cpu.quota
+CPU budget per period in scheduler ticks.
+.It Fl c Ar cpu.period
+Length of one CPU accounting window in microseconds.
+The jail can consume up to
+.Ar cpu.quota
+scheduler ticks during each
+.Ar cpu.period
+window.
+.El
+.Pp
+For CPU tuning,
+.Dq ticks
+are scheduler clock ticks
+.Pq see Dv kern.hz via Xr sysctl 8 .
+A practical approximation for average CPU share is:
+.Bd -literal -offset indent
+share ~= cpu.quota / (kern.hz * cpu.period_seconds)
+.Ed
+Example with
+.Dv kern.hz=100
+and
+.Ar -c 1000000
+.Pq 1 second period :
+.Ar -q 50
+is about 50% of one CPU,
+.Ar -q 100
+about 100% of one CPU,
+and
+.Ar -q 200
+about two CPU-seconds per second aggregate
+.Pq e.g. one core fully plus burst on another core .
+.Pp
+If your host uses a different
+.Dv kern.hz ,
+scale
+.Ar cpu.quota
+proportionally.
+Longer periods smooth throughput but make throttling bursts longer;
+shorter periods react faster but can feel more "choppy" at tight quotas.
+.Pp
+Recommended practical workflow:
+.Bl -enum
+.It
+Start with realistic traffic and no tight limits,
+measure peaks,
+then set limits.
+.It
+Set
+.Fl m
+first
+.Pq peak + 20-30% headroom for restart/update bursts .
+.It
+Set
+.Fl p
+from worst-case worker/process fan-out.
+.It
+Set
+.Fl d
+from concurrent clients and per-worker fd usage.
+For web services,
+count at least listener sockets + active connections + log files.
+.It
+Set
+.Fl s
+for the expected connection profile:
+higher for many concurrent high-latency clients,
+lower for internal batch jobs.
+.It
+Set
+.Fl q
+and
+.Fl c
+last,
+and test both steady load and burst events
+.Pq startup, reload, log rotation, package upgrades .
+.El
+.Pp
+Change one class of limit at a time,
+re-test,
+and keep chosen values documented in each jail's
+.Pa jail.conf .
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
 .It Pa /etc/jailmgr.conf
