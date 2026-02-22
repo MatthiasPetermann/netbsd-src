@@ -180,18 +180,17 @@ secmodel_jail_cpu_account_tick(void *arg)
 	mutex_exit(&jail_lock);
 
 	mutex_enter(&proc_lock);
+	mutex_enter(&jail_lock);
 	PROCLIST_FOREACH(p, &allproc) {
 		id = secmodel_jail_cred_id(p->p_cred);
 		if (id == JAILID_HOST)
 			continue;
 		ticks = p->p_uticks + p->p_sticks + p->p_iticks;
-
-		mutex_enter(&jail_lock);
 		entry = secmodel_jail_lookup(id);
 		if (entry != NULL)
 			entry->je_cpu_total_ticks += ticks;
-		mutex_exit(&jail_lock);
 	}
+	mutex_exit(&jail_lock);
 	mutex_exit(&proc_lock);
 
 	mutex_enter(&jail_lock);
@@ -1458,7 +1457,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 	bool *matchp;
 	bool *okp;
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_CRED_MATCHES) == 0) {
+	if (strcmp(what, SECMODEL_JAIL_EVAL_CRED_MATCHES) == 0) {
 		if (arg == NULL || ret == NULL)
 			return EINVAL;
 
@@ -1474,7 +1473,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_MEMORY_ADMIT) == 0) {
+	if (strcmp(what, SECMODEL_JAIL_EVAL_MEMORY_ADMIT) == 0) {
 		if (arg == NULL || ret == NULL)
 			return EINVAL;
 		aa = arg;
@@ -1483,7 +1482,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT) == 0) {
+	if (strcmp(what, SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT) == 0) {
 		if (arg == NULL)
 			return EINVAL;
 		sca = arg;
@@ -1491,7 +1490,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_FD_ADMIT) == 0) {
+	if (strcmp(what, SECMODEL_JAIL_EVAL_FD_ADMIT) == 0) {
 		if (arg == NULL || ret == NULL)
 			return EINVAL;
 		aa = arg;
@@ -1500,7 +1499,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_FD_SET_CURRENT) == 0) {
+	if (strcmp(what, SECMODEL_JAIL_EVAL_FD_SET_CURRENT) == 0) {
 		if (arg == NULL)
 			return EINVAL;
 		sca = arg;
@@ -1508,7 +1507,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_SOCKBUF_CHARGE) == 0) {
+	if (strcmp(what, SECMODEL_JAIL_EVAL_SOCKBUF_CHARGE) == 0) {
 		if (arg == NULL || ret == NULL)
 			return EINVAL;
 		sba = arg;
@@ -1517,7 +1516,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE) == 0) {
+	if (strcmp(what, SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE) == 0) {
 		if (arg == NULL)
 			return EINVAL;
 		sba = arg;
@@ -1525,7 +1524,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_CPU_CAN_RUN) == 0) {
+	if (strcmp(what, SECMODEL_JAIL_EVAL_CPU_CAN_RUN) == 0) {
 		if (arg == NULL || ret == NULL)
 			return EINVAL;
 		cra = arg;
