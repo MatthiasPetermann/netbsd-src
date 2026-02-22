@@ -254,10 +254,33 @@ per-process RLIMIT model to jail-scoped, operator-comprehensible controls.
   - jail-scoped limits (aggregate)
   - process-scoped limits (rlimit fallback)
 
-9.7 Rollout strategy
-- Phase 1: add counters/telemetry and read-only reporting.
-- Phase 2: add opt-in enforcement for one resource at a time
-  (proc.max and memory.max first).
-- Phase 3: switch jailmgr/jailctl defaults to jail-scoped controls.
-- Phase 4: de-emphasize RLIMIT_CPU and other per-process-only semantics in
-  documentation and defaults.
+9.7 Three-phase implementation plan (clean jail-native rollout)
+- Phase A (control-plane and observability foundation)
+  - Add jail-scoped policy fields to the create/list ABI and sysctl payloads:
+    - cpu.quota, cpu.period, optional cpu.weight
+    - memory.max
+    - proc.max, fd.max, sockbuf.max (as staged fields)
+  - Store these values in secmodel_jail-owned per-jail state bound to jail
+    lifecycle.
+  - Expose configured policy and current usage counters in list/reporting so
+    operators can inspect intended limits before enforcement is enabled.
+  - Keep existing RLIMIT behavior as compatibility fallback during this phase.
+
+- Phase B (kernel enforcement in jail identity scope)
+  - Introduce jail-scoped admission checks at pre-commit allocation points:
+    - vmspace growth/mmap/brk for memory.max
+    - fork/clone for proc.max
+    - file-descriptor allocation for fd.max
+    - socket buffer charging for sockbuf.max
+  - Implement scheduler-backed CPU control for sustained limits over windows:
+    - quota+period as primary absolute cap model
+    - optional weight mode for relative fairness
+  - Export throttle/deny counters and recent pressure signals for diagnostics.
+
+- Phase C (default switch and compatibility tightening)
+  - Make jail-scoped controls the default in jailctl/jailmgr UX and examples.
+  - Clearly separate CLI naming for jail-scoped vs process-scoped limits.
+  - Keep RLIMIT as optional inner guardrail only; do not rely on it as primary
+    jail-level policy.
+  - Update documentation/manpages to de-emphasize per-process-only semantics and
+    codify precedence rules where legacy uid-scoped checks still exist.
