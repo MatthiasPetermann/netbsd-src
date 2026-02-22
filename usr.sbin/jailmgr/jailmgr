@@ -352,7 +352,7 @@ load_jail_conf() {
 	JAIL_NAME=
 	JAIL_SUPERVISE_CMD=
 	JAIL_CREATE_CPU_MS=
-	JAIL_CREATE_MEMORY_BYTES=
+	JAIL_CREATE_MEMORY_MB=
 	JAIL_CREATE_PROFILE=
 	JAIL_CREATE_RESERVED_PORTS=
 	JAIL_SUPERVISE_FACILITY=
@@ -472,7 +472,7 @@ create_jail() {
 	autostart=${2:-NO}
 	supervise_cmd=${3:-/bin/sleep 60}
 	create_cpu_ms=${4:-}
-	create_memory_bytes=${5:-}
+	create_memory_mb=${5:-}
 	create_profile=${6:-}
 	create_reserved_ports=${7:-}
 	supervise_facility=${8:-}
@@ -501,7 +501,7 @@ JAIL_ARCH=${MACHINE_ARCH}
 JAIL_AUTOSTART=${autostart}
 # Optional jailctl create(8) resource controls:
 JAIL_CREATE_CPU_MS="${create_cpu_ms}"
-JAIL_CREATE_MEMORY_BYTES="${create_memory_bytes}"
+JAIL_CREATE_MEMORY_MB="${create_memory_mb}"
 JAIL_CREATE_PROFILE="${escaped_create_profile}"
 JAIL_CREATE_RESERVED_PORTS="${escaped_create_reserved_ports}"
 # Optional jailctl supervise(8) logging controls:
@@ -558,8 +558,8 @@ start_jail_internal() {
 		if [ -n "${JAIL_CREATE_CPU_MS:-}" ]; then
 			set -- "$@" -c "${JAIL_CREATE_CPU_MS}"
 		fi
-		if [ -n "${JAIL_CREATE_MEMORY_BYTES:-}" ]; then
-			set -- "$@" -m "${JAIL_CREATE_MEMORY_BYTES}"
+		if [ -n "${JAIL_CREATE_MEMORY_MB:-}" ]; then
+			set -- "$@" -m "$(memory_mb_to_bytes "${JAIL_CREATE_MEMORY_MB}")"
 		fi
 		if [ -n "${JAIL_CREATE_PROFILE:-}" ]; then
 			set -- "$@" -p "${JAIL_CREATE_PROFILE}"
@@ -840,7 +840,7 @@ case "${cmd}" in
 		autostart=NO
 		supervise_cmd="/bin/sleep 60"
 		create_cpu_ms=
-		create_memory_bytes=
+		create_memory_mb=
 		create_profile=
 		create_reserved_ports=
 		supervise_facility=
@@ -870,11 +870,12 @@ case "${cmd}" in
 				;;
 			-m)
 				[ $# -ge 2 ] || { usage; exit 1; }
-				[ -z "${create_memory_bytes}" ] || {
+				[ -z "${create_memory_mb}" ] || {
 					echo "memory limit (-m) may be provided only once" >&2
 					exit 1
 				}
-				create_memory_bytes=$(memory_mb_to_bytes "$2")
+				memory_mb_to_bytes "$2" >/dev/null
+				create_memory_mb=$2
 				shift 2
 				;;
 			-p)
@@ -922,7 +923,7 @@ case "${cmd}" in
 		fi
 		name=$1
 		create_jail "${name}" "${autostart}" "${supervise_cmd}" \
-		    "${create_cpu_ms}" "${create_memory_bytes}" \
+		    "${create_cpu_ms}" "${create_memory_mb}" \
 		    "${create_profile}" "${create_reserved_ports}" \
 		    "${supervise_facility}" "${supervise_stdout_level}" \
 		    "${supervise_stderr_level}" "${supervise_tag}"

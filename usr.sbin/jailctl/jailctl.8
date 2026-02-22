@@ -81,6 +81,11 @@ In the current implementation these limits are applied as per-process
 .Bl -tag -width Ds
 .It Fl c Ar cpu-ms
 Set a CPU time limit (in milliseconds) for processes in the jail.
+The configured value is translated to
+.Dv RLIMIT_CPU
+when a process enters the jail, rounded up to whole seconds, and then enforced
+as per-process consumed CPU time (not wall clock time).
+It is therefore a lifetime budget per process.
 .It Fl m Ar bytes
 Set a virtual memory limit (in bytes) for processes in the jail.
 .It Fl p Ar profile

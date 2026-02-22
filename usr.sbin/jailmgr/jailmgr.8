@@ -144,16 +144,26 @@ the generated
 stores the corresponding create-time CPU limit used by
 .Xr jailctl 8
 .Pq internally converted to milliseconds per second; 1% = 10ms/s .
+The resulting create-time value is translated by
+.Xr secmodel_jail 9
+to
+.Dv RLIMIT_CPU
+when a process enters the jail,
+rounded up to whole seconds and enforced as per-process consumed CPU time
+(lifetime budget, not wall clock time).
 When
 .Fl m
 .Pq megabytes
 is provided,
 the generated
 .Pa jail.conf
-stores the corresponding create-time
+stores the corresponding create-time memory value in megabytes in
+.Pa jail.conf .
+.Nm
+converts this value to bytes when invoking
 .Xr jailctl 8
-resource limits
-.Pq internally converted to bytes .
+.Cm create Fl m
+at start time .
 When
 .Fl p
 is provided,
@@ -357,8 +367,11 @@ must be configured to emit to stderr if those logs should be captured by
 Optional value forwarded to
 .Xr jailctl 8
 .Cm create Fl c .
-.It Ev JAIL_CREATE_MEMORY_BYTES
-Optional value forwarded to
+.It Ev JAIL_CREATE_MEMORY_MB
+Optional memory limit in megabytes persisted in
+.Pa jail.conf .
+.Nm
+converts this value to bytes before invoking
 .Xr jailctl 8
 .Cm create Fl m .
 .It Ev JAIL_CREATE_PROFILE
