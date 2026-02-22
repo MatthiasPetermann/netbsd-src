@@ -55,20 +55,33 @@ int secmodel_jail_cred_cb(kauth_cred_t, kauth_action_t, void *,
 
 bool secmodel_jail_cred_matches(kauth_cred_t, const char *);
 
-bool secmodel_jail_memory_admit(kauth_cred_t, uint64_t, uint64_t);
-void secmodel_jail_memory_set_current(kauth_cred_t, uint64_t);
-
-bool secmodel_jail_fd_admit(kauth_cred_t, uint64_t, uint64_t);
-void secmodel_jail_fd_set_current(kauth_cred_t, uint64_t);
-
-bool secmodel_jail_sockbuf_charge(kauth_cred_t, uint64_t);
-void secmodel_jail_sockbuf_uncharge(kauth_cred_t, uint64_t);
-
 #define SECMODEL_JAIL_EVAL_CRED_MATCHES "cred-matches"
+#define SECMODEL_JAIL_EVAL_MEMORY_ADMIT "memory-admit"
+#define SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT "memory-set-current"
+#define SECMODEL_JAIL_EVAL_FD_ADMIT "fd-admit"
+#define SECMODEL_JAIL_EVAL_FD_SET_CURRENT "fd-set-current"
+#define SECMODEL_JAIL_EVAL_SOCKBUF_CHARGE "sockbuf-charge"
+#define SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE "sockbuf-uncharge"
 
 struct secmodel_jail_eval_cred_matches_args {
 	kauth_cred_t cred;
 	const char *name;
+};
+
+struct secmodel_jail_eval_admit_args {
+	kauth_cred_t cred;
+	uint64_t current;
+	uint64_t delta;
+};
+
+struct secmodel_jail_eval_set_current_args {
+	kauth_cred_t cred;
+	uint64_t current;
+};
+
+struct secmodel_jail_eval_sockbuf_charge_args {
+	kauth_cred_t cred;
+	uint64_t bytes;
 };
 
 #endif /* !_SECMODEL_JAIL_JAIL_H_ */

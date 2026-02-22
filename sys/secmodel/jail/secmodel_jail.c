@@ -145,7 +145,7 @@ secmodel_jail_within_limit(uint64_t current, uint64_t delta, uint64_t limit)
 	return current + delta <= limit;
 }
 
-bool
+static bool
 secmodel_jail_memory_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 {
 	struct jail_entry *entry;
@@ -171,7 +171,7 @@ secmodel_jail_memory_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 	return true;
 }
 
-void
+static void
 secmodel_jail_memory_set_current(kauth_cred_t cred, uint64_t current)
 {
 	struct jail_entry *entry;
@@ -188,7 +188,7 @@ secmodel_jail_memory_set_current(kauth_cred_t cred, uint64_t current)
 	mutex_exit(&jail_lock);
 }
 
-bool
+static bool
 secmodel_jail_fd_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 {
 	struct jail_entry *entry;
@@ -214,7 +214,7 @@ secmodel_jail_fd_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 	return true;
 }
 
-void
+static void
 secmodel_jail_fd_set_current(kauth_cred_t cred, uint64_t current)
 {
 	struct jail_entry *entry;
@@ -231,7 +231,7 @@ secmodel_jail_fd_set_current(kauth_cred_t cred, uint64_t current)
 	mutex_exit(&jail_lock);
 }
 
-bool
+static bool
 secmodel_jail_sockbuf_charge(kauth_cred_t cred, uint64_t bytes)
 {
 	struct jail_entry *entry;
@@ -1336,23 +1336,80 @@ static int
 secmodel_jail_eval(const char *what, void *arg, void *ret)
 {
 	const struct secmodel_jail_eval_cred_matches_args *a;
+	const struct secmodel_jail_eval_admit_args *aa;
+	const struct secmodel_jail_eval_set_current_args *sca;
+	const struct secmodel_jail_eval_sockbuf_charge_args *sba;
 	bool *matchp;
+	bool *okp;
 
-	if (strcasecmp(what, SECMODEL_JAIL_EVAL_CRED_MATCHES) != 0)
-		return ENOENT;
-	if (arg == NULL || ret == NULL)
-		return EINVAL;
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_CRED_MATCHES) == 0) {
+		if (arg == NULL || ret == NULL)
+			return EINVAL;
 
-	a = arg;
-	matchp = ret;
-	log(LOG_DEBUG,
-	    "secmodel_jail debug: eval what=\"%s\" cred_matches name=%s\n",
-	    what, a->name ? a->name : "<none>");
-	*matchp = secmodel_jail_cred_matches(a->cred, a->name);
-	log(LOG_DEBUG,
-	    "secmodel_jail debug: eval result what=\"%s\" match=%d\n",
-	    what, *matchp);
-	return 0;
+		a = arg;
+		matchp = ret;
+		log(LOG_DEBUG,
+		    "secmodel_jail debug: eval what=\"%s\" cred_matches name=%s\n",
+		    what, a->name ? a->name : "<none>");
+		*matchp = secmodel_jail_cred_matches(a->cred, a->name);
+		log(LOG_DEBUG,
+		    "secmodel_jail debug: eval result what=\"%s\" match=%d\n",
+		    what, *matchp);
+		return 0;
+	}
+
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_MEMORY_ADMIT) == 0) {
+		if (arg == NULL || ret == NULL)
+			return EINVAL;
+		aa = arg;
+		okp = ret;
+		*okp = secmodel_jail_memory_admit(aa->cred, aa->current, aa->delta);
+		return 0;
+	}
+
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT) == 0) {
+		if (arg == NULL)
+			return EINVAL;
+		sca = arg;
+		secmodel_jail_memory_set_current(sca->cred, sca->current);
+		return 0;
+	}
+
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_FD_ADMIT) == 0) {
+		if (arg == NULL || ret == NULL)
+			return EINVAL;
+		aa = arg;
+		okp = ret;
+		*okp = secmodel_jail_fd_admit(aa->cred, aa->current, aa->delta);
+		return 0;
+	}
+
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_FD_SET_CURRENT) == 0) {
+		if (arg == NULL)
+			return EINVAL;
+		sca = arg;
+		secmodel_jail_fd_set_current(sca->cred, sca->current);
+		return 0;
+	}
+
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_SOCKBUF_CHARGE) == 0) {
+		if (arg == NULL || ret == NULL)
+			return EINVAL;
+		sba = arg;
+		okp = ret;
+		*okp = secmodel_jail_sockbuf_charge(sba->cred, sba->bytes);
+		return 0;
+	}
+
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE) == 0) {
+		if (arg == NULL)
+			return EINVAL;
+		sba = arg;
+		secmodel_jail_sockbuf_uncharge(sba->cred, sba->bytes);
+		return 0;
+	}
+
+	return ENOENT;
 }
 
 /*

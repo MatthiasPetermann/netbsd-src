@@ -87,6 +87,7 @@ __KERNEL_RCSID(0, "$NetBSD: uipc_socket2.c,v 1.142 2022/10/26 23:38:09 riastradh
 #include <sys/filedesc.h>
 #include <ddb/db_active.h>
 
+#include <secmodel/secmodel.h>
 #include <secmodel/jail/jail.h>
 #endif
 
@@ -714,20 +715,37 @@ sbreserve(struct sockbuf *sb, u_long cc, struct socket *so)
 	if (cc == 0 || cc > sb_max_adj)
 		return (0);
 	oldcc = sb->sb_hiwat;
-	if (cc > oldcc && so->so_cred != NULL &&
-	    !secmodel_jail_sockbuf_charge(so->so_cred, cc - oldcc))
-		return 0;
+	if (cc > oldcc && so->so_cred != NULL) {
+		struct secmodel_jail_eval_sockbuf_charge_args sba;
+		bool ok;
+
+		sba.cred = so->so_cred;
+		sba.bytes = cc - oldcc;
+		if (secmodel_eval(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_EVAL_SOCKBUF_CHARGE, &sba, &ok) == 0 && !ok)
+			return 0;
+	}
 
 	maxcc = l->l_proc->p_rlimit[RLIMIT_SBSIZE].rlim_cur;
 
 	uidinfo = so->so_uidinfo;
 	if (!chgsbsize(uidinfo, &sb->sb_hiwat, cc, maxcc)) {
-		if (cc > oldcc && so->so_cred != NULL)
-			secmodel_jail_sockbuf_uncharge(so->so_cred, cc - oldcc);
+		if (cc > oldcc && so->so_cred != NULL) {
+			struct secmodel_jail_eval_sockbuf_charge_args sba;
+			sba.cred = so->so_cred;
+			sba.bytes = cc - oldcc;
+			(void)secmodel_eval(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE, &sba, NULL);
+		}
 		return 0;
 	}
-	if (oldcc > cc && so->so_cred != NULL)
-		secmodel_jail_sockbuf_uncharge(so->so_cred, oldcc - cc);
+	if (oldcc > cc && so->so_cred != NULL) {
+		struct secmodel_jail_eval_sockbuf_charge_args sba;
+		sba.cred = so->so_cred;
+		sba.bytes = oldcc - cc;
+		(void)secmodel_eval(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE, &sba, NULL);
+	}
 	sb->sb_mbmax = uimin(cc * 2, sb_max);
 	if (sb->sb_lowat > sb->sb_hiwat)
 		sb->sb_lowat = sb->sb_hiwat;
@@ -749,8 +767,13 @@ sbrelease(struct sockbuf *sb, struct socket *so)
 
 	sbflush(sb);
 	(void)chgsbsize(so->so_uidinfo, &sb->sb_hiwat, 0, RLIM_INFINITY);
-	if (oldcc != 0 && so->so_cred != NULL)
-		secmodel_jail_sockbuf_uncharge(so->so_cred, oldcc);
+	if (oldcc != 0 && so->so_cred != NULL) {
+		struct secmodel_jail_eval_sockbuf_charge_args sba;
+		sba.cred = so->so_cred;
+		sba.bytes = oldcc;
+		(void)secmodel_eval(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE, &sba, NULL);
+	}
 	sb->sb_mbmax = 0;
 }
 
