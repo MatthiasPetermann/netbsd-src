@@ -79,6 +79,7 @@ static bool	secmodel_jail_port_reserved_by_id(jailid_t, in_port_t);
 static bool	secmodel_jail_port_reserved_any(in_port_t);
 static bool	secmodel_jail_addr_port(const struct sockaddr *, in_port_t *);
 static bool	secmodel_jail_has_entries(void);
+static jailid_t	secmodel_jail_cred_id(kauth_cred_t);
 
 /*
  * Each jail is tracked by an entry in a global list. The entry stores identity
@@ -1181,6 +1182,8 @@ secmodel_jail_init(void)
 {
 	mutex_init(&jail_lock, MUTEX_DEFAULT, IPL_NONE);
 	callout_init(&jail_cpu_account_ch, CALLOUT_MPSAFE);
+	callout_setfunc(&jail_cpu_account_ch, secmodel_jail_cpu_account_tick,
+	    NULL);
 	if (kauth_register_key(jail_sm, &jail_key) != 0)
 		printf("secmodel_jail: unable to register kauth key\n");
 }
