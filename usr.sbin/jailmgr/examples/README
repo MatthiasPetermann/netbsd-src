@@ -9,10 +9,10 @@ It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
 
 - `create <name>` creates/updates the jail config and filesystem layout.
 - `create -a <name>` does the same and initializes `JAIL_AUTOSTART=YES`.
-- `create -s '<cmd ...>' <name>` initializes `JAIL_SUPERVISE_CMD` in `jail.conf`.
-- `create -c <cpu-percent>` sets CPU limits for `jailctl create` (0-100; internally 1% = 10ms/s).
-- `create -m <memory-mb>` stores the memory limit in `jail.conf` (MB) and converts it to bytes only when starting the jail (`jailctl create -m`).
-- CPU and memory limits are enforced through per-process `RLIMIT` values when entering the jail.
+- `create -x '<cmd ...>' <name>` initializes `JAIL_SUPERVISE_CMD` in `jail.conf`.
+- `create -q <cpu.quota> -c <cpu.period>` configures CPU quota window policy for `jailctl create` and is passed through unchanged.
+- `create -m <memory.max-bytes>` stores the memory ceiling in `jail.conf` and forwards it unchanged to `jailctl create`.
+- Resource limits are enforced by secmodel_jail as jail-scoped admission controls.
 - `create -r <port[,port...]>` reserves one or more listening ports for the jail (`jailctl create -r`).
 - `create -f <facility> -o <stdout-level> -e <stderr-level> -t <tag>` initializes logging options for `jailctl supervise`.
 - `start <name>` and `restart <name>` use per-jail settings from `${JAIL_DATA_DIR}/<name>/jail.conf`.
@@ -46,8 +46,9 @@ It can also provide optional jail-local `/dev` (tmpfs + `MAKEDEV`).
    ```sh
    /usr/sbin/jailmgr create jail1
    /usr/sbin/jailmgr create -a jail2
-   /usr/sbin/jailmgr create -a -s '/bin/sleep 60' \
-       -c 25 -m 512 -r 80,443 -f local3 -o info -e err -t jail-web jail3
+   /usr/sbin/jailmgr create -a -x '/bin/sleep 60' \
+       -q 200 -c 1000000 -m 536870912 -p 512 -d 8192 -s 134217728 \
+       -l medium -r 80,443 -f local3 -o info -e err -t jail-web jail3
    ```
 
    Then set at least `JAIL_SUPERVISE_CMD` and `JAIL_AUTOSTART` in each
