@@ -1,43 +1,50 @@
-NetBSD jails specification (current model)
-==========================================
+NetBSD jails-v2 specification (experimental)
+============================================
 
 Status
 ------
-This document describes the currently implemented jail stack in this tree:
+This document specifies the currently implemented, experimental jail stack in
+this tree:
 - secmodel_jail (kernel policy model)
 - jailctl (low-level operational interface)
 - jailmgr (multi-jail provisioning/operations)
 
-The former prototype integrations with UVM callback hooks and NPF jail
-qualifiers are no longer part of the active code and are documented only as
-future ideas (see section 8).
+This implementation is referred to as "jails-v2".
+The design focus of jails-v2 is jail-native resource control and accounting.
+
+The former RLIMIT-centric model ("jails-v1") is not the active implementation
+in this tree anymore. The jails-v1 approach was removed in favor of the
+jails-v2 jail-scoped control path.
 
 
 1. Conceptual model and goals
 -----------------------------
-- Lightweight process isolation based on a per-credential jail ID.
+- Lightweight process isolation based on a per-credential jail ID (jid).
 - Host context is jail ID 0.
-- Host root (euid 0 + jail ID 0) remains the privileged control-plane actor.
+- Host root (euid 0 + jid 0) is the privileged control-plane actor.
 - Isolation focus:
   - process visibility/signal boundaries
   - system-scope hardening by profile
   - optional per-jail reserved listening-port ownership
-  - per-process resource limits via RLIMIT application on jail entry
+  - jail-scoped resource admission and accounting
 
 
 2. High-level architecture
 --------------------------
 - secmodel_jail:
-  - owns jail metadata and policy decisions
+  - owns jail metadata, policy state, and runtime counters
   - exposes sysctl control API under security.models.jail.*
   - enforces policy via kauth listeners
+  - exports brokered eval hooks for selected resource admission/updates
 - jailctl:
   - creates/destroys/lists jails
   - enters jails and executes workloads
   - provides supervised process mode with syslog forwarding
+  - passes jail-native resource policy at create time
 - jailmgr:
   - prepares base filesystem layout for many jails
   - persists per-jail configuration and automates start/stop/restart
+  - maps persisted policy values 1:1 into jailctl create options
 
 
 3. secmodel_jail kernel specification
@@ -49,13 +56,17 @@ future ideas (see section 8).
   - jail ID
   - jail name
   - jail root metadata
-  - optional CPU quota+period window policy
+  - optional cpu.quota + cpu.period policy
   - optional memory.max (bytes)
+  - optional proc.max
+  - optional fd.max
+  - optional sockbuf.max (bytes)
   - profile (low/medium/high)
   - optional reserved listening-port set
+  - live counters/telemetry (usage, deny counters, throttle counters)
 
 3.2 Privilege model
-- Host root (euid 0, jail ID 0) can:
+- Host root (euid 0, jid 0) can:
   - create/destroy/list jails
   - read/write current jail ID control
   - enter target jail IDs
@@ -69,14 +80,17 @@ future ideas (see section 8).
 3.4 System hardening semantics
 - System-scope kauth requests are filtered for jailed credentials.
 - Profile behavior:
-  - low: keeps process-isolation semantics, defers additional hardening
-  - medium: hardening enabled, SysV IPC administrative requests deferred
-  - high: full hardening set
+  - low: process-isolation semantics only; system hardening mostly deferred
+  - medium: hardening enabled, but SysV IPC administrative requests deferred
+  - high: hardening enabled, including SysV IPC administrative denial
+- Denied families include mount/module/mknod/chroot/reboot/swapctl/accounting,
+  CPU/PSET/time administration, selected kernel sysctl admin operations,
+  and other host-scope controls.
 
 3.5 Network bind reservation semantics
 - secmodel_jail listens on KAUTH_SCOPE_NETWORK bind checks.
 - If a concrete local port is reserved by any jail:
-  - bind allowed only for credentials in the jail that owns reservation.
+  - bind is allowed only for credentials in the jail that owns reservation.
 - Unreserved ports are deferred to normal authorization behavior.
 - Port 0 (ephemeral assignment) is not reservation-restricted.
 
@@ -84,10 +98,16 @@ future ideas (see section 8).
 - Resource controls are jail-scoped.
 - Active admission checks:
   - vmspace growth/mmap/brk for memory.max
-  - fork/clone for proc.max
+  - fork/clone admission for proc.max
   - file-descriptor allocation for fd.max
   - socket buffer charging for sockbuf.max
-- CPU control uses per-jail quota/period windows with throttle state.
+- CPU control:
+  - per-jail quota/period window accounting
+  - over-quota state and throttle counters
+  - run-queue selection skips runnable LWPs from over-quota jails
+  - fork admission is also denied while over quota
+  - no strict proportional-share scheduler partitioning guarantees yet
+- Limit value 0 means "unlimited" for that specific resource.
 
 3.7 Credential lifecycle behavior
 - New credentials initialize with jail ID 0.
@@ -101,17 +121,18 @@ future ideas (see section 8).
   - read: current process jail ID
   - write: request jail entry
 - create
-  - legacy integer payload or structured payload
-  - structured payload supports metadata, limits, profile, reserved ports
+  - structured payload only (struct jail_create)
+  - supports metadata, resource policy fields, profile, reserved ports
+  - CPU fields require quota+period together
 - destroy
   - destroy by ID (only when empty)
 - list
-  - enumerate jail metadata and process reference counters
+  - enumerate jail metadata, policy fields, usage, and counters
 
 3.10 Logging model
 - Module load/unload messages.
 - Create/destroy audit messages.
-- No aggregate-resource veto logging in active model.
+- Debug logs exist for credential name match/eval helper paths.
 
 
 4. jailctl specification
@@ -120,19 +141,26 @@ future ideas (see section 8).
 - Thin userland controller over security.models.jail sysctls.
 
 4.2 Core operations
-- create [-c cpu-ms] [-m bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>
+- create [-q cpu.quota] [-C cpu.period] [-M memory.max-bytes]
+         [-P proc.max] [-F fd.max] [-S sockbuf.max-bytes]
+         [-p low|medium|high] [-r port[,port...]] -n name <root>
 - destroy <jail-id|name>
 - exec <jail-id|name> [command [args...]]
 - supervise [logging flags] <jail-id|name> <command> [args...]
 - list
 
 4.3 Resource options
-- -c and -m configure limits passed through create payload.
-- Effective enforcement remains per-process RLIMIT behavior in kernel.
+- -q and -C configure cpu.quota/cpu.period and must be provided together.
+- -M/-P/-F/-S configure memory/proc/fd/sockbuf jail-scoped ceilings.
+- Values are forwarded unchanged to kernel create payload.
 
 4.4 Reserved port options
 - -r accepts comma-separated lists and can be repeated.
 - Values are validated as 1..65535 and deduplicated per create call.
+
+4.5 Supervision model
+- supervise daemonizes and forwards stdout/stderr to syslog.
+- restart strategy uses exponential backoff with cap.
 
 
 5. jailmgr specification
@@ -141,22 +169,38 @@ future ideas (see section 8).
 - Operational orchestration around jailctl and filesystem layout.
 
 5.2 Bootstrap/startup behavior
-- Ensures secmodel_jail module is loaded.
-- Ensures secmodel_jail is listed in /etc/modules.conf for persistence.
-- Prepares shared base layer and per-jail directories.
+- bootstrap ensures secmodel_jail module is loaded.
+- bootstrap ensures secmodel_jail is listed in /etc/modules.conf.
+- bootstrap prepares base layers and default config artifacts.
 
 5.3 Per-jail configuration model
 - Persists autostart and supervise command.
-- Persists optional create-time CPU/memory/profile/reserved-port settings.
-- Forwards create settings to jailctl create when starting jail.
+- Persists optional create-time CPU/memory/proc/fd/sockbuf/profile/ports.
+- Forwards persisted settings unchanged to jailctl create on start.
+
+5.4 Runtime coupling note
+- The management path is intentionally explicit about secmodel_jail dependency.
+- If secmodel_jail is absent, jailctl sysctl operations fail; there is no
+  implicit fallback mode that emulates jail behavior via generic defaults.
 
 
-6. Threat-model note
---------------------
-- This model provides process-level containment and policy hardening but does
-  not provide full virtualization guarantees.
-- For stronger isolation requirements, prefer stronger primitives
-  (virtualization, hardware partitioning, etc.) where appropriate.
+6. Integration points and coupling
+----------------------------------
+6.1 Resource-control integrations
+- Resource admission/charging updates are integrated through secmodel eval
+  requests consumed by secmodel_jail:
+  - memory-admit / memory-set-current
+  - fd-admit / fd-set-current
+  - sockbuf-charge / sockbuf-uncharge
+  - cpu-can-run
+- These are capability-style integration points: callers query secmodel_jail
+  through a broker path rather than embedding policy logic locally.
+
+6.2 Coupling properties
+- Policy ownership remains centralized in secmodel_jail.
+- Userland tools remain thin and mostly transport configuration/commands.
+- Failure mode without secmodel_jail is explicit operation failure, not silent
+  behavior change.
 
 
 7. Operational summary
@@ -166,120 +210,12 @@ future ideas (see section 8).
   2) jailctl supervise / jailmgr start
   3) jailctl destroy / jailmgr stop after workloads exit
 - Control-plane operations remain host-root only.
-- Resource control in active code is RLIMIT-based.
+- Resource control in active code is jail-scoped and jail-native (jails-v2).
 
 
-8. Future ideas (historical prototype references)
--------------------------------------------------
-The following topics were implemented in an earlier prototype but are not part
-of the active code anymore.
-
-8.1 UVM integration idea (prototype)
-- Prototype pattern used a callback hook from UVM growth paths into
-  secmodel_jail for projected jail-wide memory admission checks.
-- Prototype outcome on limit breach: ENOMEM before growth commit.
-- Current tree status: removed; kept here only as design reference.
-
-8.2 NPF integration idea (prototype)
-- Prototype pattern used jail-aware firewall qualification via secmodel_eval
-  broker queries (credential-to-jail matching for rule decisions).
-- Intended use was explicit service ownership policy in packet filtering.
-- Current tree status: removed; kept here only as design reference.
-
-
-9. Resource-model hardening roadmap
------------------------------------
-This section describes the migration path from the former RLIMIT-only model
-to jail-scoped, operator-comprehensible controls.
-
-9.1 Problem statement in former model
-- CPU control is based on RLIMIT_CPU, which tracks cumulative CPU time consumed
-  by each process over its lifetime.
-- This behaves as a one-shot budget per process, not as a sustained throughput
-  quota expected by operators.
-- RLIMIT and ulimit semantics are process and (for some resources) user
-  identity oriented, while jail identity is a separate axis.
-- Consequently, resource behavior for the same UID across multiple jails may be
-  coupled in ways that are surprising for jail administrators.
-
-9.2 Target principles
-- Primary accounting key should be jail ID (jid), not UID.
-- Limits should express rates and capacities over time windows,
-  not one-time lifetime budgets.
-- Enforcement must be hierarchical and explicit:
-  host/global ceilings >= per-jail ceilings >= per-process optional limits.
-- Introspection must expose both configured limits and current usage per jail.
-- Compatibility layer should preserve optional RLIMIT defaults for legacy use,
-  but not as the primary control plane.
-
-9.3 Kernel-side architecture (target)
-- Introduce a per-jail resource-accounting object owned by secmodel_jail and
-  attached to jail lifecycle.
-- Move hard limits and current counters into that object (e.g. processes,
-  address-space footprint, socket buffers, file descriptors).
-- Hook admission points to consult jail-scoped counters before commit:
-  - fork/clone path for process count
-  - vmspace growth/mmap/brk path for memory admission
-  - descriptor allocation path for FD ceilings
-  - socket buffer charging path for network memory ceilings
-- Keep process-local RLIMIT optional as an inner guardrail,
-  but never as the only jail-level enforcement.
-
-9.4 CPU control redesign
-- Replace RLIMIT_CPU-as-primary with a scheduler-backed jail CPU controller.
-- Model CPU policy as quota+period (absolute cap per time window, similar to
-  token bucket).
-- Maintain runnable-time accounting per jail and enforce continuously
-  per period, so limits represent sustained usage rather than lifetime budget.
-- Expose jail CPU usage and throttling statistics for observability.
-
-9.5 UID semantics and policy clarity
-- Document that UID is a credential namespace concept, while jid is a resource
-  and isolation scope concept.
-- For resources historically keyed by uid (e.g. RLIMIT_NPROC behavior), provide
-  jail-native equivalents keyed by jid and prefer them in jailed contexts.
-- Where legacy uid-scoped checks must remain, specify deterministic precedence
-  rules so operators can reason about outcomes.
-
-9.6 Userland/control-plane changes
-- Extend jail create payload and list output with jail-scoped resource policy:
-  - cpu.quota, cpu.period
-  - memory.max
-  - proc.max
-  - fd.max
-  - sockbuf.max
-- Update jailctl and jailmgr to configure/report those fields directly.
-- Provide clear naming in CLI and manpages to distinguish:
-  - jail-scoped limits (aggregate)
-  - process-scoped limits (rlimit fallback)
-
-9.7 Three-phase implementation plan (clean jail-native rollout)
-- Phase A (control-plane and observability foundation)
-  - Add jail-scoped policy fields to the create/list ABI and sysctl payloads:
-    - cpu.quota, cpu.period
-    - memory.max
-    - proc.max, fd.max, sockbuf.max (as staged fields)
-  - Store these values in secmodel_jail-owned per-jail state bound to jail
-    lifecycle.
-  - Expose configured policy and current usage counters in list/reporting so
-    operators can inspect intended limits before enforcement is enabled.
-  - Keep existing RLIMIT behavior as compatibility fallback during this phase.
-
-- Phase B (kernel enforcement in jail identity scope)
-  - Introduce jail-scoped admission checks at pre-commit allocation points:
-    - vmspace growth/mmap/brk for memory.max
-    - fork/clone for proc.max
-    - file-descriptor allocation for fd.max
-    - socket buffer charging for sockbuf.max
-  - Implement scheduler-backed CPU control for sustained limits over windows:
-    - Stage 1: low-overhead per-jail CPU usage accounting
-    - Stage 2: quota+period window enforcement with throttle counters
-  - Export throttle/deny counters and recent pressure signals for diagnostics.
-
-- Phase C (default switch and compatibility tightening)
-  - Make jail-scoped controls the default in jailctl/jailmgr UX and examples.
-  - Clearly separate CLI naming for jail-scoped vs process-scoped limits.
-  - Keep RLIMIT as optional inner guardrail only; do not rely on it as primary
-    jail-level policy.
-  - Update documentation/manpages to de-emphasize per-process-only semantics and
-    codify precedence rules where legacy uid-scoped checks still exist.
+8. Threat-model note
+--------------------
+- This model provides process-level containment and policy hardening but does
+  not provide full virtualization guarantees.
+- For stronger isolation requirements, prefer stronger primitives
+  (virtualization, hardware partitioning, etc.) where appropriate.
