@@ -32,6 +32,8 @@
 #ifndef _SECMODEL_JAIL_JAIL_H_
 #define _SECMODEL_JAIL_JAIL_H_
 
+#include <sys/types.h>
+
 #include <secmodel/secmodel.h>
 
 /*
@@ -52,6 +54,15 @@ int secmodel_jail_cred_cb(kauth_cred_t, kauth_action_t, void *,
     void *, void *, void *, void *);
 
 bool secmodel_jail_cred_matches(kauth_cred_t, const char *);
+
+bool secmodel_jail_memory_admit(kauth_cred_t, uint64_t, uint64_t);
+void secmodel_jail_memory_set_current(kauth_cred_t, uint64_t);
+
+bool secmodel_jail_fd_admit(kauth_cred_t, uint64_t, uint64_t);
+void secmodel_jail_fd_set_current(kauth_cred_t, uint64_t);
+
+bool secmodel_jail_sockbuf_charge(kauth_cred_t, uint64_t);
+void secmodel_jail_sockbuf_uncharge(kauth_cred_t, uint64_t);
 
 #define SECMODEL_JAIL_EVAL_CRED_MATCHES "cred-matches"
 

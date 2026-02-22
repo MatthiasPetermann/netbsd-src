@@ -130,6 +130,156 @@ struct jail_config {
 };
 
 /*
+ * Generic helper for jail-scoped "current + delta <= limit" admission.
+ *
+ * A limit value of zero means "unlimited" for that specific resource.
+ */
+static bool
+secmodel_jail_within_limit(uint64_t current, uint64_t delta, uint64_t limit)
+{
+
+	if (limit == 0)
+		return true;
+	if (delta > UINT64_MAX - current)
+		return false;
+	return current + delta <= limit;
+}
+
+bool
+secmodel_jail_memory_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
+{
+	struct jail_entry *entry;
+	jailid_t id;
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST)
+		return true;
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry == NULL) {
+		mutex_exit(&jail_lock);
+		return true;
+	}
+	entry->je_memory_current = current;
+	if (!secmodel_jail_within_limit(current, delta, entry->je_memory_max)) {
+		entry->je_deny_memory++;
+		mutex_exit(&jail_lock);
+		return false;
+	}
+	mutex_exit(&jail_lock);
+	return true;
+}
+
+void
+secmodel_jail_memory_set_current(kauth_cred_t cred, uint64_t current)
+{
+	struct jail_entry *entry;
+	jailid_t id;
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST)
+		return;
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry != NULL)
+		entry->je_memory_current = current;
+	mutex_exit(&jail_lock);
+}
+
+bool
+secmodel_jail_fd_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
+{
+	struct jail_entry *entry;
+	jailid_t id;
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST)
+		return true;
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry == NULL) {
+		mutex_exit(&jail_lock);
+		return true;
+	}
+	entry->je_fd_current = current;
+	if (!secmodel_jail_within_limit(current, delta, entry->je_fd_max)) {
+		entry->je_deny_fd++;
+		mutex_exit(&jail_lock);
+		return false;
+	}
+	mutex_exit(&jail_lock);
+	return true;
+}
+
+void
+secmodel_jail_fd_set_current(kauth_cred_t cred, uint64_t current)
+{
+	struct jail_entry *entry;
+	jailid_t id;
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST)
+		return;
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry != NULL)
+		entry->je_fd_current = current;
+	mutex_exit(&jail_lock);
+}
+
+bool
+secmodel_jail_sockbuf_charge(kauth_cred_t cred, uint64_t bytes)
+{
+	struct jail_entry *entry;
+	jailid_t id;
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST || bytes == 0)
+		return true;
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry == NULL) {
+		mutex_exit(&jail_lock);
+		return true;
+	}
+	if (!secmodel_jail_within_limit(entry->je_sockbuf_current, bytes,
+	    entry->je_sockbuf_max)) {
+		entry->je_deny_sockbuf++;
+		mutex_exit(&jail_lock);
+		return false;
+	}
+	entry->je_sockbuf_current += bytes;
+	mutex_exit(&jail_lock);
+	return true;
+}
+
+void
+secmodel_jail_sockbuf_uncharge(kauth_cred_t cred, uint64_t bytes)
+{
+	struct jail_entry *entry;
+	jailid_t id;
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST || bytes == 0)
+		return;
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry != NULL) {
+		if (bytes >= entry->je_sockbuf_current)
+			entry->je_sockbuf_current = 0;
+		else
+			entry->je_sockbuf_current -= bytes;
+	}
+	mutex_exit(&jail_lock);
+}
+
+/*
  * Fetch the jail id associated with a credential. The value lives in the
  * secmodel-specific kauth data slot.
  */

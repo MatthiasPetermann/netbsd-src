@@ -86,6 +86,8 @@ __KERNEL_RCSID(0, "$NetBSD: uipc_socket2.c,v 1.142 2022/10/26 23:38:09 riastradh
 #ifdef DDB
 #include <sys/filedesc.h>
 #include <ddb/db_active.h>
+
+#include <secmodel/jail/jail.h>
 #endif
 
 /*
@@ -703,6 +705,7 @@ sbreserve(struct sockbuf *sb, u_long cc, struct socket *so)
 	struct lwp *l = curlwp; /* XXX */
 	rlim_t maxcc;
 	struct uidinfo *uidinfo;
+	u_long oldcc;
 
 	KASSERT(so->so_pcb == NULL || solocked(so));
 	KASSERT(sb->sb_so == so);
@@ -710,12 +713,21 @@ sbreserve(struct sockbuf *sb, u_long cc, struct socket *so)
 
 	if (cc == 0 || cc > sb_max_adj)
 		return (0);
+	oldcc = sb->sb_hiwat;
+	if (cc > oldcc && so->so_cred != NULL &&
+	    !secmodel_jail_sockbuf_charge(so->so_cred, cc - oldcc))
+		return 0;
 
 	maxcc = l->l_proc->p_rlimit[RLIMIT_SBSIZE].rlim_cur;
 
 	uidinfo = so->so_uidinfo;
-	if (!chgsbsize(uidinfo, &sb->sb_hiwat, cc, maxcc))
+	if (!chgsbsize(uidinfo, &sb->sb_hiwat, cc, maxcc)) {
+		if (cc > oldcc && so->so_cred != NULL)
+			secmodel_jail_sockbuf_uncharge(so->so_cred, cc - oldcc);
 		return 0;
+	}
+	if (oldcc > cc && so->so_cred != NULL)
+		secmodel_jail_sockbuf_uncharge(so->so_cred, oldcc - cc);
 	sb->sb_mbmax = uimin(cc * 2, sb_max);
 	if (sb->sb_lowat > sb->sb_hiwat)
 		sb->sb_lowat = sb->sb_hiwat;
@@ -730,11 +742,15 @@ sbreserve(struct sockbuf *sb, u_long cc, struct socket *so)
 void
 sbrelease(struct sockbuf *sb, struct socket *so)
 {
+	u_long oldcc;
 
 	KASSERT(sb->sb_so == so);
+	oldcc = sb->sb_hiwat;
 
 	sbflush(sb);
 	(void)chgsbsize(so->so_uidinfo, &sb->sb_hiwat, 0, RLIM_INFINITY);
+	if (oldcc != 0 && so->so_cred != NULL)
+		secmodel_jail_sockbuf_uncharge(so->so_cred, oldcc);
 	sb->sb_mbmax = 0;
 }
 
