@@ -33,6 +33,7 @@
 #define _SECMODEL_JAIL_JAIL_H_
 
 #include <sys/types.h>
+#include <sys/kauth.h>
 
 #include <secmodel/secmodel.h>
 
