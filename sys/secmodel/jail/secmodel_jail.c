@@ -81,9 +81,10 @@ static bool	secmodel_jail_addr_port(const struct sockaddr *, in_port_t *);
 static bool	secmodel_jail_has_entries(void);
 
 /*
- * Each jail is tracked by an entry in a global list. The entry only stores the
- * jail id and is used for creation/destruction and sysctl listing. Actual
- * membership is stored per-credential via kauth specificdata.
+ * Each jail is tracked by an entry in a global list. The entry stores identity
+ * metadata, policy profile, configured resource ceilings, and live accounting
+ * counters exposed through the list sysctl. Actual process membership is stored
+ * per-credential via kauth specificdata.
  */
 struct jail_entry {
 	jailid_t je_id;

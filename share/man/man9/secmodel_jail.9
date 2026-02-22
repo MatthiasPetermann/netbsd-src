@@ -81,22 +81,12 @@ Read-only list of active jail ids and reference counts.
 .El
 .Sh RESOURCE ENFORCEMENT DESIGN
 .Nm
-applies configured limits when a process enters a jail.
-If configured, limits are translated to
-.Dv RLIMIT_CPU
-and
-.Dv RLIMIT_AS
-with
-.Xr setrlimit 2 .
-Because
-.Dv RLIMIT_CPU
-is second-granular, CPU limits configured in milliseconds are rounded up to
-the next whole second.
-This yields per-process lifetime CPU budgets rather than sustained jail-level
-CPU throughput control.
-.Pp
-Limits are not retroactively rewritten for processes that are already running
-in the jail when configuration changes occur.
+enforces jail-scoped admission checks for memory growth, process creation,
+file-descriptor allocation, and socket-buffer charging.
+CPU control is tracked per jail using quota/period windows and throttle state.
+This implementation is jail-native and not translated through
+.Xr setrlimit 2
+as the primary control path.
 .Sh OPERATIONAL LOGGING
 .Nm
 emits concise kernel log entries for high-value lifecycle events:
@@ -104,16 +94,11 @@ module load/unload and successful jail create/destroy operations.
 These messages are intended to help administrators correlate policy and
 management actions during incident analysis without excessive noise.
 .Sh BUGS
-The active resource model is
-.Xr getrlimit 2
--based and therefore process-scoped.
-It does not currently provide jail-wide aggregate accounting or enforcement.
-.Pp
-CPU limits are enforced through
-.Dv RLIMIT_CPU
-and therefore represent lifetime CPU budgets per process.
-For long-running processes this behavior is often hard to predict and does not
-map cleanly to operator expectations of sustained jail CPU quotas.
+CPU quota enforcement is currently admission-oriented:
+run-queue selection skips jailed LWPs while a jail is over quota,
+and fork admission is denied in the same state.
+The implementation does not provide strict proportional CPU partitioning or
+hard real-time style guarantees across jails.
 
 .Sh SEE ALSO
 .Xr kauth 9 ,
