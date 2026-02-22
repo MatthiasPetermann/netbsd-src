@@ -51,6 +51,9 @@ __KERNEL_RCSID(0, "$NetBSD: uvm_unix.c,v 1.51 2022/01/10 18:04:20 christos Exp $
 
 #include <sys/param.h>
 #include <sys/systm.h>
+
+#include <secmodel/secmodel.h>
+#include <secmodel/jail/jail.h>
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
 
@@ -99,10 +102,26 @@ sys_obreak(struct lwp *l, const struct sys_obreak_args *uap, register_t *retval)
 	if (nbreak > obreak) {
 		vm_prot_t prot = UVM_PROT_RW;
 		vm_prot_t maxprot;
+		vsize_t delta;
+		uint64_t current;
 		
+		delta = nbreak - obreak;
+		current = (uint64_t)vm->vm_map.size;
+		struct secmodel_jail_eval_admit_args aa;
+		bool ok;
+
+		aa.cred = l->l_cred;
+		aa.current = current;
+		aa.delta = delta;
+		if (secmodel_eval(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_EVAL_MEMORY_ADMIT, &aa, &ok) == 0 && !ok) {
+			mutex_exit(&p->p_auxlock);
+			return ENOMEM;
+		}
+
 		maxprot = PAX_MPROTECT_MAXPROTECT(l, prot, 0, UVM_PROT_ALL);
 
-		error = uvm_map(&vm->vm_map, &obreak, nbreak - obreak, NULL,
+		error = uvm_map(&vm->vm_map, &obreak, delta, NULL,
 		    UVM_UNKNOWN_OFFSET, 0,
 		    UVM_MAPFLAG(prot, maxprot,
 				UVM_INH_COPY,
@@ -116,9 +135,23 @@ sys_obreak(struct lwp *l, const struct sys_obreak_args *uap, register_t *retval)
 			mutex_exit(&p->p_auxlock);
 			return (error);
 		}
+		{
+			struct secmodel_jail_eval_set_current_args sca;
+			sca.cred = l->l_cred;
+			sca.current = (uint64_t)vm->vm_map.size;
+			(void)secmodel_eval(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT, &sca, NULL);
+		}
 		vm->vm_dsize += atop(nbreak - obreak);
 	} else {
 		uvm_deallocate(&vm->vm_map, nbreak, obreak - nbreak);
+		{
+			struct secmodel_jail_eval_set_current_args sca;
+			sca.cred = l->l_cred;
+			sca.current = (uint64_t)vm->vm_map.size;
+			(void)secmodel_eval(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT, &sca, NULL);
+		}
 		vm->vm_dsize -= atop(obreak - nbreak);
 	}
 	mutex_exit(&p->p_auxlock);

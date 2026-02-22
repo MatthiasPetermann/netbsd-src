@@ -134,15 +134,12 @@ jail_create(const struct jail_create *create)
 {
 	jailid_t id;
 	size_t len;
-	int one;
 
-	/*
-	 * Support both create ABI variants:
-	 * - structured request with metadata/limits
-	 * - legacy integer payload for bare jail-id allocation
-	 */
+	/* Structured create payload is mandatory in the jail-native ABI. */
 	id = 0;
-	if (create != NULL) {
+	if (create == NULL)
+		errx(1, "internal error: create payload is required");
+	{
 		struct jail_create req;
 
 		req = *create;
@@ -151,12 +148,6 @@ jail_create(const struct jail_create *create)
 		    &req, sizeof(req)) == -1)
 			err(1, "create jail");
 		id = req.jc_id;
-	} else {
-		len = sizeof(id);
-		one = 1;
-		if (sysctlbyname("security.models.jail.create", &id, &len,
-		    &one, sizeof(one)) == -1)
-			err(1, "create jail");
 	}
 
 	return id;
@@ -190,10 +181,13 @@ jail_list(void)
 		return;
 	}
 
-	printf("%-8s %-8s %-16s %s\n", "ID", "PROCS", "NAME", "ROOT");
+	printf("%-8s %-8s %-8s %-10s %-10s %-16s %s\n",
+	    "ID", "PROCS", "PMAX", "MEMORY", "DENYPROC", "NAME", "ROOT");
 	for (i = 0; i < count; i++) {
-		printf("%-8" PRIu32 " %-8" PRIu32 " %-16s %s\n",
+		printf("%-8" PRIu32 " %-8" PRIu32 " %-8" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-16s %s\n",
 		    entries[i].ji_id, entries[i].ji_refcount,
+		    entries[i].ji_proc_max, entries[i].ji_memory_max,
+		    entries[i].ji_deny_proc,
 		    entries[i].ji_name[0] != '\0' ? entries[i].ji_name : "-",
 		    entries[i].ji_root[0] != '\0' ? entries[i].ji_root : "-");
 	}
@@ -845,23 +839,55 @@ main(int argc, char *argv[])
 		name = NULL;
 		create.jc_profile = JAIL_PROFILE_HIGH;
 		optind = 2;
-		while ((ch = getopt(argc, argv, "c:m:n:p:r:")) != -1) {
+		while ((ch = getopt(argc, argv, "q:C:M:P:F:S:n:p:r:")) != -1) {
 			switch (ch) {
-			case 'c':
+			case 'q':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
 				if (errno != 0 || *endp != '\0')
-					errx(1, "invalid cpu limit: %s", optarg);
-				create.jc_flags |= JAIL_CREATE_CPULIMIT;
-				create.jc_cpu_limit = num;
+					errx(1, "invalid cpu quota: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_CPU_QUOTA;
+				create.jc_cpu_quota = num;
 				break;
-			case 'm':
+			case 'C':
 				errno = 0;
 				num = strtoumax(optarg, &endp, 0);
 				if (errno != 0 || *endp != '\0')
-					errx(1, "invalid memory limit: %s", optarg);
-				create.jc_flags |= JAIL_CREATE_MEMLIMIT;
-				create.jc_mem_limit = num;
+					errx(1, "invalid cpu period: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_CPU_PERIOD;
+				create.jc_cpu_period = num;
+				break;
+			case 'M':
+				errno = 0;
+				num = strtoumax(optarg, &endp, 0);
+				if (errno != 0 || *endp != '\0')
+					errx(1, "invalid memory.max: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_MEMORY_MAX;
+				create.jc_memory_max = num;
+				break;
+			case 'P':
+				errno = 0;
+				num = strtoumax(optarg, &endp, 0);
+				if (errno != 0 || *endp != '\0')
+					errx(1, "invalid proc.max: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_PROC_MAX;
+				create.jc_proc_max = num;
+				break;
+			case 'F':
+				errno = 0;
+				num = strtoumax(optarg, &endp, 0);
+				if (errno != 0 || *endp != '\0')
+					errx(1, "invalid fd.max: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_FD_MAX;
+				create.jc_fd_max = num;
+				break;
+			case 'S':
+				errno = 0;
+				num = strtoumax(optarg, &endp, 0);
+				if (errno != 0 || *endp != '\0')
+					errx(1, "invalid sockbuf.max: %s", optarg);
+				create.jc_flags |= JAIL_CREATE_SOCKBUF_MAX;
+				create.jc_sockbuf_max = num;
 				break;
 			case 'n':
 				name = optarg;
@@ -877,6 +903,10 @@ main(int argc, char *argv[])
 				usage();
 			}
 		}
+
+		if (((create.jc_flags & JAIL_CREATE_CPU_QUOTA) != 0) !=
+		    ((create.jc_flags & JAIL_CREATE_CPU_PERIOD) != 0))
+			errx(1, "cpu.quota and cpu.period must be provided together");
 
 		if (optind >= argc || name == NULL || argc != optind + 1)
 			usage();
@@ -973,7 +1003,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-c cpu-ms] [-m bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>\n"
+	    "usage: %s create [-q cpu.quota -C cpu.period] [-M memory.max-bytes] [-P proc.max] [-F fd.max] [-S sockbuf.max-bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>\n"
 	    "       %s supervise [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"

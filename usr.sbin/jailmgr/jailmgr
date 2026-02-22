@@ -130,7 +130,10 @@ Usage: $0 <command> [args]
 
 Commands:
   bootstrap                   Download sets and build shared base layer
-  create [-a] [-s cmd] [-c cpu-percent] [-m memory-mb] [-p profile] [-r port[,port...]] [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <name>
+  create [-a] [-s cmd] [-q cpu.quota] [-C cpu.period]
+         [-M memory.max-bytes] [-P proc.max] [-F fd.max]
+         [-S sockbuf.max-bytes] [-p profile] [-r port[,port...]]
+         [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <name>
                               Create jail instance directories and persist jail.conf
   start <name>                Mount jail root and supervise jail via jailctl
   start --all                 Start all configured jails
@@ -157,32 +160,6 @@ is_uint() {
 		return 0
 		;;
 	esac
-}
-
-cpu_percent_to_ms() {
-	cpu_percent=$1
-	if ! is_uint "${cpu_percent}"; then
-		echo "cpu percent (-c) must be an integer (0-100)" >&2
-		exit 1
-	fi
-	if [ "${cpu_percent}" -gt 100 ]; then
-		echo "cpu percent (-c) must be in range 0-100" >&2
-		exit 1
-	fi
-
-	# secmodel_jail limits CPU in milliseconds per one-second window.
-	# 1% == 10ms/s, 25% == 250ms/s, 100% == 1000ms/s.
-	printf '%s' $((cpu_percent * 10))
-}
-
-memory_mb_to_bytes() {
-	memory_mb=$1
-	if ! is_uint "${memory_mb}"; then
-		echo "memory limit (-m) must be an integer megabyte count" >&2
-		exit 1
-	fi
-
-	printf '%s' $((memory_mb * 1024 * 1024))
 }
 
 # Guard helper used by all mutating operations; jail lifecycle changes are
@@ -351,8 +328,12 @@ load_jail_conf() {
 
 	JAIL_NAME=
 	JAIL_SUPERVISE_CMD=
-	JAIL_CREATE_CPU_MS=
-	JAIL_CREATE_MEMORY_MB=
+	JAIL_CREATE_CPU_QUOTA=
+	JAIL_CREATE_CPU_PERIOD=
+		JAIL_CREATE_MEMORY_MAX=
+	JAIL_CREATE_PROC_MAX=
+	JAIL_CREATE_FD_MAX=
+	JAIL_CREATE_SOCKBUF_MAX=
 	JAIL_CREATE_PROFILE=
 	JAIL_CREATE_RESERVED_PORTS=
 	JAIL_SUPERVISE_FACILITY=
@@ -471,14 +452,18 @@ create_jail() {
 	name=$1
 	autostart=${2:-NO}
 	supervise_cmd=${3:-/bin/sleep 60}
-	create_cpu_ms=${4:-}
-	create_memory_mb=${5:-}
-	create_profile=${6:-}
-	create_reserved_ports=${7:-}
-	supervise_facility=${8:-}
-	supervise_stdout_level=${9:-}
-	supervise_stderr_level=${10:-}
-	supervise_tag=${11:-}
+	create_cpu_quota=${4:-}
+	create_cpu_period=${5:-}
+	create_memory_max=${6:-}
+	create_proc_max=${7:-}
+	create_fd_max=${8:-}
+	create_sockbuf_max=${9:-}
+	create_profile=${10:-}
+	create_reserved_ports=${11:-}
+	supervise_facility=${12:-}
+	supervise_stdout_level=${13:-}
+	supervise_stderr_level=${14:-}
+	supervise_tag=${15:-}
 	escaped_create_profile=$(escape_dq "${create_profile}")
 	escaped_create_reserved_ports=$(escape_dq "${create_reserved_ports}")
 	escaped_supervise_cmd=$(escape_dq "${supervise_cmd}")
@@ -499,9 +484,13 @@ JAIL_NAME=${name}
 JAIL_RELEASE=${RELEASE}
 JAIL_ARCH=${MACHINE_ARCH}
 JAIL_AUTOSTART=${autostart}
-# Optional jailctl create(8) resource controls:
-JAIL_CREATE_CPU_MS="${create_cpu_ms}"
-JAIL_CREATE_MEMORY_MB="${create_memory_mb}"
+# Optional jailctl create(8) resource controls (jail-native ABI fields):
+JAIL_CREATE_CPU_QUOTA="${create_cpu_quota}"
+JAIL_CREATE_CPU_PERIOD="${create_cpu_period}"
+JAIL_CREATE_MEMORY_MAX="${create_memory_max}"
+JAIL_CREATE_PROC_MAX="${create_proc_max}"
+JAIL_CREATE_FD_MAX="${create_fd_max}"
+JAIL_CREATE_SOCKBUF_MAX="${create_sockbuf_max}"
 JAIL_CREATE_PROFILE="${escaped_create_profile}"
 JAIL_CREATE_RESERVED_PORTS="${escaped_create_reserved_ports}"
 # Optional jailctl supervise(8) logging controls:
@@ -518,7 +507,7 @@ CONF
 
 jail_exists() {
 	name=$1
-	jailctl list | awk -v n="${name}" '$3==n{found=1} END{exit !found}'
+	jailctl list | awk -v n="${name}" '$6==n{found=1} END{exit !found}'
 }
 
 # Start sequence: load config, mount root overlays, allocate kernel jail ID
@@ -542,7 +531,7 @@ start_jail_internal() {
 	mount_jail_root
 
 	if jail_exists "${name}"; then
-		jid=$(jailctl list | awk -v n="${name}" '$3==n{print $1; exit}')
+		jid=$(jailctl list | awk -v n="${name}" '$6==n{print $1; exit}')
 		if [ "${supervise}" != "YES" ]; then
 			echo "Jail ${name} already running"
 			return
@@ -555,11 +544,25 @@ start_jail_internal() {
 		fi
 	else
 		set -- jailctl create -n "${name}"
-		if [ -n "${JAIL_CREATE_CPU_MS:-}" ]; then
-			set -- "$@" -c "${JAIL_CREATE_CPU_MS}"
+		# Persisted jailmgr values map 1:1 to jailctl create options so
+		# operators can reason about policy without hidden unit conversion.
+		if [ -n "${JAIL_CREATE_CPU_QUOTA:-}" ]; then
+			set -- "$@" -q "${JAIL_CREATE_CPU_QUOTA}"
 		fi
-		if [ -n "${JAIL_CREATE_MEMORY_MB:-}" ]; then
-			set -- "$@" -m "$(memory_mb_to_bytes "${JAIL_CREATE_MEMORY_MB}")"
+		if [ -n "${JAIL_CREATE_CPU_PERIOD:-}" ]; then
+			set -- "$@" -C "${JAIL_CREATE_CPU_PERIOD}"
+		fi
+		if [ -n "${JAIL_CREATE_MEMORY_MAX:-}" ]; then
+			set -- "$@" -M "${JAIL_CREATE_MEMORY_MAX}"
+		fi
+		if [ -n "${JAIL_CREATE_PROC_MAX:-}" ]; then
+			set -- "$@" -P "${JAIL_CREATE_PROC_MAX}"
+		fi
+		if [ -n "${JAIL_CREATE_FD_MAX:-}" ]; then
+			set -- "$@" -F "${JAIL_CREATE_FD_MAX}"
+		fi
+		if [ -n "${JAIL_CREATE_SOCKBUF_MAX:-}" ]; then
+			set -- "$@" -S "${JAIL_CREATE_SOCKBUF_MAX}"
 		fi
 		if [ -n "${JAIL_CREATE_PROFILE:-}" ]; then
 			set -- "$@" -p "${JAIL_CREATE_PROFILE}"
@@ -609,7 +612,7 @@ stop_jail() {
 	name=$1
 
 	if jail_exists "${name}"; then
-		jid=$(jailctl list | awk -v n="${name}" '$3==n{print $1}')
+		jid=$(jailctl list | awk -v n="${name}" '$6==n{print $1}')
 		stop_jail_processes "${name}" "${jid}"
 		jailctl destroy "${jid}"
 		echo "Destroyed jail ${name} (jid ${jid})"
@@ -653,7 +656,7 @@ stop_all() {
 
 jail_jid_by_name() {
 	name=$1
-	jailctl list | awk -v n="${name}" '$3==n{print $1; exit}'
+	jailctl list | awk -v n="${name}" '$6==n{print $1; exit}'
 }
 
 require_apply_tools() {
@@ -839,8 +842,12 @@ case "${cmd}" in
 	create)
 		autostart=NO
 		supervise_cmd="/bin/sleep 60"
-		create_cpu_ms=
-		create_memory_mb=
+		create_cpu_quota=
+		create_cpu_period=
+		create_memory_max=
+		create_proc_max=
+		create_fd_max=
+		create_sockbuf_max=
 		create_profile=
 		create_reserved_ports=
 		supervise_facility=
@@ -859,23 +866,82 @@ case "${cmd}" in
 				supervise_cmd=$2
 				shift 2
 				;;
-			-c)
+			-q)
 				[ $# -ge 2 ] || { usage; exit 1; }
-				[ -z "${create_cpu_ms}" ] || {
-					echo "cpu percent (-c) may be provided only once" >&2
+				[ -z "${create_cpu_quota}" ] || {
+					echo "cpu quota (-q) may be provided only once" >&2
 					exit 1
 				}
-				create_cpu_ms=$(cpu_percent_to_ms "$2")
+				is_uint "$2" || {
+					echo "cpu quota (-q) must be an integer" >&2
+					exit 1
+				}
+				create_cpu_quota=$2
 				shift 2
 				;;
-			-m)
+			-C)
 				[ $# -ge 2 ] || { usage; exit 1; }
-				[ -z "${create_memory_mb}" ] || {
-					echo "memory limit (-m) may be provided only once" >&2
+				[ -z "${create_cpu_period}" ] || {
+					echo "cpu period (-C) may be provided only once" >&2
 					exit 1
 				}
-				memory_mb_to_bytes "$2" >/dev/null
-				create_memory_mb=$2
+				is_uint "$2" || {
+					echo "cpu period (-C) must be an integer" >&2
+					exit 1
+				}
+				create_cpu_period=$2
+				shift 2
+				;;
+			-M)
+				[ $# -ge 2 ] || { usage; exit 1; }
+				[ -z "${create_memory_max}" ] || {
+					echo "memory.max (-M) may be provided only once" >&2
+					exit 1
+				}
+				is_uint "$2" || {
+					echo "memory.max (-M) must be an integer" >&2
+					exit 1
+				}
+				create_memory_max=$2
+				shift 2
+				;;
+			-P)
+				[ $# -ge 2 ] || { usage; exit 1; }
+				[ -z "${create_proc_max}" ] || {
+					echo "proc.max (-P) may be provided only once" >&2
+					exit 1
+				}
+				is_uint "$2" || {
+					echo "proc.max (-P) must be an integer" >&2
+					exit 1
+				}
+				create_proc_max=$2
+				shift 2
+				;;
+			-F)
+				[ $# -ge 2 ] || { usage; exit 1; }
+				[ -z "${create_fd_max}" ] || {
+					echo "fd.max (-F) may be provided only once" >&2
+					exit 1
+				}
+				is_uint "$2" || {
+					echo "fd.max (-F) must be an integer" >&2
+					exit 1
+				}
+				create_fd_max=$2
+				shift 2
+				;;
+			-S)
+				[ $# -ge 2 ] || { usage; exit 1; }
+				[ -z "${create_sockbuf_max}" ] || {
+					echo "sockbuf.max (-S) may be provided only once" >&2
+					exit 1
+				}
+				is_uint "$2" || {
+					echo "sockbuf.max (-S) must be an integer" >&2
+					exit 1
+				}
+				create_sockbuf_max=$2
 				shift 2
 				;;
 			-p)
@@ -921,10 +987,18 @@ case "${cmd}" in
 			usage
 			exit 1
 		fi
+		if { [ -n "${create_cpu_quota}" ] && [ -z "${create_cpu_period}" ]; } ||
+		   { [ -z "${create_cpu_quota}" ] && [ -n "${create_cpu_period}" ]; }; then
+			echo "cpu quota (-q) and cpu period (-C) must be specified together" >&2
+			exit 1
+		fi
 		name=$1
 		create_jail "${name}" "${autostart}" "${supervise_cmd}" \
-		    "${create_cpu_ms}" "${create_memory_mb}" \
-		    "${create_profile}" "${create_reserved_ports}" \
+		    "${create_cpu_quota}" "${create_cpu_period}" \
+		    "${create_memory_max}" "${create_proc_max}" \
+		    "${create_fd_max}" "${create_sockbuf_max}" \
+		    "${create_profile}" \
+		    "${create_reserved_ports}" \
 		    "${supervise_facility}" "${supervise_stdout_level}" \
 		    "${supervise_stderr_level}" "${supervise_tag}"
 		;;

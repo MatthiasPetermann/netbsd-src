@@ -49,8 +49,8 @@ future ideas (see section 8).
   - jail ID
   - jail name
   - jail root metadata
-  - optional CPU limit (ms; mapped to RLIMIT_CPU seconds)
-  - optional memory limit (bytes; mapped to RLIMIT_AS)
+  - optional CPU quota+period window policy
+  - optional memory.max (bytes)
   - profile (low/medium/high)
   - optional reserved listening-port set
 
@@ -81,13 +81,13 @@ future ideas (see section 8).
 - Port 0 (ephemeral assignment) is not reservation-restricted.
 
 3.6 Resource enforcement semantics (active implementation)
-- Resource controls are RLIMIT-based only.
-- On jail entry, configured per-jail limits are applied to the entering
-  process:
-  - CPU limit -> RLIMIT_CPU (rounded from milliseconds to whole seconds)
-  - memory limit -> RLIMIT_AS (bytes)
-- No jail-wide aggregate accounting mode is active.
-- No resource mode switch sysctl exists in the active model.
+- Resource controls are jail-scoped.
+- Active admission checks:
+  - vmspace growth/mmap/brk for memory.max
+  - fork/clone for proc.max
+  - file-descriptor allocation for fd.max
+  - socket buffer charging for sockbuf.max
+- CPU control uses per-jail quota/period windows with throttle state.
 
 3.7 Credential lifecycle behavior
 - New credentials initialize with jail ID 0.
@@ -189,10 +189,10 @@ of the active code anymore.
 
 9. Resource-model hardening roadmap
 -----------------------------------
-This section describes a practical migration path from the current
-per-process RLIMIT model to jail-scoped, operator-comprehensible controls.
+This section describes the migration path from the former RLIMIT-only model
+to jail-scoped, operator-comprehensible controls.
 
-9.1 Problem statement in current model
+9.1 Problem statement in former model
 - CPU control is based on RLIMIT_CPU, which tracks cumulative CPU time consumed
   by each process over its lifetime.
 - This behaves as a one-shot budget per process, not as a sustained throughput
@@ -227,9 +227,8 @@ per-process RLIMIT model to jail-scoped, operator-comprehensible controls.
 
 9.4 CPU control redesign
 - Replace RLIMIT_CPU-as-primary with a scheduler-backed jail CPU controller.
-- Model CPU policy as either:
-  - weighted shares (relative fairness), and/or
-  - quota+period (absolute cap per time window, similar to token bucket).
+- Model CPU policy as quota+period (absolute cap per time window, similar to
+  token bucket).
 - Maintain runnable-time accounting per jail and enforce continuously
   per period, so limits represent sustained usage rather than lifetime budget.
 - Expose jail CPU usage and throttling statistics for observability.
@@ -244,7 +243,7 @@ per-process RLIMIT model to jail-scoped, operator-comprehensible controls.
 
 9.6 Userland/control-plane changes
 - Extend jail create payload and list output with jail-scoped resource policy:
-  - cpu.weight, cpu.quota, cpu.period
+  - cpu.quota, cpu.period
   - memory.max
   - proc.max
   - fd.max
@@ -257,7 +256,7 @@ per-process RLIMIT model to jail-scoped, operator-comprehensible controls.
 9.7 Three-phase implementation plan (clean jail-native rollout)
 - Phase A (control-plane and observability foundation)
   - Add jail-scoped policy fields to the create/list ABI and sysctl payloads:
-    - cpu.quota, cpu.period, optional cpu.weight
+    - cpu.quota, cpu.period
     - memory.max
     - proc.max, fd.max, sockbuf.max (as staged fields)
   - Store these values in secmodel_jail-owned per-jail state bound to jail
@@ -273,8 +272,8 @@ per-process RLIMIT model to jail-scoped, operator-comprehensible controls.
     - file-descriptor allocation for fd.max
     - socket buffer charging for sockbuf.max
   - Implement scheduler-backed CPU control for sustained limits over windows:
-    - quota+period as primary absolute cap model
-    - optional weight mode for relative fairness
+    - Stage 1: low-overhead per-jail CPU usage accounting
+    - Stage 2: quota+period window enforcement with throttle counters
   - Export throttle/deny counters and recent pressure signals for diagnostics.
 
 - Phase C (default switch and compatibility tightening)

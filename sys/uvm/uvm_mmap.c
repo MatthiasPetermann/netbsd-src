@@ -61,6 +61,9 @@ __KERNEL_RCSID(0, "$NetBSD: uvm_mmap.c,v 1.184 2022/07/07 11:29:18 rin Exp $");
 
 #include <sys/syscallargs.h>
 
+#include <secmodel/secmodel.h>
+#include <secmodel/jail/jail.h>
+
 #include <uvm/uvm.h>
 #include <uvm/uvm_device.h>
 
@@ -422,12 +425,36 @@ sys_mmap(struct lwp *l, const struct sys_mmap_args *uap, register_t *retval)
 		if (uobj)
 			(*uobj->pgops->pgo_reference)(uobj);
 	}
+	{
+		struct secmodel_jail_eval_admit_args aa;
+		bool ok;
+		aa.cred = l->l_cred;
+		aa.current = (uint64_t)p->p_vmspace->vm_map.size;
+		aa.delta = (uint64_t)size;
+		if (secmodel_eval(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_EVAL_MEMORY_ADMIT, &aa, &ok) == 0 && !ok) {
+			error = ENOMEM;
+			goto out;
+		}
+	}
 	error = uvm_mmap(&p->p_vmspace->vm_map, &addr, size, prot, maxprot,
 	    flags, advice, uobj, pos, p->p_rlimit[RLIMIT_MEMLOCK].rlim_cur);
 	if (addrhint) {
 		if (error) {
 			addr = defaddr;
 			pax_aslr_mmap(l, &addr, orig_addr, flags);
+			{
+				struct secmodel_jail_eval_admit_args aa;
+				bool ok;
+				aa.cred = l->l_cred;
+				aa.current = (uint64_t)p->p_vmspace->vm_map.size;
+				aa.delta = (uint64_t)size;
+				if (secmodel_eval(SECMODEL_JAIL_ID,
+				    SECMODEL_JAIL_EVAL_MEMORY_ADMIT, &aa, &ok) == 0 && !ok) {
+					error = ENOMEM;
+					goto out;
+				}
+			}
 			error = uvm_mmap(&p->p_vmspace->vm_map, &addr, size,
 			    prot, maxprot, flags, advice, uobj, pos,
 			    p->p_rlimit[RLIMIT_MEMLOCK].rlim_cur);
@@ -435,6 +462,13 @@ sys_mmap(struct lwp *l, const struct sys_mmap_args *uap, register_t *retval)
 			/* Release the exta reference we took.  */
 			(*uobj->pgops->pgo_detach)(uobj);
 		}
+	}
+	if (error == 0) {
+		struct secmodel_jail_eval_set_current_args sca;
+		sca.cred = l->l_cred;
+		sca.current = (uint64_t)p->p_vmspace->vm_map.size;
+		(void)secmodel_eval(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT, &sca, NULL);
 	}
 
 	/* remember to add offset */
