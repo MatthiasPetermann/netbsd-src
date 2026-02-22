@@ -82,13 +82,12 @@ __KERNEL_RCSID(0, "$NetBSD: uipc_socket2.c,v 1.142 2022/10/26 23:38:09 riastradh
 #include <sys/kauth.h>
 #include <sys/pool.h>
 #include <sys/uidinfo.h>
+#include <secmodel/secmodel.h>
+#include <secmodel/jail/jail.h>
 
 #ifdef DDB
 #include <sys/filedesc.h>
 #include <ddb/db_active.h>
-
-#include <secmodel/secmodel.h>
-#include <secmodel/jail/jail.h>
 #endif
 
 /*
