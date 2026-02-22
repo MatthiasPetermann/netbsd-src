@@ -46,6 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/systm.h>
 #include <sys/syslog.h>
 #include <sys/jail.h>
+#include <sys/callout.h>
 
 #include <netinet/in.h>
 
@@ -90,7 +91,6 @@ struct jail_entry {
 	char je_root[JAIL_ROOT_MAX + 1];
 	uint64_t je_cpu_quota;
 	uint64_t je_cpu_period;
-	uint64_t je_cpu_weight;
 	uint64_t je_memory_max;
 	uint64_t je_proc_max;
 	uint64_t je_fd_max;
@@ -101,6 +101,10 @@ struct jail_entry {
 	uint64_t je_sockbuf_current;
 	uint64_t je_memory_current;
 	uint64_t je_cpu_usage;
+	uint64_t je_cpu_used_window;
+	uint64_t je_cpu_total_ticks;
+	time_t je_cpu_window_start;
+	bool je_cpu_over_quota;
 	uint64_t je_deny_proc;
 	uint64_t je_deny_fd;
 	uint64_t je_deny_sockbuf;
@@ -115,13 +119,14 @@ static LIST_HEAD(, jail_entry) jail_list =
     LIST_HEAD_INITIALIZER(jail_list);
 static kmutex_t jail_lock;
 static jailid_t jail_next_id = 1;
+static struct callout jail_cpu_account_ch;
 
 static struct jail_entry *secmodel_jail_lookup(jailid_t);
+static void secmodel_jail_cpu_account_tick(void *);
 
 struct jail_config {
 	uint64_t jc_cpu_quota;
 	uint64_t jc_cpu_period;
-	uint64_t jc_cpu_weight;
 	uint64_t jc_memory_max;
 	uint64_t jc_proc_max;
 	uint64_t jc_fd_max;
@@ -143,6 +148,84 @@ secmodel_jail_within_limit(uint64_t current, uint64_t delta, uint64_t limit)
 	if (delta > UINT64_MAX - current)
 		return false;
 	return current + delta <= limit;
+}
+
+/*
+ * Stage 1 + 2 CPU controller:
+ * - Stage 1: account per-jail CPU ticks from process statclock counters.
+ * - Stage 2: maintain quota/period windows and an over-quota state that is
+ *   consumed by admission checks (currently fork-time throttling gate).
+ *
+ * The sampling cadence is low (1Hz) to keep overhead bounded and avoid adding
+ * scheduler hot-path lock contention.
+ */
+static void
+secmodel_jail_cpu_account_tick(void *arg)
+{
+	struct jail_entry *entry;
+	struct proc *p;
+	time_t now;
+	uint64_t ticks;
+	jailid_t id;
+
+	(void)arg;
+	now = time_second;
+
+	mutex_enter(&jail_lock);
+	LIST_FOREACH(entry, &jail_list, je_entry) {
+		entry->je_cpu_total_ticks = 0;
+	}
+	mutex_exit(&jail_lock);
+
+	mutex_enter(&proc_lock);
+	PROCLIST_FOREACH(p, &allproc) {
+		id = secmodel_jail_cred_id(p->p_cred);
+		if (id == JAILID_HOST)
+			continue;
+		ticks = p->p_uticks + p->p_sticks + p->p_iticks;
+
+		mutex_enter(&jail_lock);
+		entry = secmodel_jail_lookup(id);
+		if (entry != NULL)
+			entry->je_cpu_total_ticks += ticks;
+		mutex_exit(&jail_lock);
+	}
+	mutex_exit(&proc_lock);
+
+	mutex_enter(&jail_lock);
+	LIST_FOREACH(entry, &jail_list, je_entry) {
+		uint64_t delta_ticks;
+		time_t period_s;
+
+		delta_ticks = 0;
+		if (entry->je_cpu_total_ticks >= entry->je_cpu_usage)
+			delta_ticks = entry->je_cpu_total_ticks - entry->je_cpu_usage;
+		entry->je_cpu_usage = entry->je_cpu_total_ticks;
+
+		if (entry->je_cpu_quota == 0 || entry->je_cpu_period == 0)
+			continue;
+
+		period_s = (time_t)((entry->je_cpu_period + 999999ULL) / 1000000ULL);
+		if (period_s <= 0)
+			period_s = 1;
+
+		if (entry->je_cpu_window_start == 0 ||
+		    now - entry->je_cpu_window_start >= period_s) {
+			entry->je_cpu_window_start = now;
+			entry->je_cpu_used_window = 0;
+			entry->je_cpu_over_quota = false;
+		}
+
+		entry->je_cpu_used_window += delta_ticks;
+		if (entry->je_cpu_used_window >= entry->je_cpu_quota) {
+			if (!entry->je_cpu_over_quota)
+				entry->je_throttle_cpu++;
+			entry->je_cpu_over_quota = true;
+		}
+	}
+	mutex_exit(&jail_lock);
+
+	callout_schedule(&jail_cpu_account_ch, hz);
 }
 
 static bool
@@ -258,7 +341,32 @@ secmodel_jail_sockbuf_charge(kauth_cred_t cred, uint64_t bytes)
 	return true;
 }
 
-void
+static bool
+secmodel_jail_cpu_can_run(kauth_cred_t cred)
+{
+	struct jail_entry *entry;
+	jailid_t id;
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST)
+		return true;
+
+	mutex_enter(&jail_lock);
+	entry = secmodel_jail_lookup(id);
+	if (entry == NULL) {
+		mutex_exit(&jail_lock);
+		return true;
+	}
+	if (entry->je_cpu_over_quota) {
+		entry->je_throttle_cpu++;
+		mutex_exit(&jail_lock);
+		return false;
+	}
+	mutex_exit(&jail_lock);
+	return true;
+}
+
+static void
 secmodel_jail_sockbuf_uncharge(kauth_cred_t cred, uint64_t bytes)
 {
 	struct jail_entry *entry;
@@ -410,8 +518,7 @@ secmodel_jail_get_config(jailid_t id, struct jail_config *config)
 	}
 	config->jc_cpu_quota = entry->je_cpu_quota;
 	config->jc_cpu_period = entry->je_cpu_period;
-	config->jc_cpu_weight = entry->je_cpu_weight;
-	config->jc_memory_max = entry->je_memory_max;
+		config->jc_memory_max = entry->je_memory_max;
 	config->jc_proc_max = entry->je_proc_max;
 	config->jc_fd_max = entry->je_fd_max;
 	config->jc_sockbuf_max = entry->je_sockbuf_max;
@@ -476,8 +583,7 @@ secmodel_jail_create(const struct jail_create *create,
 	if (config != NULL) {
 		entry->je_cpu_quota = config->jc_cpu_quota;
 		entry->je_cpu_period = config->jc_cpu_period;
-		entry->je_cpu_weight = config->jc_cpu_weight;
-		entry->je_memory_max = config->jc_memory_max;
+				entry->je_memory_max = config->jc_memory_max;
 		entry->je_proc_max = config->jc_proc_max;
 		entry->je_fd_max = config->jc_fd_max;
 		entry->je_sockbuf_max = config->jc_sockbuf_max;
@@ -719,8 +825,7 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 		flags = create.jc_flags;
 		if ((flags & ~(JAIL_CREATE_CPU_QUOTA |
 		    JAIL_CREATE_CPU_PERIOD |
-		    JAIL_CREATE_CPU_WEIGHT |
-		    JAIL_CREATE_MEMORY_MAX |
+				    JAIL_CREATE_MEMORY_MAX |
 		    JAIL_CREATE_PROC_MAX |
 		    JAIL_CREATE_FD_MAX |
 		    JAIL_CREATE_SOCKBUF_MAX |
@@ -771,8 +876,6 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 				return EINVAL;
 			config.jc_cpu_period = create.jc_cpu_period;
 		}
-		if ((flags & JAIL_CREATE_CPU_WEIGHT) != 0)
-			config.jc_cpu_weight = create.jc_cpu_weight;
 		if ((flags & JAIL_CREATE_MEMORY_MAX) != 0) {
 			if (create.jc_memory_max == 0)
 				return EINVAL;
@@ -936,7 +1039,6 @@ secmodel_jail_sysctl_list(SYSCTLFN_ARGS)
 		entries[i].ji_refcount = 0;
 		entries[i].ji_cpu_quota = entry->je_cpu_quota;
 		entries[i].ji_cpu_period = entry->je_cpu_period;
-		entries[i].ji_cpu_weight = entry->je_cpu_weight;
 		entries[i].ji_memory_max = entry->je_memory_max;
 		entries[i].ji_proc_max = entry->je_proc_max;
 		entries[i].ji_fd_max = entry->je_fd_max;
@@ -1077,6 +1179,7 @@ void
 secmodel_jail_init(void)
 {
 	mutex_init(&jail_lock, MUTEX_DEFAULT, IPL_NONE);
+	callout_init(&jail_cpu_account_ch, CALLOUT_MPSAFE);
 	if (kauth_register_key(jail_sm, &jail_key) != 0)
 		printf("secmodel_jail: unable to register kauth key\n");
 }
@@ -1095,6 +1198,7 @@ secmodel_jail_start(void)
 	    secmodel_jail_system_cb, NULL);
 	l_network = kauth_listen_scope(KAUTH_SCOPE_NETWORK,
 	    secmodel_jail_network_cb, NULL);
+	callout_schedule(&jail_cpu_account_ch, hz);
 }
 
 /*
@@ -1109,6 +1213,8 @@ secmodel_jail_stop(void)
 	kauth_unlisten_scope(l_cred);
 	kauth_unlisten_scope(l_system);
 	kauth_unlisten_scope(l_network);
+	callout_halt(&jail_cpu_account_ch, NULL);
+	callout_destroy(&jail_cpu_account_ch);
 	kauth_deregister_key(jail_key);
 
 	mutex_enter(&jail_lock);
@@ -1284,6 +1390,11 @@ secmodel_jail_process_cb(kauth_cred_t cred, kauth_action_t action,
 		mutex_enter(&jail_lock);
 		entry = secmodel_jail_lookup(id);
 		if (entry != NULL) {
+			if (entry->je_cpu_over_quota) {
+				entry->je_throttle_cpu++;
+				mutex_exit(&jail_lock);
+				return KAUTH_RESULT_DENY;
+			}
 			entry->je_proc_current = current;
 			if (entry->je_proc_max != 0 && current >= entry->je_proc_max) {
 				entry->je_deny_proc++;
@@ -1339,6 +1450,7 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 	const struct secmodel_jail_eval_admit_args *aa;
 	const struct secmodel_jail_eval_set_current_args *sca;
 	const struct secmodel_jail_eval_sockbuf_charge_args *sba;
+	const struct secmodel_jail_eval_cpu_can_run_args *cra;
 	bool *matchp;
 	bool *okp;
 
@@ -1406,6 +1518,15 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 			return EINVAL;
 		sba = arg;
 		secmodel_jail_sockbuf_uncharge(sba->cred, sba->bytes);
+		return 0;
+	}
+
+	if (strcasecmp(what, SECMODEL_JAIL_EVAL_CPU_CAN_RUN) == 0) {
+		if (arg == NULL || ret == NULL)
+			return EINVAL;
+		cra = arg;
+		okp = ret;
+		*okp = secmodel_jail_cpu_can_run(cra->cred);
 		return 0;
 	}
 

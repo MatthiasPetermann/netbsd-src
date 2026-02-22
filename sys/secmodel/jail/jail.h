@@ -62,6 +62,7 @@ bool secmodel_jail_cred_matches(kauth_cred_t, const char *);
 #define SECMODEL_JAIL_EVAL_FD_SET_CURRENT "fd-set-current"
 #define SECMODEL_JAIL_EVAL_SOCKBUF_CHARGE "sockbuf-charge"
 #define SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE "sockbuf-uncharge"
+#define SECMODEL_JAIL_EVAL_CPU_CAN_RUN "cpu-can-run"
 
 struct secmodel_jail_eval_cred_matches_args {
 	kauth_cred_t cred;
@@ -82,6 +83,10 @@ struct secmodel_jail_eval_set_current_args {
 struct secmodel_jail_eval_sockbuf_charge_args {
 	kauth_cred_t cred;
 	uint64_t bytes;
+};
+
+struct secmodel_jail_eval_cpu_can_run_args {
+	kauth_cred_t cred;
 };
 
 #endif /* !_SECMODEL_JAIL_JAIL_H_ */

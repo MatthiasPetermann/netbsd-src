@@ -88,7 +88,7 @@ Then
 extract
 .Pa base.tar.xz
 into the configured shared base layer directory.
-.It Cm create Op Fl a Op Fl s Ar cmd Op Fl c Ar cpu-percent Op Fl m Ar memory-mb Op Fl p Ar profile Op Fl r Ar port[,port...] Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar name
+.It Cm create Op Fl a Op Fl s Ar cmd Op Fl q Ar cpu.quota Op Fl C Ar cpu.period Op Fl M Ar memory.max-bytes Op Fl P Ar proc.max Op Fl F Ar fd.max Op Fl S Ar sockbuf.max-bytes Op Fl p Ar profile Op Fl r Ar port[,port...] Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar name
 Create directories and metadata for one jail:
 .Pa root ,
 .Pa data ,
@@ -136,35 +136,26 @@ is provided,
 is initialized to the specified command string in the generated
 .Pa jail.conf .
 When
-.Fl c
-.Pq cpu percent from 0 to 100
-is provided,
-the generated
-.Pa jail.conf
-stores the corresponding create-time CPU limit used by
-.Xr jailctl 8
-.Pq internally converted to milliseconds per second; 1% = 10ms/s .
-The resulting create-time value is translated by
-.Xr secmodel_jail 9
-to
-.Dv RLIMIT_CPU
-when a process enters the jail,
-rounded up to whole seconds and enforced as per-process consumed CPU time
-(lifetime budget, not wall clock time).
-This is not a sustained jail CPU quota.
-When
-.Fl m
-.Pq megabytes
-is provided,
-the generated
-.Pa jail.conf
-stores the corresponding create-time memory value in megabytes in
-.Pa jail.conf .
+.Fl q
+and
+.Fl C
+are provided,
 .Nm
-converts this value to bytes when invoking
+persists jail CPU quota and period window values and forwards them unchanged to
 .Xr jailctl 8
-.Cm create Fl m
-at start time .
+at start time.
+When
+.Fl M ,
+.Fl P ,
+.Fl F ,
+and
+.Fl S
+are provided,
+.Nm
+persists jail-scoped memory/process/fd/socket-buffer ceilings and forwards them unchanged to
+.Xr jailctl 8
+at start time.
+
 When
 .Fl p
 is provided,
@@ -429,7 +420,7 @@ Operational notes and quick-start guidance.
 Bring a host to operational readiness and deploy one web jail:
 .Bd -literal -offset indent
 # jailmgr bootstrap
-# jailmgr create -a -s '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -m 512 -p medium -r 8080 -f local3 -o info -e err -t jail-web web
+# jailmgr create -a -s '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -q 200 -C 1000000 -M 536870912 -P 512 -F 8192 -S 134217728 -p medium -r 8080 -f local3 -o info -e err -t jail-web web
 # jailmgr apply --ephemeral web <<'APPLY'
 mkdir -p /var/www/mysite
 echo "<html>Hello NetBSD!</html>" > /var/www/mysite/index.html
@@ -438,16 +429,11 @@ APPLY
 # jailmgr start --all
 .Ed
 .Sh BUGS
-The current jail resource controls are implemented via per-process
-.Xr getrlimit 2
-values applied when a process enters the jail.
-They are not jail-wide aggregate limits.
-.Pp
-CPU settings are mapped to
-.Dv RLIMIT_CPU ,
-which behaves as a lifetime CPU budget per process.
-For long-running workloads this can be difficult to predict and is not an
-operationally robust substitute for sustained jail-level CPU quotas.
+Jail resource controls are jail-scoped.
+Memory, process-count, file-descriptor, and socket-buffer ceilings are
+enforced at kernel admission points.
+CPU controls are enforced with quota/period window accounting and
+throttling.
 
 .Sh SEE ALSO
 .Xr jailctl 8 ,

@@ -79,6 +79,9 @@ __KERNEL_RCSID(0, "$NetBSD: kern_runq.c,v 1.69 2020/05/23 21:24:41 ad Exp $");
 #include <sys/evcnt.h>
 #include <sys/atomic.h>
 
+#include <secmodel/secmodel.h>
+#include <secmodel/jail/jail.h>
+
 /*
  * Bits per map.
  */
@@ -90,6 +93,7 @@ __KERNEL_RCSID(0, "$NetBSD: kern_runq.c,v 1.69 2020/05/23 21:24:41 ad Exp $");
 const int	schedppq = 1;
 
 static void	*sched_getrq(struct schedstate_percpu *, const pri_t);
+static bool	sched_jail_cpu_can_run(struct lwp *);
 #ifdef MULTIPROCESSOR
 static lwp_t *	sched_catchlwp(struct cpu_info *);
 #endif
@@ -1087,6 +1091,7 @@ sched_nextlwp(void)
 	struct schedstate_percpu *spc;
 	TAILQ_HEAD(, lwp) *q_head;
 	struct lwp *l;
+	pri_t prio;
 
 	/* Update the last run time on switch */
 	l = curlwp;
@@ -1101,11 +1106,40 @@ sched_nextlwp(void)
 	if (__predict_false(spc->spc_count == 0))
 		return NULL;
 
-	/* Take the highest priority thread */
+	/*
+	 * Take the highest-priority thread that is not CPU-throttled by
+	 * secmodel_jail in the current quota/period window.
+	 */
 	KASSERT(spc->spc_bitmap[spc->spc_maxpriority >> BITMAP_SHIFT]);
-	q_head = sched_getrq(spc, spc->spc_maxpriority);
-	l = TAILQ_FIRST(q_head);
-	KASSERT(l != NULL);
+	for (prio = spc->spc_maxpriority + 1; prio-- > 0;) {
+		u_int i;
+		uint32_t q;
+		struct lwp *first;
+
+		i = prio >> BITMAP_SHIFT;
+		q = BITMAP_MSB >> (prio & BITMAP_MASK);
+		if ((spc->spc_bitmap[i] & q) == 0)
+			continue;
+
+		q_head = sched_getrq(spc, prio);
+		l = TAILQ_FIRST(q_head);
+		if (l == NULL)
+			continue;
+
+		first = l;
+		do {
+			if (sched_jail_cpu_can_run(l))
+				goto found;
+			TAILQ_REMOVE(q_head, l, l_runq);
+			TAILQ_INSERT_TAIL(q_head, l, l_runq);
+			l = TAILQ_FIRST(q_head);
+		} while (l != NULL && l != first);
+	}
+
+	/* All runnable threads are throttled right now. */
+	return NULL;
+
+found:
 
 	sched_oncpu(l);
 	l->l_rticks = getticks();
@@ -1243,3 +1277,20 @@ sched_print_runqueue(void (*pr)(const char *, ...))
 }
 
 #endif
+/*
+ * Query secmodel_jail CPU quota state for this LWP.
+ * If secmodel_jail is not present, scheduling defaults to normal behavior.
+ */
+static bool
+sched_jail_cpu_can_run(struct lwp *l)
+{
+	struct secmodel_jail_eval_cpu_can_run_args a;
+	bool ok;
+
+	a.cred = l->l_cred;
+	if (secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_CPU_CAN_RUN,
+	    &a, &ok) == 0)
+		return ok;
+
+	return true;
+}

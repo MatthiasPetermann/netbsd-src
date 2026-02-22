@@ -34,8 +34,12 @@
 .Sh SYNOPSIS
 .Nm
 .Cm create
-.Op Fl c Ar cpu-ms
-.Op Fl m Ar bytes
+.Op Fl q Ar cpu.quota
+.Op Fl C Ar cpu.period
+.Op Fl M Ar memory.max-bytes
+.Op Fl P Ar proc.max
+.Op Fl F Ar fd.max
+.Op Fl S Ar sockbuf.max-bytes
 .Op Fl p Ar profile
 .Op Fl r Ar port[,port...]
 .Fl n Ar name
@@ -69,26 +73,30 @@ jail id, while the host root user (jail id 0) can access all processes.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Op Fl c Ar cpu-ms Op Fl m Ar bytes Op Fl p Ar profile Op Fl r Ar port[,port...] Fl n Ar name Ar root
+.It Cm create Op Fl q Ar cpu.quota Op Fl C Ar cpu.period Op Fl M Ar memory.max-bytes Op Fl P Ar proc.max Op Fl F Ar fd.max Op Fl S Ar sockbuf.max-bytes Op Fl p Ar profile Op Fl r Ar port[,port...] Fl n Ar name Ar root
 Create a new jail id, assign it the unique
 .Ar name ,
 and store jail name and root metadata in the kernel jail model.
 This command only creates the jail and prints the resulting jail id.
 .Pp
-The optional flags set per-jail resource limits at creation time.
-In the current implementation these are not jail-wide aggregate controls.
-They are translated to per-process
-.Xr getrlimit 2 values and applied only when a process enters the jail:
+The optional flags set jail-scoped resource policy at creation time.
 .Bl -tag -width Ds
-.It Fl c Ar cpu-ms
-Set a CPU time limit (in milliseconds) for processes in the jail.
-The configured value is translated to
-.Dv RLIMIT_CPU
-when a process enters the jail, rounded up to whole seconds, and then enforced
-as per-process consumed CPU time (not wall clock time).
-This is a lifetime CPU budget per process and not a sustained jail CPU quota.
-.It Fl m Ar bytes
-Set a virtual memory limit (in bytes) for processes in the jail.
+.It Fl q Ar cpu.quota
+Set the CPU quota budget per window (in scheduler ticks).
+Must be used together with
+.Fl C .
+.It Fl C Ar cpu.period
+Set the CPU quota window length in microseconds.
+Must be used together with
+.Fl q .
+.It Fl M Ar memory.max-bytes
+Set the jail memory admission ceiling for VM growth and mmap paths.
+.It Fl P Ar proc.max
+Set the jail process-count ceiling (enforced at fork admission).
+.It Fl F Ar fd.max
+Set the jail file-descriptor allocation ceiling.
+.It Fl S Ar sockbuf.max-bytes
+Set the jail socket-buffer reservation ceiling.
 .It Fl p Ar profile
 Select the jail security profile.
 Valid values are
@@ -98,20 +106,8 @@ and
 .Dq high .
 The default is
 .Dq high .
-The
-.Dq low
-profile keeps only process visibility/signal isolation,
-.Dq medium
-keeps hardening but defers SysV IPC administrative checks,
-and
-.Dq high
-enforces full system-scope hardening.
 .It Fl r Ar port[,port...]
 Reserve one or more listening ports for this jail.
-The option may be repeated and accepts comma-separated lists.
-When at least one jail reserves a given port, bind attempts for that port are
-allowed only from processes in the jail that reserved it.
-Ports not reserved by any jail remain unrestricted.
 .El
 .It Cm supervise Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
 Start a command in an existing jail selected by
@@ -185,15 +181,9 @@ If no command is provided, an interactive shell is started.
 List active jail ids, process counts, configured jail names, and roots.
 .El
 .Sh BUGS
-The current resource model is based on per-process
-.Xr getrlimit 2
-application on jail entry, not on jail-wide aggregate accounting.
-.Pp
-In particular,
-.Dv RLIMIT_CPU
-acts as a lifetime CPU budget per process.
-For long-running processes this is often hard to predict operationally and
-should not be interpreted as a sustained throughput quota for the jail.
+The jail resource model enforces jail-scoped admission checks for memory,
+process count, file descriptors, and socket buffer reservations.
+CPU quota and period are accounted and throttled in periodic windows.
 
 .Sh SEE ALSO
 .Xr chroot 2 ,

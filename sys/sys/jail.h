@@ -44,13 +44,12 @@ typedef uint32_t jailid_t;
 
 #define JAIL_CREATE_CPU_QUOTA	0x00000001
 #define JAIL_CREATE_CPU_PERIOD	0x00000002
-#define JAIL_CREATE_CPU_WEIGHT	0x00000004
-#define JAIL_CREATE_MEMORY_MAX	0x00000008
-#define JAIL_CREATE_PROC_MAX	0x00000010
-#define JAIL_CREATE_FD_MAX	0x00000020
-#define JAIL_CREATE_SOCKBUF_MAX	0x00000040
-#define JAIL_CREATE_PROFILE	0x00000080
-#define JAIL_CREATE_PORTS	0x00000100
+#define JAIL_CREATE_MEMORY_MAX	0x00000004
+#define JAIL_CREATE_PROC_MAX	0x00000008
+#define JAIL_CREATE_FD_MAX	0x00000010
+#define JAIL_CREATE_SOCKBUF_MAX	0x00000020
+#define JAIL_CREATE_PROFILE	0x00000040
+#define JAIL_CREATE_PORTS	0x00000080
 
 #define JAIL_PORTS_MAX	32
 
@@ -64,7 +63,6 @@ struct jail_create {
 	uint32_t jc_profile;
 	uint64_t jc_cpu_quota;
 	uint64_t jc_cpu_period;
-	uint64_t jc_cpu_weight;
 	uint64_t jc_memory_max;
 	uint64_t jc_proc_max;
 	uint64_t jc_fd_max;
@@ -82,7 +80,6 @@ struct jail_info {
 	char ji_root[JAIL_ROOT_MAX + 1];
 	uint64_t ji_cpu_quota;
 	uint64_t ji_cpu_period;
-	uint64_t ji_cpu_weight;
 	uint64_t ji_memory_max;
 	uint64_t ji_proc_max;
 	uint64_t ji_fd_max;

@@ -839,7 +839,7 @@ main(int argc, char *argv[])
 		name = NULL;
 		create.jc_profile = JAIL_PROFILE_HIGH;
 		optind = 2;
-		while ((ch = getopt(argc, argv, "q:C:w:M:P:F:S:n:p:r:")) != -1) {
+		while ((ch = getopt(argc, argv, "q:C:M:P:F:S:n:p:r:")) != -1) {
 			switch (ch) {
 			case 'q':
 				errno = 0;
@@ -856,14 +856,6 @@ main(int argc, char *argv[])
 					errx(1, "invalid cpu period: %s", optarg);
 				create.jc_flags |= JAIL_CREATE_CPU_PERIOD;
 				create.jc_cpu_period = num;
-				break;
-			case 'w':
-				errno = 0;
-				num = strtoumax(optarg, &endp, 0);
-				if (errno != 0 || *endp != '\0')
-					errx(1, "invalid cpu weight: %s", optarg);
-				create.jc_flags |= JAIL_CREATE_CPU_WEIGHT;
-				create.jc_cpu_weight = num;
 				break;
 			case 'M':
 				errno = 0;
@@ -1011,7 +1003,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s create [-q cpu.quota -C cpu.period] [-w cpu.weight] [-M memory.max-bytes] [-P proc.max] [-F fd.max] [-S sockbuf.max-bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>\n"
+	    "usage: %s create [-q cpu.quota -C cpu.period] [-M memory.max-bytes] [-P proc.max] [-F fd.max] [-S sockbuf.max-bytes] [-p low|medium|high] [-r port[,port...]] -n name <root>\n"
 	    "       %s supervise [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"

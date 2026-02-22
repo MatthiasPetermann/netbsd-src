@@ -130,7 +130,7 @@ Usage: $0 <command> [args]
 
 Commands:
   bootstrap                   Download sets and build shared base layer
-  create [-a] [-s cmd] [-q cpu.quota] [-C cpu.period] [-w cpu.weight]
+  create [-a] [-s cmd] [-q cpu.quota] [-C cpu.period]
          [-M memory.max-bytes] [-P proc.max] [-F fd.max]
          [-S sockbuf.max-bytes] [-p profile] [-r port[,port...]]
          [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <name>
@@ -330,8 +330,7 @@ load_jail_conf() {
 	JAIL_SUPERVISE_CMD=
 	JAIL_CREATE_CPU_QUOTA=
 	JAIL_CREATE_CPU_PERIOD=
-	JAIL_CREATE_CPU_WEIGHT=
-	JAIL_CREATE_MEMORY_MAX=
+  JAIL_CREATE_MEMORY_MAX=
 	JAIL_CREATE_PROC_MAX=
 	JAIL_CREATE_FD_MAX=
 	JAIL_CREATE_SOCKBUF_MAX=
@@ -455,17 +454,16 @@ create_jail() {
 	supervise_cmd=${3:-/bin/sleep 60}
 	create_cpu_quota=${4:-}
 	create_cpu_period=${5:-}
-	create_cpu_weight=${6:-}
-	create_memory_max=${7:-}
-	create_proc_max=${8:-}
-	create_fd_max=${9:-}
-	create_sockbuf_max=${10:-}
-	create_profile=${11:-}
-	create_reserved_ports=${12:-}
-	supervise_facility=${13:-}
-	supervise_stdout_level=${14:-}
-	supervise_stderr_level=${15:-}
-	supervise_tag=${16:-}
+	create_memory_max=${6:-}
+	create_proc_max=${7:-}
+	create_fd_max=${8:-}
+	create_sockbuf_max=${9:-}
+	create_profile=${10:-}
+	create_reserved_ports=${11:-}
+	supervise_facility=${12:-}
+	supervise_stdout_level=${13:-}
+	supervise_stderr_level=${14:-}
+	supervise_tag=${15:-}
 	escaped_create_profile=$(escape_dq "${create_profile}")
 	escaped_create_reserved_ports=$(escape_dq "${create_reserved_ports}")
 	escaped_supervise_cmd=$(escape_dq "${supervise_cmd}")
@@ -489,7 +487,6 @@ JAIL_AUTOSTART=${autostart}
 # Optional jailctl create(8) resource controls (jail-native ABI fields):
 JAIL_CREATE_CPU_QUOTA="${create_cpu_quota}"
 JAIL_CREATE_CPU_PERIOD="${create_cpu_period}"
-JAIL_CREATE_CPU_WEIGHT="${create_cpu_weight}"
 JAIL_CREATE_MEMORY_MAX="${create_memory_max}"
 JAIL_CREATE_PROC_MAX="${create_proc_max}"
 JAIL_CREATE_FD_MAX="${create_fd_max}"
@@ -554,9 +551,6 @@ start_jail_internal() {
 		fi
 		if [ -n "${JAIL_CREATE_CPU_PERIOD:-}" ]; then
 			set -- "$@" -C "${JAIL_CREATE_CPU_PERIOD}"
-		fi
-		if [ -n "${JAIL_CREATE_CPU_WEIGHT:-}" ]; then
-			set -- "$@" -w "${JAIL_CREATE_CPU_WEIGHT}"
 		fi
 		if [ -n "${JAIL_CREATE_MEMORY_MAX:-}" ]; then
 			set -- "$@" -M "${JAIL_CREATE_MEMORY_MAX}"
@@ -850,7 +844,6 @@ case "${cmd}" in
 		supervise_cmd="/bin/sleep 60"
 		create_cpu_quota=
 		create_cpu_period=
-		create_cpu_weight=
 		create_memory_max=
 		create_proc_max=
 		create_fd_max=
@@ -897,19 +890,6 @@ case "${cmd}" in
 					exit 1
 				}
 				create_cpu_period=$2
-				shift 2
-				;;
-			-w)
-				[ $# -ge 2 ] || { usage; exit 1; }
-				[ -z "${create_cpu_weight}" ] || {
-					echo "cpu weight (-w) may be provided only once" >&2
-					exit 1
-				}
-				is_uint "$2" || {
-					echo "cpu weight (-w) must be an integer" >&2
-					exit 1
-				}
-				create_cpu_weight=$2
 				shift 2
 				;;
 			-M)
@@ -1015,9 +995,9 @@ case "${cmd}" in
 		name=$1
 		create_jail "${name}" "${autostart}" "${supervise_cmd}" \
 		    "${create_cpu_quota}" "${create_cpu_period}" \
-		    "${create_cpu_weight}" "${create_memory_max}" \
-		    "${create_proc_max}" "${create_fd_max}" \
-		    "${create_sockbuf_max}" "${create_profile}" \
+		    "${create_memory_max}" "${create_proc_max}" \
+		    "${create_fd_max}" "${create_sockbuf_max}" \
+		    "${create_profile}" \
 		    "${create_reserved_ports}" \
 		    "${supervise_facility}" "${supervise_stdout_level}" \
 		    "${supervise_stderr_level}" "${supervise_tag}"
