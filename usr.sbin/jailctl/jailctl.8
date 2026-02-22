@@ -76,8 +76,9 @@ and store jail name and root metadata in the kernel jail model.
 This command only creates the jail and prints the resulting jail id.
 .Pp
 The optional flags set per-jail resource limits at creation time.
-In the current implementation these limits are applied as per-process
-.Xr getrlimit 2 values when a process enters the jail:
+In the current implementation these are not jail-wide aggregate controls.
+They are translated to per-process
+.Xr getrlimit 2 values and applied only when a process enters the jail:
 .Bl -tag -width Ds
 .It Fl c Ar cpu-ms
 Set a CPU time limit (in milliseconds) for processes in the jail.
@@ -85,7 +86,7 @@ The configured value is translated to
 .Dv RLIMIT_CPU
 when a process enters the jail, rounded up to whole seconds, and then enforced
 as per-process consumed CPU time (not wall clock time).
-It is therefore a lifetime budget per process.
+This is a lifetime CPU budget per process and not a sustained jail CPU quota.
 .It Fl m Ar bytes
 Set a virtual memory limit (in bytes) for processes in the jail.
 .It Fl p Ar profile
@@ -183,6 +184,17 @@ If no command is provided, an interactive shell is started.
 .It Cm list
 List active jail ids, process counts, configured jail names, and roots.
 .El
+.Sh BUGS
+The current resource model is based on per-process
+.Xr getrlimit 2
+application on jail entry, not on jail-wide aggregate accounting.
+.Pp
+In particular,
+.Dv RLIMIT_CPU
+acts as a lifetime CPU budget per process.
+For long-running processes this is often hard to predict operationally and
+should not be interpreted as a sustained throughput quota for the jail.
+
 .Sh SEE ALSO
 .Xr chroot 2 ,
 .Xr secmodel 9 ,

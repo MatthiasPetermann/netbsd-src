@@ -185,3 +185,79 @@ of the active code anymore.
   broker queries (credential-to-jail matching for rule decisions).
 - Intended use was explicit service ownership policy in packet filtering.
 - Current tree status: removed; kept here only as design reference.
+
+
+9. Resource-model hardening roadmap
+-----------------------------------
+This section describes a practical migration path from the current
+per-process RLIMIT model to jail-scoped, operator-comprehensible controls.
+
+9.1 Problem statement in current model
+- CPU control is based on RLIMIT_CPU, which tracks cumulative CPU time consumed
+  by each process over its lifetime.
+- This behaves as a one-shot budget per process, not as a sustained throughput
+  quota expected by operators.
+- RLIMIT and ulimit semantics are process and (for some resources) user
+  identity oriented, while jail identity is a separate axis.
+- Consequently, resource behavior for the same UID across multiple jails may be
+  coupled in ways that are surprising for jail administrators.
+
+9.2 Target principles
+- Primary accounting key should be jail ID (jid), not UID.
+- Limits should express rates and capacities over time windows,
+  not one-time lifetime budgets.
+- Enforcement must be hierarchical and explicit:
+  host/global ceilings >= per-jail ceilings >= per-process optional limits.
+- Introspection must expose both configured limits and current usage per jail.
+- Compatibility layer should preserve optional RLIMIT defaults for legacy use,
+  but not as the primary control plane.
+
+9.3 Kernel-side architecture (target)
+- Introduce a per-jail resource-accounting object owned by secmodel_jail and
+  attached to jail lifecycle.
+- Move hard limits and current counters into that object (e.g. processes,
+  address-space footprint, socket buffers, file descriptors).
+- Hook admission points to consult jail-scoped counters before commit:
+  - fork/clone path for process count
+  - vmspace growth/mmap/brk path for memory admission
+  - descriptor allocation path for FD ceilings
+  - socket buffer charging path for network memory ceilings
+- Keep process-local RLIMIT optional as an inner guardrail,
+  but never as the only jail-level enforcement.
+
+9.4 CPU control redesign
+- Replace RLIMIT_CPU-as-primary with a scheduler-backed jail CPU controller.
+- Model CPU policy as either:
+  - weighted shares (relative fairness), and/or
+  - quota+period (absolute cap per time window, similar to token bucket).
+- Maintain runnable-time accounting per jail and enforce continuously
+  per period, so limits represent sustained usage rather than lifetime budget.
+- Expose jail CPU usage and throttling statistics for observability.
+
+9.5 UID semantics and policy clarity
+- Document that UID is a credential namespace concept, while jid is a resource
+  and isolation scope concept.
+- For resources historically keyed by uid (e.g. RLIMIT_NPROC behavior), provide
+  jail-native equivalents keyed by jid and prefer them in jailed contexts.
+- Where legacy uid-scoped checks must remain, specify deterministic precedence
+  rules so operators can reason about outcomes.
+
+9.6 Userland/control-plane changes
+- Extend jail create payload and list output with jail-scoped resource policy:
+  - cpu.weight, cpu.quota, cpu.period
+  - memory.max
+  - proc.max
+  - fd.max
+  - sockbuf.max
+- Update jailctl and jailmgr to configure/report those fields directly.
+- Provide clear naming in CLI and manpages to distinguish:
+  - jail-scoped limits (aggregate)
+  - process-scoped limits (rlimit fallback)
+
+9.7 Rollout strategy
+- Phase 1: add counters/telemetry and read-only reporting.
+- Phase 2: add opt-in enforcement for one resource at a time
+  (proc.max and memory.max first).
+- Phase 3: switch jailmgr/jailctl defaults to jail-scoped controls.
+- Phase 4: de-emphasize RLIMIT_CPU and other per-process-only semantics in
+  documentation and defaults.

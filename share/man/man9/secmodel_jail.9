@@ -92,6 +92,8 @@ Because
 .Dv RLIMIT_CPU
 is second-granular, CPU limits configured in milliseconds are rounded up to
 the next whole second.
+This yields per-process lifetime CPU budgets rather than sustained jail-level
+CPU throughput control.
 .Pp
 Limits are not retroactively rewritten for processes that are already running
 in the jail when configuration changes occur.
@@ -101,6 +103,18 @@ emits concise kernel log entries for high-value lifecycle events:
 module load/unload and successful jail create/destroy operations.
 These messages are intended to help administrators correlate policy and
 management actions during incident analysis without excessive noise.
+.Sh BUGS
+The active resource model is
+.Xr getrlimit 2
+-based and therefore process-scoped.
+It does not currently provide jail-wide aggregate accounting or enforcement.
+.Pp
+CPU limits are enforced through
+.Dv RLIMIT_CPU
+and therefore represent lifetime CPU budgets per process.
+For long-running processes this behavior is often hard to predict and does not
+map cleanly to operator expectations of sustained jail CPU quotas.
+
 .Sh SEE ALSO
 .Xr kauth 9 ,
 .Xr secmodel 9 ,

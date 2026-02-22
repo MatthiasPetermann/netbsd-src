@@ -151,6 +151,7 @@ to
 when a process enters the jail,
 rounded up to whole seconds and enforced as per-process consumed CPU time
 (lifetime budget, not wall clock time).
+This is not a sustained jail CPU quota.
 When
 .Fl m
 .Pq megabytes
@@ -428,7 +429,7 @@ Operational notes and quick-start guidance.
 Bring a host to operational readiness and deploy one web jail:
 .Bd -literal -offset indent
 # jailmgr bootstrap
-# jailmgr create -a -s '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -c 25 -m 512 -p medium -r 8080 -f local3 -o info -e err -t jail-web web
+# jailmgr create -a -s '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -m 512 -p medium -r 8080 -f local3 -o info -e err -t jail-web web
 # jailmgr apply --ephemeral web <<'APPLY'
 mkdir -p /var/www/mysite
 echo "<html>Hello NetBSD!</html>" > /var/www/mysite/index.html
@@ -436,6 +437,18 @@ APPLY
 # jailmgr config web
 # jailmgr start --all
 .Ed
+.Sh BUGS
+The current jail resource controls are implemented via per-process
+.Xr getrlimit 2
+values applied when a process enters the jail.
+They are not jail-wide aggregate limits.
+.Pp
+CPU settings are mapped to
+.Dv RLIMIT_CPU ,
+which behaves as a lifetime CPU budget per process.
+For long-running workloads this can be difficult to predict and is not an
+operationally robust substitute for sustained jail-level CPU quotas.
+
 .Sh SEE ALSO
 .Xr jailctl 8 ,
 .Xr mount_null 8 ,
