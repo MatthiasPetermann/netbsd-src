@@ -42,10 +42,15 @@ typedef uint32_t jailid_t;
 
 #define JAILID_HOST 0
 
-#define JAIL_CREATE_MEMLIMIT	0x00000001
-#define JAIL_CREATE_CPULIMIT	0x00000002
-#define JAIL_CREATE_PROFILE	0x00000004
-#define JAIL_CREATE_PORTS	0x00000008
+#define JAIL_CREATE_CPU_QUOTA	0x00000001
+#define JAIL_CREATE_CPU_PERIOD	0x00000002
+#define JAIL_CREATE_CPU_WEIGHT	0x00000004
+#define JAIL_CREATE_MEMORY_MAX	0x00000008
+#define JAIL_CREATE_PROC_MAX	0x00000010
+#define JAIL_CREATE_FD_MAX	0x00000020
+#define JAIL_CREATE_SOCKBUF_MAX	0x00000040
+#define JAIL_CREATE_PROFILE	0x00000080
+#define JAIL_CREATE_PORTS	0x00000100
 
 #define JAIL_PORTS_MAX	32
 
@@ -57,8 +62,13 @@ struct jail_create {
 	uint32_t jc_flags;
 	uint32_t jc_id;
 	uint32_t jc_profile;
-	uint64_t jc_mem_limit;
-	uint64_t jc_cpu_limit;
+	uint64_t jc_cpu_quota;
+	uint64_t jc_cpu_period;
+	uint64_t jc_cpu_weight;
+	uint64_t jc_memory_max;
+	uint64_t jc_proc_max;
+	uint64_t jc_fd_max;
+	uint64_t jc_sockbuf_max;
 	uint16_t jc_nports;
 	uint16_t jc_ports[JAIL_PORTS_MAX];
 	char jc_name[JAIL_NAME_MAX + 1];
@@ -70,6 +80,23 @@ struct jail_info {
 	uint32_t ji_refcount;
 	char ji_name[JAIL_NAME_MAX + 1];
 	char ji_root[JAIL_ROOT_MAX + 1];
+	uint64_t ji_cpu_quota;
+	uint64_t ji_cpu_period;
+	uint64_t ji_cpu_weight;
+	uint64_t ji_memory_max;
+	uint64_t ji_proc_max;
+	uint64_t ji_fd_max;
+	uint64_t ji_sockbuf_max;
+	uint64_t ji_proc_current;
+	uint64_t ji_fd_current;
+	uint64_t ji_sockbuf_current;
+	uint64_t ji_memory_current;
+	uint64_t ji_cpu_usage;
+	uint64_t ji_deny_proc;
+	uint64_t ji_deny_fd;
+	uint64_t ji_deny_sockbuf;
+	uint64_t ji_deny_memory;
+	uint64_t ji_throttle_cpu;
 };
 
 #endif /* !_SYS_JAIL_H_ */

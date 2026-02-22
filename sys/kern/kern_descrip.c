@@ -97,6 +97,9 @@ __KERNEL_RCSID(0, "$NetBSD: kern_descrip.c,v 1.251.10.3 2024/11/17 13:26:13 mart
 #include <sys/sysctl.h>
 #include <sys/ktrace.h>
 
+#include <secmodel/secmodel.h>
+#include <secmodel/jail/jail.h>
+
 /*
  * A list (head) of open files, counter, and lock protecting them.
  */
@@ -889,6 +892,7 @@ fd_alloc(proc_t *p, int want, int *result)
 	int i, lim, last, error, hi;
 	u_int off;
 	fdtab_t *dt;
+	uint64_t fd_current;
 
 	KASSERT(p == curproc || p == &proc0);
 
@@ -899,6 +903,24 @@ fd_alloc(proc_t *p, int want, int *result)
 	mutex_enter(&fdp->fd_lock);
 	fd_checkmaps(fdp);
 	dt = fdp->fd_dt;
+	fd_current = 0;
+	for (i = 0; i < dt->dt_nfiles; i++) {
+		if (dt->dt_ff[i] != NULL && dt->dt_ff[i]->ff_file != NULL)
+			fd_current++;
+	}
+	{
+		struct secmodel_jail_eval_admit_args aa;
+		bool ok;
+
+		aa.cred = p->p_cred;
+		aa.current = fd_current;
+		aa.delta = 1;
+		if (secmodel_eval(SECMODEL_JAIL_ID, SECMODEL_JAIL_EVAL_FD_ADMIT,
+		    &aa, &ok) == 0 && !ok) {
+			mutex_exit(&fdp->fd_lock);
+			return EMFILE;
+		}
+	}
 	KASSERT(dt->dt_ff[0] == (fdfile_t *)fdp->fd_dfdfile[0]);
 	lim = uimin((int)p->p_rlimit[RLIMIT_NOFILE].rlim_cur, maxfiles);
 	last = uimin(dt->dt_nfiles, lim);
@@ -937,6 +959,13 @@ fd_alloc(proc_t *p, int want, int *result)
 		KASSERT(i >= NDFDFILE ||
 		    dt->dt_ff[i] == (fdfile_t *)fdp->fd_dfdfile[i]);
 		fd_checkmaps(fdp);
+		{
+			struct secmodel_jail_eval_set_current_args sca;
+			sca.cred = p->p_cred;
+			sca.current = fd_current + 1;
+			(void)secmodel_eval(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_EVAL_FD_SET_CURRENT, &sca, NULL);
+		}
 		mutex_exit(&fdp->fd_lock);
 		return 0;
 	}
