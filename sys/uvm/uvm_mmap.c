@@ -611,6 +611,14 @@ sys_munmap(struct lwp *l, const struct sys_munmap_args *uap, register_t *retval)
 	vm_map_unlock(map);
 	if (dead_entries != NULL)
 		uvm_unmap_detach(dead_entries, 0);
+	{
+		struct secmodel_jail_eval_set_current_args sca;
+
+		sca.cred = l->l_cred;
+		sca.current = (uint64_t)p->p_vmspace->vm_map.size;
+		(void)secmodel_eval(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT, &sca, NULL);
+	}
 	return 0;
 }
 
