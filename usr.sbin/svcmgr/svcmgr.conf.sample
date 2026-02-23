@@ -1,0 +1,9 @@
+# /etc/svcmgr.conf - service list for svcmgr(8)
+#
+# Format: <logtag><space-or-tab><command ...>
+# - logtag is a single token without whitespace.
+# - command is executed via /bin/sh -c "command ...".
+#
+# Example services:
+site1 /usr/libexec/httpd -I 8080 -X -f -s /var/www/site1
+site2 /usr/libexec/httpd -I 8081 -X -f -s /var/www/site2
