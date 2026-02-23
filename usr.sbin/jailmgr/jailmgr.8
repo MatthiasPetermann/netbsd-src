@@ -342,7 +342,34 @@ to support pseudo terminals.
 Each jail also has a jail-local configuration file at
 .Pa ${JAIL_DATA_DIR}/name/jail.conf
 that provides:
-.Bl -tag -width "JAIL_SUPERVISE_CMD"
+.Bl -tag -width "JAIL_CREATE_RESERVED_PORTS"
+.It Ev JAIL_NAME
+Jail name recorded by
+.Nm
+at create time.
+This must match the directory name used by
+.Nm
+.Pq Pa ${JAIL_DATA_DIR}/name/ .
+.It Ev JAIL_RELEASE
+Release value recorded by
+.Nm
+at create time.
+This is informational and tracks the host-side base-layer release used when
+the jail was created.
+.It Ev JAIL_ARCH
+Architecture value recorded by
+.Nm
+at create time.
+This is informational and tracks the host-side base-layer architecture used
+when the jail was created.
+.It Ev JAIL_AUTOSTART
+When set to
+.Dq YES ,
+include that jail in
+.Cm start --all ,
+.Cm stop --all ,
+and
+.Cm restart --all .
 .It Ev JAIL_SUPERVISE_CMD
 Required command (with optional arguments) passed to
 .Xr jailctl 8
@@ -355,21 +382,38 @@ without
 .Fl s )
 must be configured to emit to stderr if those logs should be captured by
 .Nm .
-.It Ev JAIL_CREATE_CPU_MS
+.It Ev JAIL_CREATE_CPU_QUOTA
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl q .
+.It Ev JAIL_CREATE_CPU_PERIOD
 Optional value forwarded to
 .Xr jailctl 8
 .Cm create Fl c .
-.It Ev JAIL_CREATE_MEMORY_MB
-Optional memory limit in megabytes persisted in
-.Pa jail.conf .
-.Nm
-converts this value to bytes before invoking
+.It Ev JAIL_CREATE_MEMORY_MAX
+Optional value forwarded to
 .Xr jailctl 8
-.Cm create Fl m .
-.It Ev JAIL_CREATE_PROFILE
+.Cm create Fl m
+.Pq memory.max-bytes .
+.It Ev JAIL_CREATE_PROC_MAX
 Optional value forwarded to
 .Xr jailctl 8
 .Cm create Fl p
+.Pq proc.max .
+.It Ev JAIL_CREATE_FD_MAX
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl d
+.Pq fd.max .
+.It Ev JAIL_CREATE_SOCKBUF_MAX
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl s
+.Pq sockbuf.max-bytes .
+.It Ev JAIL_CREATE_PROFILE
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl l
 .Pq one of
 .Dq low ,
 .Dq medium ,
@@ -396,14 +440,6 @@ Optional value forwarded to
 Optional value forwarded to
 .Xr jailctl 8
 .Cm supervise Fl t .
-.It Ev JAIL_AUTOSTART
-When set to
-.Dq YES ,
-include that jail in
-.Cm start --all ,
-.Cm stop --all ,
-and
-.Cm restart --all .
 .El
 .Sh RESOURCE QUOTA TUNING
 The resource values accepted by
