@@ -1,0 +1,256 @@
+NetBSD jails-v2 operations guide (pragmatic)
+============================================
+
+Status
+------
+This document explains the operational model for the jails-v2 stack from a
+DevOps/SRE perspective. It is intentionally practical and complements the
+formal specification in:
+- doc/specs/netbsd-jails-specification.txt
+
+Scope covered here:
+- secmodel_jail (kernel policy and accounting)
+- jailctl (low-level control and supervised runtime entry)
+- jailmgr (fleet-level provisioning and lifecycle orchestration)
+- svcmgr (inside-jail lightweight multi-service launcher)
+
+
+1. Why this stack exists
+------------------------
+The stack follows a strict layering model:
+- kernel owns policy, accounting, and enforcement
+- userland tools transport intent with minimal hidden behavior
+- logs are centralized on the host through standard NetBSD syslog paths
+
+In practice this means:
+- secmodel_jail is the source of truth for jail identity and resource policy
+- jailctl is the precise operational tool
+- jailmgr scales that operation for many jails and persistent config
+- svcmgr lets one jail run multiple tightly-coupled processes while still
+  presenting tagged logs through one supervise entrypoint
+
+
+2. Layered architecture at a glance
+-----------------------------------
+
++---------------------------------------------------------------+
+| Host root (jid 0)                                              |
+|                                                               |
+|  +----------------------+     +-----------------------------+  |
+|  | jailmgr              | --> | jailctl supervise/create... |  |
+|  | (orchestration)      |     | (runtime/control adapter)   |  |
+|  +----------------------+     +--------------+--------------+  |
+|                                               |                 |
+|                                               v                 |
+|                              +-------------------------------+  |
+|                              | secmodel_jail (kernel)        |  |
+|                              | - jail metadata               |  |
+|                              | - profile / quotas / ports    |  |
+|                              | - admission & accounting      |  |
+|                              +-------------------------------+  |
+|                                                               |
+| Host syslogd <--- stdout/stderr forwarded by jailctl supervise |
++---------------------------------------------------------------+
+
+Inside each jail runtime:
+
++---------------------------------------------------------------+
+| Jail "X"                                                      |
+|  svcmgr (optional)                                             |
+|   |- service A (stdout/stderr)                                 |
+|   |- service B (stdout/stderr)                                 |
+|   `- service C (stdout/stderr)                                 |
++---------------------------------------------------------------+
+
+
+3. Who does what (operational contract)
+---------------------------------------
+3.1 secmodel_jail (kernel)
+- Enforces jail-scoped identity and process boundaries.
+- Enforces create-time policy (profile, limits, reserved ports).
+- Tracks runtime counters and performs admission/charging checks.
+
+Operational takeaway:
+- If policy behavior is surprising, inspect kernel/jail config first.
+- Userland tools are thin and generally do not "reinterpret" policy.
+
+3.2 jailctl
+- Creates/destroys/lists jails.
+- Enters jail runtime via exec.
+- Runs one supervised command per invocation:
+  - daemonized monitor
+  - stdout/stderr forwarding to host syslog
+  - restart with backoff
+
+Operational takeaway:
+- jailctl is the exact low-level primitive to debug first.
+- If you can do it with jailctl manually, jailmgr can generally automate it.
+
+3.3 jailmgr
+- Prepares filesystem/base layers and persistent per-jail config.
+- Encodes desired state in jail.conf and applies it at start.
+- Starts/stops multiple jails consistently.
+
+Operational takeaway:
+- Treat jailmgr as the fleet operator and source of persisted intent.
+
+3.4 svcmgr
+- Optional helper used as the single supervised entrypoint inside one jail.
+- Reads /etc/svcmgr.conf and starts multiple services in parallel.
+- Prefixes each emitted line with a service tag and flushes per line.
+
+Operational takeaway:
+- Use svcmgr when one jail intentionally contains a small process bundle.
+- Keep the host model simple: one supervise command per jail.
+
+
+4. Practical topology example
+-----------------------------
+Example desired topology:
+- Jail "mantisbt": nginx (port 3000) + php-fpm
+- Jail "postgresql": PostgreSQL service
+- Jail "egress": nginx (port 443) as edge ingress/egress endpoint
+
+ASCII deployment map:
+
+                         Internet
+                             |
+                             v
+                  +-----------------------+
+                  | jail: egress          |
+                  | nginx :443            |
+                  +-----------+-----------+
+                              |
+                              | upstream over TCP
+                              v
+                  +-----------------------+
+                  | jail: mantisbt        |
+                  | nginx :3000           |
+                  | php-fpm               |
+                  +-----------+-----------+
+                              |
+                              | DB over TCP
+                              v
+                  +-----------------------+
+                  | jail: postgresql      |
+                  | postgresql :5432      |
+                  +-----------------------+
+
+Notes:
+- Cross-jail communication is typically TCP.
+- Keep explicit ports and network paths documented per jail.
+- Use reserved-port/profile controls at create time as needed.
+
+
+5. Recommended setup flow
+-------------------------
+5.1 Bootstrap and base prep (host)
+1) Ensure secmodel_jail is active (bootstrap path).
+2) Prepare base layers and jailmgr directories.
+3) Keep /etc/jailmgr.conf under config management.
+
+5.2 Create jails with jailmgr
+- Create mantisbt, postgresql, egress jails.
+- Set create-time limits/profile/ports in each jail.conf.
+
+5.3 Define runtime entrypoints
+Option A (single process jail):
+- JAIL_SUPERVISE_CMD starts the service directly.
+
+Option B (multi-process jail, recommended for tightly-coupled app stacks):
+- JAIL_SUPERVISE_CMD starts svcmgr.
+- /etc/svcmgr.conf defines tagged services.
+
+Example for mantisbt jail:
+- tag: nginx, command: nginx foreground mode on 3000
+- tag: phpfpm, command: php-fpm no-daemon mode
+
+5.4 Start and verify
+- Start jails via jailmgr start <name> (or --all with autostart).
+- Verify runtime with jailctl list/status paths.
+- Verify host syslog contains expected tagged lines.
+
+
+6. Log-flow model (important)
+-----------------------------
+The log path is intentionally stdout/stderr-centric and NetBSD-native.
+
+For one jail using svcmgr:
+
+service stdout/stderr
+        |
+        v
+      svcmgr (prefixes with service tag, line-buffered flush)
+        |
+        v
+jailctl supervise monitor (host side)
+  - forwards stdout/stderr to syslog with configured facility/levels/tag
+        |
+        v
+   host syslogd (central concentrator)
+
+Why this is operationally useful:
+- one canonical host log sink (syslogd)
+- no hidden side-channel per service by default
+- standard NetBSD syslog tooling applies uniformly
+
+Practical guidance:
+- Prefer foreground/no-daemon modes for supervised services.
+- Prefer service logging to stdout/stderr where possible.
+- If a daemon defaults to internal syslog only, decide explicitly whether to:
+  - keep internal syslog behavior, or
+  - switch to stderr/stdout mode for unified host forwarding.
+
+
+7. Example configuration snippets (illustrative)
+------------------------------------------------
+7.1 Host-side jailmgr intent (conceptual)
+- mantisbt jail:
+  - JAIL_SUPERVISE_CMD="/usr/sbin/svcmgr -c /etc/svcmgr.conf"
+- postgresql jail:
+  - JAIL_SUPERVISE_CMD="/usr/pkg/bin/postgres -D /var/db/postgresql"
+- egress jail:
+  - JAIL_SUPERVISE_CMD="/usr/libexec/httpd -I 443 -X -f -s /var/www/egress"
+
+7.2 /etc/svcmgr.conf inside mantisbt jail (conceptual)
+nginx  /usr/libexec/httpd -I 3000 -X -f -s /var/www/mantisbt
+phpfpm /usr/pkg/sbin/php-fpm --nodaemonize
+
+7.3 /etc/svcmgr.conf style notes
+- first token: log tag
+- separator: spaces or tabs
+- remainder: command line
+
+
+8. Operational runbook (day-2)
+------------------------------
+8.1 Incident triage order
+1) Host syslog: confirm service-level tagged output present.
+2) jailctl/jailmgr status: confirm jail exists and supervise process is alive.
+3) Service command health inside jail (jailctl exec ...).
+4) Policy constraints: limits/profile/port reservations.
+
+8.2 Restart strategy
+- Prefer restarting at the smallest effective scope:
+  - service-level (if svcmgr/service tooling supports it)
+  - jail-level via jailmgr restart <name>
+- For persistent crash loops, inspect command flags and foreground/logging mode.
+
+8.3 Change management
+- Keep jailmgr config and per-jail jail.conf in version control.
+- Treat svcmgr.conf as application deployment artifact.
+- Roll changes one jail at a time in production.
+
+
+9. NetBSD standards and operational philosophy
+-----------------------------------------------
+This stack intentionally follows NetBSD conventions:
+- explicit, auditable control paths
+- syslogd-centered logging aggregation
+- small tools with clear boundaries
+- host-root control-plane for jail operations
+
+The result is a practical model for DevOps teams:
+- understandable layering
+- predictable lifecycle semantics
+- centralized logging without inventing a parallel platform

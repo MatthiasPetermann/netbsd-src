@@ -1561,6 +1561,7 @@
 ./usr/sbin/iwictl				base-sysutil-bin
 ./usr/sbin/jailctl				base-sysutil-bin
 ./usr/sbin/jailmgr				base-sysutil-bin
+./usr/sbin/svcmgr				base-sysutil-bin
 ./usr/sbin/kadmin				base-krb5-bin		kerberos
 ./usr/sbin/kcm					base-krb5-bin		kerberos
 ./usr/sbin/kdc					base-krb5-bin		kerberos
@@ -2518,6 +2519,8 @@
 ./usr/share/examples/jailmgr			base-sysutil-examples
 ./usr/share/examples/jailmgr/README		base-sysutil-examples	share
 ./usr/share/examples/jailmgr/jailmgr.conf.sample	base-sysutil-examples	share
+./usr/share/examples/svcmgr			base-sysutil-examples
+./usr/share/examples/svcmgr/svcmgr.conf.sample	base-sysutil-examples	share
 ./usr/share/examples/kerberos			base-krb5-examples
 ./usr/share/examples/lua			base-sys-examples
 ./usr/share/examples/lua/README			base-sys-examples	share
