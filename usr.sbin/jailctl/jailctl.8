@@ -63,6 +63,10 @@
 .Op Ar args ...
 .Nm
 .Cm list
+.Nm
+.Cm stats
+.Op Fl P
+.Op Fl v
 .Sh DESCRIPTION
 The
 .Nm
@@ -179,6 +183,18 @@ using the root stored in kernel jail metadata and execute
 If no command is provided, an interactive shell is started.
 .It Cm list
 List active jail ids, process counts, configured jail names, and roots.
+.It Cm stats Op Fl P Op Fl v
+Show current jail resource usage from kernel accounting
+.Pq CPU, process, descriptor, socket buffer, and memory counters .
+By default, output is a compact human-readable table without configured limits.
+With
+.Fl v ,
+show an extended table that includes
+.Dq current/max
+pairs for process count, file descriptors, socket buffers, and memory.
+With
+.Fl P ,
+output Prometheus-compatible metrics, one sample per jail and counter.
 .El
 .Sh BUGS
 The jail resource model enforces jail-scoped admission checks for memory,
