@@ -73,6 +73,8 @@ static int	parse_log_level_arg(const char *);
 static uint32_t	parse_profile(const char *);
 static void	parse_port_list(struct jail_create *, const char *);
 static void	sanitize_field(const char *, char *, size_t);
+static void	jail_stats(bool, bool);
+static void	prom_escape_label(const char *, char *, size_t);
 static bool	jail_lookup_by_name(const char *, struct jail_info *);
 static bool	jail_lookup_by_id(jailid_t, struct jail_info *);
 static void	log_stream_data(int, const char *, jailid_t, const char *,
@@ -196,6 +198,115 @@ jail_list(void)
 }
 
 static void
+jail_stats(bool prometheus, bool verbose)
+{
+	struct jail_info *entries;
+	size_t count, i;
+
+	entries = jail_fetch_list(&count);
+	if (count == 0) {
+		if (!prometheus)
+			printf("no jails\n");
+		return;
+	}
+
+	if (!prometheus) {
+		if (!verbose) {
+			printf("%-8s %-16s %-10s %-10s %-10s %-10s %-10s %-10s\n",
+			    "ID", "NAME", "CPU", "PROC", "FD", "SOCKBUF",
+			    "MEMORY", "THROTTLE");
+			for (i = 0; i < count; i++) {
+				printf("%-8" PRIu32 " %-16s %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 "\n",
+				    entries[i].ji_id,
+				    entries[i].ji_name[0] != '\0' ? entries[i].ji_name : "-",
+				    entries[i].ji_cpu_usage,
+				    entries[i].ji_proc_current,
+				    entries[i].ji_fd_current,
+				    entries[i].ji_sockbuf_current,
+				    entries[i].ji_memory_current,
+				    entries[i].ji_throttle_cpu);
+			}
+		} else {
+			printf("%-8s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
+			    "ID", "NAME", "CPU", "PROC", "PROC_MAX", "FD",
+			    "FD_MAX", "SOCKBUF", "SOCKBUF_MAX", "MEMORY",
+			    "MEMORY_MAX", "THROTTLE");
+			for (i = 0; i < count; i++) {
+				printf("%-8" PRIu32 " %-16s %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64 "\n",
+				    entries[i].ji_id,
+				    entries[i].ji_name[0] != '\0' ? entries[i].ji_name : "-",
+				    entries[i].ji_cpu_usage,
+				    entries[i].ji_proc_current,
+				    entries[i].ji_proc_max,
+				    entries[i].ji_fd_current,
+				    entries[i].ji_fd_max,
+				    entries[i].ji_sockbuf_current,
+				    entries[i].ji_sockbuf_max,
+				    entries[i].ji_memory_current,
+				    entries[i].ji_memory_max,
+				    entries[i].ji_throttle_cpu);
+			}
+		}
+		free(entries);
+		return;
+	}
+
+	printf("# TYPE jail_cpu_usage_ticks gauge\n");
+	printf("# TYPE jail_processes_current gauge\n");
+	printf("# TYPE jail_processes_max gauge\n");
+	printf("# TYPE jail_fd_current gauge\n");
+	printf("# TYPE jail_fd_max gauge\n");
+	printf("# TYPE jail_sockbuf_current gauge\n");
+	printf("# TYPE jail_sockbuf_max gauge\n");
+	printf("# TYPE jail_memory_current_bytes gauge\n");
+	printf("# TYPE jail_memory_max_bytes gauge\n");
+	printf("# TYPE jail_deny_process_total counter\n");
+	printf("# TYPE jail_deny_fd_total counter\n");
+	printf("# TYPE jail_deny_sockbuf_total counter\n");
+	printf("# TYPE jail_deny_memory_total counter\n");
+	printf("# TYPE jail_throttle_cpu_total counter\n");
+
+	for (i = 0; i < count; i++) {
+		char name[(JAIL_NAME_MAX + 1) * 2 + 1];
+		char root[(JAIL_ROOT_MAX + 1) * 2 + 1];
+
+		prom_escape_label(entries[i].ji_name, name, sizeof(name));
+		prom_escape_label(entries[i].ji_root, root, sizeof(root));
+
+		printf("jail_cpu_usage_ticks{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_cpu_usage);
+		printf("jail_processes_current{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_proc_current);
+		printf("jail_processes_max{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_proc_max);
+		printf("jail_fd_current{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_fd_current);
+		printf("jail_fd_max{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_fd_max);
+		printf("jail_sockbuf_current{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_sockbuf_current);
+		printf("jail_sockbuf_max{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_sockbuf_max);
+		printf("jail_memory_current_bytes{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_memory_current);
+		printf("jail_memory_max_bytes{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_memory_max);
+		printf("jail_deny_process_total{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_deny_proc);
+		printf("jail_deny_fd_total{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_deny_fd);
+		printf("jail_deny_sockbuf_total{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_deny_sockbuf);
+		printf("jail_deny_memory_total{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_deny_memory);
+		printf("jail_throttle_cpu_total{jid=\"%" PRIu32 "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+		    entries[i].ji_id, name, root, entries[i].ji_throttle_cpu);
+	}
+
+	free(entries);
+}
+
+static void
 sanitize_field(const char *src, char *dst, size_t dsz)
 {
 	size_t i, j;
@@ -205,6 +316,27 @@ sanitize_field(const char *src, char *dst, size_t dsz)
 			dst[j++] = ' ';
 		else
 			dst[j++] = src[i];
+	}
+	dst[j] = '\0';
+}
+
+static void
+prom_escape_label(const char *src, char *dst, size_t dsz)
+{
+	size_t i, j;
+
+	for (i = 0, j = 0; src[i] != '\0' && j + 1 < dsz; i++) {
+		if ((src[i] == '\\' || src[i] == '"') && j + 2 < dsz) {
+			dst[j++] = '\\';
+			dst[j++] = src[i];
+		} else if (src[i] == '\n' && j + 2 < dsz) {
+			dst[j++] = '\\';
+			dst[j++] = 'n';
+		} else if (src[i] == '\r' || src[i] == '\t') {
+			dst[j++] = ' ';
+		} else {
+			dst[j++] = src[i];
+		}
 	}
 	dst[j] = '\0';
 }
@@ -995,6 +1127,32 @@ main(int argc, char *argv[])
 		return 0;
 	}
 
+	if (strcmp(argv[1], "stats") == 0) {
+		bool prometheus, verbose;
+		int ch;
+
+		prometheus = false;
+		verbose = false;
+		optind = 2;
+		while ((ch = getopt(argc, argv, "Pv")) != -1) {
+			switch (ch) {
+			case 'P':
+				prometheus = true;
+				break;
+			case 'v':
+				verbose = true;
+				break;
+			default:
+				usage();
+			}
+		}
+		if (optind != argc)
+			usage();
+
+		jail_stats(prometheus, verbose);
+		return 0;
+	}
+
 	usage();
 	/* NOTREACHED */
 }
@@ -1007,8 +1165,9 @@ usage(void)
 	    "       %s supervise [-f facility] [-o stdout-level] [-e stderr-level] [-t tag] <jail-id|name> <command [args...]>\n"
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
-	    "       %s list\n",
+	    "       %s list\n"
+	    "       %s stats [-P] [-v]\n",
 	    getprogname(), getprogname(), getprogname(), getprogname(),
-	    getprogname());
+	    getprogname(), getprogname());
 	exit(1);
 }
