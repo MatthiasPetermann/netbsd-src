@@ -93,7 +93,7 @@ emits concise kernel log entries for high-value lifecycle events:
 module load/unload and successful jail create/destroy operations.
 These messages are intended to help administrators correlate policy and
 management actions during incident analysis without excessive noise.
-.Sh BUGS
+.Sh NOTES
 CPU quota enforcement is currently admission-oriented:
 run-queue selection skips jailed LWPs while a jail is over quota,
 and fork admission is denied in the same state.
