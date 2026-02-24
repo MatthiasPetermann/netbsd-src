@@ -7,6 +7,7 @@ This document explains the operational model for the jails-v2 stack from a
 DevOps/SRE perspective. It is intentionally practical and complements the
 formal specification in:
 - doc/specs/netbsd-jails-specification.txt
+- doc/specs/netbsd-jails-developers-guide.txt
 
 Scope covered here:
 - secmodel_jail (kernel policy and accounting)
@@ -98,6 +99,7 @@ Operational takeaway:
 - Optional helper used as the single supervised entrypoint inside one jail.
 - Reads /etc/svcmgr.conf and starts multiple services in parallel.
 - Prefixes each emitted line with a service tag and flushes per line.
+- Does not respawn services itself; restart is delegated to outer supervision.
 
 Operational takeaway:
 - Use svcmgr when one jail intentionally contains a small process bundle.
@@ -168,6 +170,7 @@ Example for mantisbt jail:
 5.4 Start and verify
 - Start jails via jailmgr start <name> (or --all with autostart).
 - Verify runtime with jailctl list/status paths.
+- Export counters with jailctl stats (human or Prometheus mode).
 - Verify host syslog contains expected tagged lines.
 
 
