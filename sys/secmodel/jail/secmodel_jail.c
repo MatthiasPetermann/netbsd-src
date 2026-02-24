@@ -1306,10 +1306,19 @@ secmodel_jail_system_cb(kauth_cred_t cred, kauth_action_t action,
 	if (!secmodel_jail_get_config(secmodel_jail_cred_id(cred), &config))
 		return KAUTH_RESULT_DEFER;
 
+	req = (enum kauth_system_req)(uintptr_t)arg0;
+
+	/*
+	 * Always deny private sysctl reads from jail context, regardless of
+	 * policy profile. This keeps private nodes (for example kern.msgbuf)
+	 * inaccessible to jailed credentials.
+	 */
+	if (action == KAUTH_SYSTEM_SYSCTL &&
+	    req == KAUTH_REQ_SYSTEM_SYSCTL_PRVT)
+		return KAUTH_RESULT_DENY;
+
 	if (config.jc_profile == JAIL_PROFILE_POLICY_LOW)
 		return KAUTH_RESULT_DEFER;
-
-	req = (enum kauth_system_req)(uintptr_t)arg0;
 
 	switch (action) {
 	case KAUTH_SYSTEM_MOUNT: /* Deny mounting/unmounting or mount reconfiguration inside jail. */
@@ -1351,7 +1360,6 @@ secmodel_jail_system_cb(kauth_cred_t cred, kauth_action_t action,
 		case KAUTH_REQ_SYSTEM_SYSCTL_ADD: /* Block runtime creation of sysctl nodes. */
 		case KAUTH_REQ_SYSTEM_SYSCTL_DELETE: /* Block runtime deletion of sysctl nodes. */
 		case KAUTH_REQ_SYSTEM_SYSCTL_MODIFY: /* Block writes to privileged sysctl values. */
-		case KAUTH_REQ_SYSTEM_SYSCTL_PRVT: /* Block reads of private/protected sysctls. */
 			return KAUTH_RESULT_DENY;
 		default:
 			return KAUTH_RESULT_DEFER;
