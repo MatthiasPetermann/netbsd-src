@@ -8,6 +8,7 @@ this tree:
 - secmodel_jail (kernel policy model)
 - jailctl (low-level operational interface)
 - jailmgr (multi-jail provisioning/operations)
+- svcmgr (inside-jail service bundle launcher)
 
 This implementation is referred to as "jails-v2".
 The design focus of jails-v2 is jail-native resource control and accounting.
@@ -40,11 +41,17 @@ jails-v2 jail-scoped control path.
   - creates/destroys/lists jails
   - enters jails and executes workloads
   - provides supervised process mode with syslog forwarding
+  - exports runtime counters as table or Prometheus metrics via stats
   - passes jail-native resource policy at create time
 - jailmgr:
   - prepares base filesystem layout for many jails
   - persists per-jail configuration and automates start/stop/restart
+  - supports host-driven in-jail script execution via apply
   - maps persisted policy values 1:1 into jailctl create options
+- svcmgr:
+  - starts multiple tagged services from config inside one jail
+  - multiplexes service stdout/stderr into tagged line output
+  - performs coordinated TERM/KILL shutdown without auto-respawn
 
 
 3. secmodel_jail kernel specification
@@ -148,6 +155,7 @@ jails-v2 jail-scoped control path.
 - exec <jail-id|name> [command [args...]]
 - supervise [logging flags] <jail-id|name> <command> [args...]
 - list
+- stats [-P] [-v] [-h]
 
 4.3 Resource options
 - -q and -c configure cpu.quota/cpu.period and must be provided together.
@@ -161,6 +169,11 @@ jails-v2 jail-scoped control path.
 4.5 Supervision model
 - supervise daemonizes and forwards stdout/stderr to syslog.
 - restart strategy uses exponential backoff with cap.
+
+4.6 Metrics model
+- stats reads the same jail_info snapshot used by list.
+- default mode prints human-oriented tabular counters.
+- -P emits Prometheus text exposition; -h prepends HTTP 200 headers.
 
 
 5. jailmgr specification
@@ -178,15 +191,38 @@ jails-v2 jail-scoped control path.
 - Persists optional create-time CPU/memory/proc/fd/sockbuf/profile/ports.
 - Forwards persisted settings unchanged to jailctl create on start.
 
-5.4 Runtime coupling note
+5.4 Additional lifecycle operations
+- apply executes shell scripts inside a jail via jailctl exec
+  (optionally with ephemeral start/stop behavior).
+- list and status provide lightweight fleet/runtime visibility helpers.
+
+5.5 Runtime coupling note
 - The management path is intentionally explicit about secmodel_jail dependency.
 - If secmodel_jail is absent, jailctl sysctl operations fail; there is no
   implicit fallback mode that emulates jail behavior via generic defaults.
 
 
-6. Integration points and coupling
+6. svcmgr specification
+-----------------------
+6.1 Scope
+- Minimal inside-jail service launcher for small multi-process bundles.
+
+6.2 Configuration and execution
+- Reads `/etc/svcmgr.conf` by default.
+- Each configured line is `<tag> <command...>`.
+- Spawns each command under `/bin/sh -c` with independent session/group.
+
+6.3 Stream handling and shutdown
+- Polls stdout/stderr pipes for all services and emits `tag + line` records.
+- Flushes line-buffered output immediately.
+- On TERM/INT/QUIT sends SIGTERM to all running service groups, then SIGKILL
+  after grace timeout for holdouts.
+- No built-in service respawn loop; outer jail-level supervisor handles restarts.
+
+
+7. Integration points and coupling
 ----------------------------------
-6.1 Resource-control integrations
+7.1 Resource-control integrations
 - Resource admission/charging updates are integrated through secmodel eval
   requests consumed by secmodel_jail:
   - memory-admit / memory-set-current
@@ -196,14 +232,14 @@ jails-v2 jail-scoped control path.
 - These are capability-style integration points: callers query secmodel_jail
   through a broker path rather than embedding policy logic locally.
 
-6.2 Coupling properties
+7.2 Coupling properties
 - Policy ownership remains centralized in secmodel_jail.
 - Userland tools remain thin and mostly transport configuration/commands.
 - Failure mode without secmodel_jail is explicit operation failure, not silent
   behavior change.
 
 
-7. Operational summary
+8. Operational summary
 ----------------------
 - Normal lifecycle:
   1) jailmgr create (or direct jailctl create)
@@ -213,7 +249,7 @@ jails-v2 jail-scoped control path.
 - Resource control in active code is jail-scoped and jail-native (jails-v2).
 
 
-8. Threat-model note
+9. Threat-model note
 --------------------
 - This model provides process-level containment and policy hardening but does
   not provide full virtualization guarantees.
