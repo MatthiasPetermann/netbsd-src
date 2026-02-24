@@ -67,6 +67,7 @@
 .Cm stats
 .Op Fl P
 .Op Fl v
+.Op Fl h
 .Sh DESCRIPTION
 The
 .Nm
@@ -74,6 +75,9 @@ utility manages jails provided by the secmodel jail security model.
 Jails are process groups identified by a jail id.
 Processes in a jail can only signal or see other processes with the same
 jail id, while the host root user (jail id 0) can access all processes.
+Host users in jail id 0 may run read-only listing commands
+.Pq Cm list and Cm stats
+without root privileges.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
@@ -183,7 +187,7 @@ using the root stored in kernel jail metadata and execute
 If no command is provided, an interactive shell is started.
 .It Cm list
 List active jail ids, process counts, configured jail names, and roots.
-.It Cm stats Op Fl P Op Fl v
+.It Cm stats Op Fl P Op Fl v Op Fl h
 Show current jail resource usage from kernel accounting
 .Pq CPU, process, descriptor, socket buffer, and memory counters .
 By default, output is a compact human-readable table without configured limits.
@@ -195,6 +199,17 @@ pairs for process count, file descriptors, socket buffers, and memory.
 With
 .Fl P ,
 output Prometheus-compatible metrics, one sample per jail and counter.
+With
+.Fl h ,
+prepend an HTTP response header suitable for running
+.Cm stats Fl P
+behind
+.Xr inetd 8
+.Pq e.g. status line plus text/plain content type .
+The
+.Fl h
+option requires
+.Fl P .
 .El
 .Sh BUGS
 The jail resource model enforces jail-scoped admission checks for memory,

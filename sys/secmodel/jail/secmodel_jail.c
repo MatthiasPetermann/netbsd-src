@@ -451,13 +451,22 @@ secmodel_jail_cred_matches(kauth_cred_t cred, const char *name)
 }
 
 /*
+ * Host credentials are those with jail id 0.
+ */
+static bool
+secmodel_jail_is_host_cred(kauth_cred_t cred)
+{
+	return secmodel_jail_cred_id(cred) == JAILID_HOST;
+}
+
+/*
  * Host root (euid 0, jail id 0) bypasses jail restrictions.
  */
 static bool
 secmodel_jail_is_host_root(kauth_cred_t cred)
 {
 	return kauth_cred_geteuid(cred) == 0 &&
-	    secmodel_jail_cred_id(cred) == JAILID_HOST;
+	    secmodel_jail_is_host_cred(cred);
 }
 
 /*
@@ -1019,7 +1028,7 @@ secmodel_jail_sysctl_list(SYSCTLFN_ARGS)
 
 	if (newp != NULL)
 		return EPERM;
-	if (!secmodel_jail_is_host_root(l->l_cred))
+	if (!secmodel_jail_is_host_cred(l->l_cred))
 		return EPERM;
 
 	mutex_enter(&jail_lock);

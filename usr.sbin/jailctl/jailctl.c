@@ -73,7 +73,7 @@ static int	parse_log_level_arg(const char *);
 static uint32_t	parse_profile(const char *);
 static void	parse_port_list(struct jail_create *, const char *);
 static void	sanitize_field(const char *, char *, size_t);
-static void	jail_stats(bool, bool);
+static void	jail_stats(bool, bool, bool);
 static void	prom_escape_label(const char *, char *, size_t);
 static bool	jail_lookup_by_name(const char *, struct jail_info *);
 static bool	jail_lookup_by_id(jailid_t, struct jail_info *);
@@ -198,12 +198,16 @@ jail_list(void)
 }
 
 static void
-jail_stats(bool prometheus, bool verbose)
+jail_stats(bool prometheus, bool verbose, bool http_header)
 {
 	struct jail_info *entries;
 	size_t count, i;
 
 	entries = jail_fetch_list(&count);
+	if (prometheus && http_header) {
+		printf("HTTP/1.1 200 OK\r\n");
+		printf("Content-Type: text/plain\r\n\r\n");
+	}
 	if (count == 0) {
 		if (!prometheus)
 			printf("no jails\n");
@@ -1128,13 +1132,14 @@ main(int argc, char *argv[])
 	}
 
 	if (strcmp(argv[1], "stats") == 0) {
-		bool prometheus, verbose;
+		bool prometheus, verbose, http_header;
 		int ch;
 
 		prometheus = false;
 		verbose = false;
+		http_header = false;
 		optind = 2;
-		while ((ch = getopt(argc, argv, "Pv")) != -1) {
+		while ((ch = getopt(argc, argv, "Pvh")) != -1) {
 			switch (ch) {
 			case 'P':
 				prometheus = true;
@@ -1142,14 +1147,19 @@ main(int argc, char *argv[])
 			case 'v':
 				verbose = true;
 				break;
+			case 'h':
+				http_header = true;
+				break;
 			default:
 				usage();
 			}
 		}
 		if (optind != argc)
 			usage();
+		if (http_header && !prometheus)
+			errx(1, "-h requires -P");
 
-		jail_stats(prometheus, verbose);
+		jail_stats(prometheus, verbose, http_header);
 		return 0;
 	}
 
@@ -1166,7 +1176,7 @@ usage(void)
 	    "       %s exec <jail-id|name> [command [args...]]\n"
 	    "       %s destroy <jail-id|name>\n"
 	    "       %s list\n"
-	    "       %s stats [-P] [-v]\n",
+	    "       %s stats [-P] [-v] [-h]\n",
 	    getprogname(), getprogname(), getprogname(), getprogname(),
 	    getprogname(), getprogname());
 	exit(1);
