@@ -402,6 +402,15 @@ sysctl_dispatch(SYSCTLFN_ARGS)
 	fn = NULL;
 	error = sysctl_locate(l, name, namelen, &rnode, &ni);
 
+	/*
+	 * Enforce private-node read permissions on the final target even when
+	 * dispatching through a custom sysctl handler rather than sysctl_lookup().
+	 */
+	if (error == 0 && l != NULL && (rnode->sysctl_flags & CTLFLAG_PRIVATE) &&
+	    (error = kauth_authorize_system(l->l_cred, KAUTH_SYSTEM_SYSCTL,
+	    KAUTH_REQ_SYSTEM_SYSCTL_PRVT, NULL, NULL, NULL)) != 0)
+		goto out;
+
 	if (rnode->sysctl_func != NULL) {
 		/*
 		 * the node we ended up at has a function, so call it.  it can
