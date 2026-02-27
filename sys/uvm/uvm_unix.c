@@ -136,21 +136,21 @@ sys_obreak(struct lwp *l, const struct sys_obreak_args *uap, register_t *retval)
 			return (error);
 		}
 		{
-			struct secmodel_jail_eval_set_current_args sca;
+			struct secmodel_jail_setinfo_set_current_args sca;
 			sca.cred = l->l_cred;
 			sca.current = (uint64_t)vm->vm_map.size;
-			(void)secmodel_eval(SECMODEL_JAIL_ID,
-			    SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT, &sca, NULL);
+			(void)secmodel_setinfo(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_SETINFO_MEMORY_SET_CURRENT, &sca);
 		}
 		vm->vm_dsize += atop(nbreak - obreak);
 	} else {
 		uvm_deallocate(&vm->vm_map, nbreak, obreak - nbreak);
 		{
-			struct secmodel_jail_eval_set_current_args sca;
+			struct secmodel_jail_setinfo_set_current_args sca;
 			sca.cred = l->l_cred;
 			sca.current = (uint64_t)vm->vm_map.size;
-			(void)secmodel_eval(SECMODEL_JAIL_ID,
-			    SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT, &sca, NULL);
+			(void)secmodel_setinfo(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_SETINFO_MEMORY_SET_CURRENT, &sca);
 		}
 		vm->vm_dsize -= atop(obreak - nbreak);
 	}

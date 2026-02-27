@@ -225,12 +225,43 @@ secmodel_unplug(secmodel_t sm)
 	return error;
 }
 
-/* XXX TODO */
+/*
+ * Push runtime information into a security model.
+ *
+ * This complements secmodel_eval(9):
+ * - secmodel_eval() is used for policy decisions ("may I?").
+ * - secmodel_setinfo() is used for state/accounting updates ("FYI: state changed").
+ *
+ * Return values intentionally mirror secmodel_eval() semantics:
+ * framework-level lookup/validation errors are returned as positive errno
+ * values, while callback-local errors are returned as negative errno values.
+ */
 int
-secmodel_setinfo(const char *id, void *v, int *err)
+secmodel_setinfo(const char *id, const char *what, void *arg)
 {
+	secmodel_t sm;
+	int error = 0;
 
-	return EOPNOTSUPP;
+	rw_enter(&secmodels_lock, RW_READER);
+	sm = secmodel_lookup(id);
+	if (sm == NULL) {
+		error = EINVAL;
+		goto out;
+	}
+
+	if (sm->sm_setinfo == NULL) {
+		error = ENOENT;
+		goto out;
+	}
+
+	error = sm->sm_setinfo(what, arg);
+	/* pass error from a secmodel(9) callback as a negative value */
+	error = -error;
+
+ out:
+	rw_exit(&secmodels_lock);
+
+	return error;
 }
 
 int

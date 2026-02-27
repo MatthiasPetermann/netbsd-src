@@ -960,11 +960,11 @@ fd_alloc(proc_t *p, int want, int *result)
 		    dt->dt_ff[i] == (fdfile_t *)fdp->fd_dfdfile[i]);
 		fd_checkmaps(fdp);
 		{
-			struct secmodel_jail_eval_set_current_args sca;
+			struct secmodel_jail_setinfo_set_current_args sca;
 			sca.cred = p->p_cred;
 			sca.current = fd_current + 1;
-			(void)secmodel_eval(SECMODEL_JAIL_ID,
-			    SECMODEL_JAIL_EVAL_FD_SET_CURRENT, &sca, NULL);
+			(void)secmodel_setinfo(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_SETINFO_FD_SET_CURRENT, &sca);
 		}
 		mutex_exit(&fdp->fd_lock);
 		return 0;

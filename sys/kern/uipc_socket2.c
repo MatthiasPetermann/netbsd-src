@@ -733,8 +733,8 @@ sbreserve(struct sockbuf *sb, u_long cc, struct socket *so)
 			struct secmodel_jail_eval_sockbuf_charge_args sba;
 			sba.cred = so->so_cred;
 			sba.bytes = cc - oldcc;
-			(void)secmodel_eval(SECMODEL_JAIL_ID,
-			    SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE, &sba, NULL);
+			(void)secmodel_setinfo(SECMODEL_JAIL_ID,
+			    SECMODEL_JAIL_SETINFO_SOCKBUF_UNCHARGE, &sba);
 		}
 		return 0;
 	}
@@ -742,8 +742,8 @@ sbreserve(struct sockbuf *sb, u_long cc, struct socket *so)
 		struct secmodel_jail_eval_sockbuf_charge_args sba;
 		sba.cred = so->so_cred;
 		sba.bytes = oldcc - cc;
-		(void)secmodel_eval(SECMODEL_JAIL_ID,
-		    SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE, &sba, NULL);
+		(void)secmodel_setinfo(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_SETINFO_SOCKBUF_UNCHARGE, &sba);
 	}
 	sb->sb_mbmax = uimin(cc * 2, sb_max);
 	if (sb->sb_lowat > sb->sb_hiwat)
@@ -770,8 +770,8 @@ sbrelease(struct sockbuf *sb, struct socket *so)
 		struct secmodel_jail_eval_sockbuf_charge_args sba;
 		sba.cred = so->so_cred;
 		sba.bytes = oldcc;
-		(void)secmodel_eval(SECMODEL_JAIL_ID,
-		    SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE, &sba, NULL);
+		(void)secmodel_setinfo(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_SETINFO_SOCKBUF_UNCHARGE, &sba);
 	}
 	sb->sb_mbmax = 0;
 }

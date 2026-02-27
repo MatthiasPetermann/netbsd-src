@@ -40,7 +40,7 @@ void secmodel_init(void);
  * or setting information.
  */
 typedef int (*secmodel_eval_t)(const char *, void *, void *);
-typedef int (*secmodel_setinfo_t)(void *); /* XXX TODO */
+typedef int (*secmodel_setinfo_t)(const char *, void *);
 
 /*
  * Secmodel entry.
@@ -61,5 +61,5 @@ int secmodel_deregister(secmodel_t);
 int secmodel_nsecmodels(void);
 
 int secmodel_eval(const char *, const char *, void *, void *);
-int secmodel_setinfo(const char *, void *, int *); /* XXX TODO */
+int secmodel_setinfo(const char *, const char *, void *);
 #endif /* !_SECMODEL_SECMODEL_H_ */

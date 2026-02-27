@@ -464,11 +464,11 @@ sys_mmap(struct lwp *l, const struct sys_mmap_args *uap, register_t *retval)
 		}
 	}
 	if (error == 0) {
-		struct secmodel_jail_eval_set_current_args sca;
+		struct secmodel_jail_setinfo_set_current_args sca;
 		sca.cred = l->l_cred;
 		sca.current = (uint64_t)p->p_vmspace->vm_map.size;
-		(void)secmodel_eval(SECMODEL_JAIL_ID,
-		    SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT, &sca, NULL);
+		(void)secmodel_setinfo(SECMODEL_JAIL_ID,
+		    SECMODEL_JAIL_SETINFO_MEMORY_SET_CURRENT, &sca);
 	}
 
 	/* remember to add offset */

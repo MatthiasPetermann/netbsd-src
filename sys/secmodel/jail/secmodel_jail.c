@@ -1463,12 +1463,18 @@ secmodel_jail_cred_cb(kauth_cred_t cred, kauth_action_t action,
 	}
 }
 
+/*
+ * secmodel_jail_eval() handles only policy decisions that can succeed/fail.
+ *
+ * The complementary state/accounting updates are handled by
+ * secmodel_jail_setinfo(); keeping these paths separate makes call sites
+ * self-documenting and avoids conflating admission checks with telemetry.
+ */
 static int
 secmodel_jail_eval(const char *what, void *arg, void *ret)
 {
 	const struct secmodel_jail_eval_cred_matches_args *a;
 	const struct secmodel_jail_eval_admit_args *aa;
-	const struct secmodel_jail_eval_set_current_args *sca;
 	const struct secmodel_jail_eval_sockbuf_charge_args *sba;
 	const struct secmodel_jail_eval_cpu_can_run_args *cra;
 	bool *matchp;
@@ -1499,28 +1505,12 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcmp(what, SECMODEL_JAIL_EVAL_MEMORY_SET_CURRENT) == 0) {
-		if (arg == NULL)
-			return EINVAL;
-		sca = arg;
-		secmodel_jail_memory_set_current(sca->cred, sca->current);
-		return 0;
-	}
-
 	if (strcmp(what, SECMODEL_JAIL_EVAL_FD_ADMIT) == 0) {
 		if (arg == NULL || ret == NULL)
 			return EINVAL;
 		aa = arg;
 		okp = ret;
 		*okp = secmodel_jail_fd_admit(aa->cred, aa->current, aa->delta);
-		return 0;
-	}
-
-	if (strcmp(what, SECMODEL_JAIL_EVAL_FD_SET_CURRENT) == 0) {
-		if (arg == NULL)
-			return EINVAL;
-		sca = arg;
-		secmodel_jail_fd_set_current(sca->cred, sca->current);
 		return 0;
 	}
 
@@ -1533,20 +1523,51 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcmp(what, SECMODEL_JAIL_EVAL_SOCKBUF_UNCHARGE) == 0) {
-		if (arg == NULL)
-			return EINVAL;
-		sba = arg;
-		secmodel_jail_sockbuf_uncharge(sba->cred, sba->bytes);
-		return 0;
-	}
-
 	if (strcmp(what, SECMODEL_JAIL_EVAL_CPU_CAN_RUN) == 0) {
 		if (arg == NULL || ret == NULL)
 			return EINVAL;
 		cra = arg;
 		okp = ret;
 		*okp = secmodel_jail_cpu_can_run(cra->cred);
+		return 0;
+	}
+
+	return ENOENT;
+}
+
+/*
+ * secmodel_jail_setinfo() receives best-effort runtime updates from other
+ * subsystems. These updates are intentionally side-effect free from an access
+ * control perspective: failure to deliver an update must not grant or deny a
+ * permission check.
+ */
+static int
+secmodel_jail_setinfo(const char *what, void *arg)
+{
+	const struct secmodel_jail_setinfo_set_current_args *sca;
+	const struct secmodel_jail_setinfo_sockbuf_args *sba;
+
+	if (strcmp(what, SECMODEL_JAIL_SETINFO_MEMORY_SET_CURRENT) == 0) {
+		if (arg == NULL)
+			return EINVAL;
+		sca = arg;
+		secmodel_jail_memory_set_current(sca->cred, sca->current);
+		return 0;
+	}
+
+	if (strcmp(what, SECMODEL_JAIL_SETINFO_FD_SET_CURRENT) == 0) {
+		if (arg == NULL)
+			return EINVAL;
+		sca = arg;
+		secmodel_jail_fd_set_current(sca->cred, sca->current);
+		return 0;
+	}
+
+	if (strcmp(what, SECMODEL_JAIL_SETINFO_SOCKBUF_UNCHARGE) == 0) {
+		if (arg == NULL)
+			return EINVAL;
+		sba = arg;
+		secmodel_jail_sockbuf_uncharge(sba->cred, sba->bytes);
 		return 0;
 	}
 
@@ -1565,7 +1586,7 @@ secmodel_jail_modcmd(modcmd_t cmd, void *arg)
 	case MODULE_CMD_INIT:
 		error = secmodel_register(&jail_sm,
 		    SECMODEL_JAIL_ID, SECMODEL_JAIL_NAME,
-		    NULL, secmodel_jail_eval, NULL);
+		    NULL, secmodel_jail_eval, secmodel_jail_setinfo);
 		if (error != 0)
 			printf("secmodel_jail_modcmd::init: "
 			    "secmodel_register returned %d\n", error);
