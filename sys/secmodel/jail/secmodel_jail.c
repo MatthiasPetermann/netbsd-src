@@ -1701,6 +1701,30 @@ secmodel_jail_setinfo(const char *what, void *arg)
 }
 
 /*
+ * secmodel_setinfo_t currently passes an opaque argument only. Use a tiny
+ * adapter so secmodel_jail_setinfo() can keep its named-operation dispatch.
+ */
+struct secmodel_jail_setinfo_call {
+	const char *what;
+	void *arg;
+};
+
+static int
+secmodel_jail_setinfo_adapter(void *v)
+{
+	const struct secmodel_jail_setinfo_call *call;
+
+	if (v == NULL)
+		return EINVAL;
+
+	call = v;
+	if (call->what == NULL)
+		return EINVAL;
+
+	return secmodel_jail_setinfo(call->what, call->arg);
+}
+
+/*
  * Module command handler: register/deregister the security model.
  */
 static int
@@ -1712,7 +1736,7 @@ secmodel_jail_modcmd(modcmd_t cmd, void *arg)
 	case MODULE_CMD_INIT:
 		error = secmodel_register(&jail_sm,
 		    SECMODEL_JAIL_ID, SECMODEL_JAIL_NAME,
-		    NULL, secmodel_jail_eval, secmodel_jail_setinfo);
+		    NULL, secmodel_jail_eval, secmodel_jail_setinfo_adapter);
 		if (error != 0)
 			printf("secmodel_jail_modcmd::init: "
 			    "secmodel_register returned %d\n", error);
