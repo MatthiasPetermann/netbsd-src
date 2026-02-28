@@ -1,0 +1,229 @@
+." $NetBSD$
+.\"-
+.\" Copyright (c) 2025
+.\" The NetBSD Foundation, Inc.
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+.\" ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+.\" TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+.\" PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+.\" BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.\"-
+.Dd February 19, 2026
+.Dt JAILCTL 8
+.Os
+.Sh NAME
+.Nm jailctl
+.Nd manage secmodel jail instances
+.Sh SYNOPSIS
+.Nm
+.Cm create
+.Op Fl q Ar cpu.quota
+.Op Fl c Ar cpu.period
+.Op Fl m Ar memory.max-bytes
+.Op Fl p Ar proc.max
+.Op Fl d Ar fd.max
+.Op Fl s Ar sockbuf.max-bytes
+.Op Fl l Ar profile
+.Op Fl r Ar port[,port...]
+.Fl n Ar name
+.Ar root
+.Nm
+.Cm supervise
+.Op Fl f Ar facility
+.Op Fl o Ar stdout-level
+.Op Fl e Ar stderr-level
+.Op Fl t Ar tag
+.Ar jail-id | name
+.Ar command
+.Op Ar args ...
+.Nm
+.Cm destroy
+.Ar jail-id | name
+.Nm
+.Cm exec
+.Ar jail-id | name
+.Op command
+.Op Ar args ...
+.Nm
+.Cm list
+.Nm
+.Cm stats
+.Op Fl P
+.Op Fl v
+.Op Fl h
+.Sh DESCRIPTION
+The
+.Nm
+utility manages jails provided by the secmodel jail security model.
+Jails are process groups identified by a jail id.
+Processes in a jail can only signal or see other processes with the same
+jail id, while the host root user (jail id 0) can access all processes.
+Host users in jail id 0 may run read-only listing commands
+.Pq Cm list and Cm stats
+without root privileges.
+.Pp
+The commands are as follows:
+.Bl -tag -width Ds
+.It Cm create Op Fl q Ar cpu.quota Op Fl c Ar cpu.period Op Fl m Ar memory.max-bytes Op Fl p Ar proc.max Op Fl d Ar fd.max Op Fl s Ar sockbuf.max-bytes Op Fl l Ar profile Op Fl r Ar port[,port...] Fl n Ar name Ar root
+Create a new jail id, assign it the unique
+.Ar name ,
+and store jail name and root metadata in the kernel jail model.
+This command only creates the jail and prints the resulting jail id.
+.Pp
+The optional flags set jail-scoped resource policy at creation time.
+.Bl -tag -width Ds
+.It Fl q Ar cpu.quota
+Set the CPU quota budget per window (in scheduler ticks).
+Must be used together with
+.Fl c .
+.It Fl c Ar cpu.period
+Set the CPU quota window length in microseconds.
+Must be used together with
+.Fl q .
+.It Fl m Ar memory.max-bytes
+Set the jail memory admission ceiling for VM growth and mmap paths.
+.It Fl p Ar proc.max
+Set the jail process-count ceiling (enforced at fork admission).
+.It Fl d Ar fd.max
+Set the jail file-descriptor allocation ceiling.
+.It Fl s Ar sockbuf.max-bytes
+Set the jail socket-buffer reservation ceiling.
+.It Fl l Ar profile
+Select the jail security profile.
+Valid values are
+.Dq low ,
+.Dq medium ,
+and
+.Dq high .
+The default is
+.Dq high .
+.It Fl r Ar port[,port...]
+Reserve one or more listening ports for this jail.
+.El
+.It Cm supervise Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar jail-id | name Ar command Op Ar args ...
+Start a command in an existing jail selected by
+.Ar jail-id
+or
+.Ar name .
+The started command's standard output and standard error are forwarded to
+host syslog by a background supervisor process.
+The
+.Cm supervise
+command daemonizes itself, so callers do not need to wrap it with
+.Xr nohup 1
+or run it in the shell background.
+If the supervised command exits unexpectedly, the supervisor logs the failure
+and restarts it with an exponential backoff delay (capped at 10 seconds).
+.Pp
+The optional flags control supervisor logging:
+.Bl -tag -width Ds
+.It Fl f Ar facility
+Set the syslog facility used by the supervisor and for forwarded
+standard-output and standard-error lines.
+The default is
+.Dq daemon .
+.It Fl o Ar stdout-level
+Set the syslog level used for forwarded standard output lines.
+The level may be specified as one of
+.Dq emerg ,
+.Dq alert ,
+.Dq crit ,
+.Dq err ,
+.Dq warning ,
+.Dq notice ,
+.Dq info ,
+or
+.Dq debug ,
+or as a numeric level from 0 to 7.
+The default is
+.Dq notice .
+.It Fl e Ar stderr-level
+Set the syslog level used for forwarded standard error lines.
+The same values as
+.Fl o
+are accepted.
+The default is
+.Dq err .
+.It Fl t Ar tag
+Set the syslog tag used for forwarded jailed-command output.
+If omitted,
+.Dq jailctl
+is used.
+.El
+.Pp
+The background supervisor process is shown in process listings as
+.Dq jailctl supervise jail=<name> jid=<id>
+to distinguish it from one-shot supervise invocations.
+.It Cm destroy Ar jail-id | name
+Destroy a jail selected by
+.Ar jail-id
+or
+.Ar name
+that has no remaining processes.
+.It Cm exec Ar jail-id | name Op command Op Ar args ...
+Enter a running jail selected by
+.Ar jail-id
+or
+.Ar name
+using the root stored in kernel jail metadata and execute
+.Ar command .
+If no command is provided, an interactive shell is started.
+.It Cm list
+List active jail ids, process counts, configured jail names, and roots.
+.It Cm stats Op Fl P Op Fl v Op Fl h
+Show current jail resource usage from kernel accounting
+.Pq CPU, process, descriptor, socket buffer, and memory counters .
+By default, output is a compact human-readable table without configured limits.
+With
+.Fl v ,
+show an extended table that includes
+.Dq current/max
+pairs for process count, file descriptors, socket buffers, and memory.
+With
+.Fl P ,
+output Prometheus-compatible metrics, one sample per jail and counter.
+With
+.Fl h ,
+prepend an HTTP response header suitable for running
+.Cm stats Fl P
+behind
+.Xr inetd 8
+.Pq e.g. status line plus text/plain content type .
+The
+.Fl h
+option requires
+.Fl P .
+.El
+.Sh NOTES
+The jail resource model enforces jail-scoped admission checks for memory,
+process count, file descriptors, and socket buffer reservations.
+CPU quota and period are accounted and throttled in periodic windows.
+
+.Sh SEE ALSO
+.Xr chroot 2 ,
+.Xr secmodel 9 ,
+.Xr sysctl 8
+.Sh HISTORY
+The
+.Nm
+utility first appeared as a prototype patch for
+.Nx 10.1 .
+.Sh AUTHORS
+.An Matthias Petermann Aq Mt mp@petermann-digital.de

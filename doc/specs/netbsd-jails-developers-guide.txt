@@ -1,0 +1,343 @@
+NetBSD jails-v2 developer guide (implementation deep dive)
+===========================================================
+
+Status
+------
+This document is an implementation-oriented guide for the current jails-v2
+stack in this source tree. It explains what each layer does, how it is wired,
+and where to read the code first.
+
+Covered components:
+- secmodel_jail (kernel security model + jail-native resource accounting)
+- jailctl (sysctl transport + supervise/runtime adapter)
+- jailmgr (host orchestration shell tool)
+- svcmgr (inside-jail multi-service runner)
+
+
+1. NetBSD context and design placement
+--------------------------------------
+The stack is intentionally NetBSD-native:
+- policy and enforcement in the kernel via secmodel/kauth
+- narrow userland tools that mostly transport intent
+- host-root controlled lifecycle and logging via existing syslogd paths
+
+Relevant code entry points:
+- Kernel model registration and lifecycle:
+  - sys/secmodel/jail/secmodel_jail.c
+  - sys/secmodel/jail/jail.h
+- Shared jail ABI types/flags:
+  - sys/sys/jail.h
+- Userland control/orchestration:
+  - usr.sbin/jailctl/jailctl.c
+  - usr.sbin/jailmgr/jailmgr
+  - usr.sbin/svcmgr/svcmgr.c
+
+
+2. secmodel_jail internals (kernel)
+-----------------------------------
+2.1 Core data model
+- `struct jail_entry` is the authoritative in-kernel object per jail:
+  identity, metadata (name/root), profile, configured limits, reserved ports,
+  and live counters (`je_*` fields).
+- Global state:
+  - list head (`jail_list`)
+  - model lock (`jail_lock`)
+  - monotonic id allocator (`jail_next_id`, host remains id 0)
+  - 1 Hz callout for CPU accounting (`jail_cpu_account_ch`)
+
+Read first:
+- struct definitions and globals near top of
+  `sys/secmodel/jail/secmodel_jail.c`.
+
+2.2 Control plane via sysctl
+secmodel_jail exports the control ABI under `security.models.jail.*`.
+
+Handlers:
+- `id`: read current credential jail id / write to request jail entry
+  (host-root only for write).
+- `create`: structured write-only input (`struct jail_create`), validates
+  flags and payload invariants, allocates new jail id, and returns it.
+- `destroy`: remove empty jail object by id.
+- `list`: snapshot array of `struct jail_info` with policy + counters.
+
+Implementation notes:
+- `create` rejects unknown flags, zero-valued configured limits, duplicated or
+  invalid reserved ports, and partial CPU tuple (quota xor period).
+- profile defaults to HIGH when not explicitly set.
+- `destroy` refuses if procs/zombies still reference the jail.
+
+Read first:
+- `secmodel_jail_sysctl_id`
+- `secmodel_jail_sysctl_create`
+- `secmodel_jail_sysctl_destroy`
+- `secmodel_jail_sysctl_list`
+
+2.3 Enforcement model: kauth listeners
+Listeners are registered for process, cred, system, and network scopes.
+
+Process scope:
+- `KAUTH_PROCESS_CANSEE` and `KAUTH_PROCESS_SIGNAL` enforce same-jail boundary
+  (except host-root bypass).
+- `KAUTH_PROCESS_FORK` enforces process limit and CPU over-quota fork throttling.
+
+Credential scope:
+- `KAUTH_CRED_INIT` initializes jid to host (0).
+- `KAUTH_CRED_COPY` preserves source jid.
+
+System scope:
+- jailed credentials are constrained for host-wide admin classes
+  (mount/module/reboot/time/sysctl-write families and more), depending on
+  profile (`low`, `medium`, `high`).
+- medium keeps SysV IPC admin requests deferred where high denies.
+
+Network scope:
+- bind checks apply per-port reservation ownership.
+- if port is reserved by any jail, only owning jail credentials may bind.
+- ephemeral port 0 is intentionally not reservation-restricted.
+
+Read first:
+- `secmodel_jail_process_cb`
+- `secmodel_jail_cred_cb`
+- `secmodel_jail_system_cb`
+- `secmodel_jail_network_cb`
+
+2.4 Resource controls and accounting
+Active jail-scoped controls:
+- memory.max: admit + set-current hooks
+- fd.max: admit + set-current hooks
+- sockbuf.max: charge + uncharge hooks
+- proc.max: enforced at fork gate
+- cpu.quota/cpu.period: accounted in callout window + scheduler/fork gate
+
+Important details:
+- limit value 0 means unlimited.
+- `secmodel_jail_within_limit(current, delta, limit)` provides common overflow-
+  safe gate.
+- CPU accounting samples per-process uticks/sticks/iticks at 1 Hz,
+  computes per-window usage, sets over-quota state, and increments throttle
+  counters when transitions/denials happen.
+
+Kernel integrations calling secmodel eval:
+- memory hooks in UVM (`sys/uvm/uvm_mmap.c`, `sys/uvm/uvm_unix.c`)
+- fd hooks in descriptor allocation paths (`sys/kern/kern_descrip.c`)
+- socket buffer hooks (`sys/kern/uipc_socket2.c`)
+- scheduler run gate (`sys/kern/kern_runq.c`)
+
+Eval API surface (brokered by secmodel core):
+- `cred-matches`
+- `memory-admit`, `memory-set-current`
+- `fd-admit`, `fd-set-current`
+- `sockbuf-charge`, `sockbuf-uncharge`
+- `cpu-can-run`, `cpu-can-run-try`
+
+Read first:
+- `sys/secmodel/jail/jail.h` eval constants + arg structs
+- `secmodel_jail_eval` dispatcher
+
+2.5 Concurrency and lifecycle
+- Most jail state is under `jail_lock`.
+- process table walks coordinate `proc_lock` + `jail_lock`.
+- module init path:
+  1) secmodel registration (`secmodel_register`)
+  2) sysctl tree + key init
+  3) kauth listeners start
+  4) CPU callout scheduled
+- module stop path removes listeners and callout.
+
+
+3. jailctl internals (userland control adapter)
+-----------------------------------------------
+3.1 ABI boundary and object translation
+- `jailctl create` builds a `struct jail_create` and writes it to
+  `security.models.jail.create`.
+- `jailctl list` reads `security.models.jail.list` and prints table output.
+- `jailctl destroy` writes target id to `security.models.jail.destroy`.
+- `jailctl exec/supervise` writes target id through `security.models.jail.id`
+  before `chroot + chdir + execvp` in child path.
+
+`jailctl` intentionally performs very little policy logic; validation is mostly
+argument sanity and forwarding into kernel ABI fields.
+
+3.2 Supervise mode
+`jailctl supervise` is a detached monitor process that:
+- daemonizes
+- starts one command inside target jail
+- captures child stdout/stderr using pipes
+- forwards line-oriented logs to syslog with separate priorities
+- restarts the command on exit with exponential backoff (1..10s)
+- resets backoff if runtime lasted >= 30s
+- supports clean shutdown on TERM/INT/QUIT
+
+This is the host-side glue used by `jailmgr start`.
+
+3.3 Stats output
+`jailctl stats` exposes `security.models.jail.list` counters as:
+- human table mode
+- verbose table mode
+- Prometheus text format (`-P`), optional HTTP header (`-h`)
+
+Read first:
+- command dispatch in `main()` and `usage()`
+- `jail_fetch_list`
+- `jail_supervise_loop`
+- `jail_run_monitor_once`
+- `jail_stats`
+
+
+4. jailmgr internals (host orchestration)
+-----------------------------------------
+4.1 Implementation style
+- `jailmgr` is a POSIX shell tool (`usr.sbin/jailmgr/jailmgr`) with
+  explicit command orchestration around `jailctl`, mounts, and config files.
+- global config: `/etc/jailmgr.conf`
+- per-jail config: `${JAIL_DATA_DIR}/<name>/jail.conf`
+
+4.2 Bootstrap path
+`bootstrap` performs platform preparation:
+- ensures root/tools
+- ensures secmodel_jail module is loaded now (`modload secmodel_jail`)
+- persists module autoload line in `/etc/modules.conf`
+- fetches base/etc sets and builds shared base layer
+- writes default `/etc/jailmgr.conf` if absent
+- ensures rc.conf has `jailmgr=NO` default entry
+
+4.3 Filesystem composition
+Per jail:
+- read-only null mount of shared base to `<root>`
+- writable null mount of jail data directory to `<root>/.data`
+- shared base contains symlinks (`/etc`, `/var`, `/tmp`, `/home`, `/root`,
+  `/usr/pkg`, dotfiles) into `/.data/...`
+- optional jail-local `/dev` tmpfs + `MAKEDEV`, optional `ptyfs` on `/dev/pts`
+
+This yields immutable base with writable per-jail state.
+
+4.4 Lifecycle commands
+- `create`: create dirs + etc seed + persist jail.conf defaults/options.
+- `start`: mount root, `jailctl create`, then `jailctl supervise`.
+- `stop`: terminate supervise monitor, destroy jail id, unmount.
+- `restart`: stop then start.
+- `start --all` / `stop --all`: operate on autostart-enabled jails.
+- `apply [--ephemeral]`: execute script in jail via `jailctl exec`.
+- `status` and `list`: reporting helpers over config and runtime.
+
+Policy forwarding model:
+- persisted `JAIL_CREATE_*` fields are mapped 1:1 to `jailctl create` flags
+  with no unit conversion or hidden defaults.
+
+Read first:
+- `start_jail_internal`
+- `create_jail`
+- `mount_jail_root` / `umount_jail_root`
+- `ensure_secmodel_jail`
+- `apply_jail_script`
+
+
+5. svcmgr internals (inside-jail process bundle runner)
+-------------------------------------------------------
+5.1 Config format
+Default config file is `/etc/svcmgr.conf`.
+Each non-empty, non-comment line is:
+
+  <tag><whitespace><command...>
+
+Parser preserves the full command tail after first separator.
+
+5.2 Runtime model
+- one child per configured service (`/bin/sh -c <command>`)
+- each child runs in own session/process-group (`setsid`)
+- monitor event loop polls stdout/stderr pipes from all services
+- output is transformed to line records and emitted as:
+
+  <tag> <line>
+
+- stdout/stderr are line-buffered (`setvbuf(..., _IOLBF, ...)`) and flushed
+  per emitted line
+- on TERM/INT/QUIT: send SIGTERM to all running groups, wait up to 5s,
+  then SIGKILL remaining groups
+- no automatic respawn; service restarts are delegated to outer supervisor
+  layer (typically `jailctl supervise`)
+
+Read first:
+- `load_config`
+- `spawn_service`
+- `monitor_services`
+- `process_stream_chunk`
+
+
+6. End-to-end control/data flow
+-------------------------------
+Create/start path:
+1) jailmgr prepares mounts + config
+2) jailmgr calls `jailctl create` (structured create payload)
+3) kernel secmodel_jail allocates id + stores policy
+4) jailmgr calls `jailctl supervise`
+5) supervise enters jail and executes command (often svcmgr)
+6) application logs -> svcmgr tag lines (if used) -> jailctl syslog forward
+
+Runtime enforcement path:
+- kernel subsystems call `secmodel_eval(...SECMODEL_JAIL_ID...)` where wired
+- secmodel_jail admits/denies and updates counters centrally
+
+
+7. Source-map quick reference
+-----------------------------
+Kernel and ABI:
+- `sys/secmodel/jail/secmodel_jail.c`
+- `sys/secmodel/jail/jail.h`
+- `sys/sys/jail.h`
+
+Kernel call sites into eval hooks:
+- `sys/uvm/uvm_mmap.c`
+- `sys/uvm/uvm_unix.c`
+- `sys/kern/kern_descrip.c`
+- `sys/kern/uipc_socket2.c`
+- `sys/kern/kern_runq.c`
+
+Userland tools:
+- `usr.sbin/jailctl/jailctl.c`
+- `usr.sbin/jailctl/jailctl.8`
+- `usr.sbin/jailmgr/jailmgr`
+- `usr.sbin/jailmgr/jailmgr.8`
+- `usr.sbin/svcmgr/svcmgr.c`
+- `usr.sbin/svcmgr/svcmgr.8`
+
+Existing specs/ops docs:
+- `doc/specs/netbsd-jails-specification.txt`
+- `doc/specs/netbsd-jails-operations-guide.txt`
+
+
+8. BUGS
+-------
+8.1 Scheduler CPU-admission lock ordering hazard
+- Historical issue: the scheduler runqueue selection path called secmodel_jail
+  CPU admission in a context that can hold runqueue spin locks.
+- secmodel_jail CPU admission uses `jail_lock` (adaptive mutex), so a blocking
+  lock acquire from this path can create lock-order inversion and system-wide
+  hard lockups under stress.
+- Observed failure mode during stress tests: host freeze severe enough that
+  kernel debugger interaction can become unavailable.
+
+Current mitigation (as of this tree):
+- `sys/kern/kern_runq.c` uses `SECMODEL_JAIL_EVAL_CPU_CAN_RUN_TRY` instead of
+  a potentially blocking CPU-admission query.
+- `sys/secmodel/jail/secmodel_jail.c` implements the try variant with
+  `mutex_tryenter(&jail_lock)` and returns `EBUSY` if lock acquisition would
+  block.
+- Scheduler behavior on `EBUSY` is fail-open for that pick attempt: it keeps
+  progress guarantees and retries on subsequent scheduler passes.
+
+Trade-offs of current mitigation:
+- Deadlock risk in the critical runqueue path is reduced significantly.
+- CPU throttling may be temporarily bypassed during high lock contention.
+- Therefore admission behavior is safe-first (liveness) rather than fully
+  deterministic under contention.
+
+Long-term fixes (recommended):
+- Introduce a scheduler-safe lockless CPU admission snapshot (per-jail atomic
+  `over_quota` state and optional generation/epoch metadata).
+- Keep all policy writes and quota window updates under `jail_lock`, but
+  publish read-mostly gate state atomically for scheduler consumption.
+- Make scheduler read path independent of list traversal and adaptive mutexes
+  (no blocking calls, no lock acquisition, no secmodel call that can sleep).
+- Optionally retain `cpu-can-run-try` as fallback/compat path while migrating,
+  then phase it out when lockless reads are complete and validated.

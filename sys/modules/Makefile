@@ -169,6 +169,7 @@ SUBDIR+=	scsiverbose
 SUBDIR+=	sdtemp
 SUBDIR+=	secmodel_bsd44
 SUBDIR+=	secmodel_extensions
+SUBDIR+=	secmodel_jail
 SUBDIR+=	secmodel_overlay
 SUBDIR+=	securelevel
 SUBDIR+=	sequencer

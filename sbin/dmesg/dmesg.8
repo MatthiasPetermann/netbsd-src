@@ -29,7 +29,7 @@
 .\"
 .\"     @(#)dmesg.8	8.1 (Berkeley) 6/5/93
 .\"
-.Dd October 30, 2018
+.Dd February 24, 2026
 .Dt DMESG 8
 .Os
 .Sh NAME
@@ -43,6 +43,12 @@
 .Sh DESCRIPTION
 .Nm
 displays the contents of the system message buffer.
+.Pp
+Access to the live kernel message buffer may be restricted to privileged
+users by system policy.
+When access is denied,
+.Nm
+will fail to read the buffer.
 .Pp
 The options are as follows:
 .Bl -tag -width Ds

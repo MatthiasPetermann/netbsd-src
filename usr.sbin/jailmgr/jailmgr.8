@@ -1,0 +1,600 @@
+." $NetBSD$
+.Dd February 13, 2026
+.Dt JAILMGR 8
+.Os
+.Sh NAME
+.Nm jailmgr
+.Nd provision and manage multiple jailctl jails from one configuration
+.Sh SYNOPSIS
+.Nm
+.Ar command
+.Op Ar args ...
+.Sh DESCRIPTION
+The
+.Nm
+utility is a shell-script helper around
+.Xr jailctl 8
+for provisioning and operating multiple jails.
+It is designed for setups that use:
+.Bl -bullet -compact
+.It
+a shared, read-only base filesystem extracted from
+.Pa base.tar.xz ,
+.It
+a per-jail writable
+.Pa /.data
+mount for mutable state (with base-layer symlinks from
+.Pa /etc ,
+.Pa /var ,
+.Pa /tmp ,
+.Pa /home ,
+.Pa /root ,
+and
+.Pa /usr/pkg
+into
+.Pa /.data ) ,
+a jail-local
+.Pa /dev ,
+and
+.It
+jail naming and lifecycle management via
+.Xr jailctl 8 .
+.El
+.Pp
+By default,
+.Nm
+reads configuration from
+.Pa /etc/jailmgr.conf .
+A different configuration file can be selected with the
+.Ev JAILMGR_CONF
+environment variable.
+.Pp
+Most commands require superuser privileges.
+.Sh COMMANDS
+The following commands are supported:
+.Bl -tag -width "restart --all"
+.It Cm bootstrap
+Download
+.Pa base.tar.xz
+and
+.Pa etc.tar.xz
+from
+.Ev NETBSD_MIRROR
+after ensuring the
+.Li secmodel_jail
+kernel module is loaded,
+and persist
+.Li secmodel_jail
+in
+.Pa /etc/modules.conf
+for future boots.
+Also ensure
+.Li jailmgr=
+exists in
+.Pa /etc/rc.conf
+and initialize it to
+.Dq NO
+if absent.
+If
+.Pa /etc/jailmgr.conf
+does not exist, create it using the running system release normalized to
+.Dq major.minor
+.Pq e.g. Dq 10.1
+so mirror URLs do not include suffixes like
+.Dq _STABLE
+or
+.Dq _RC1 .
+Then
+extract
+.Pa base.tar.xz
+into the configured shared base layer directory.
+.It Cm create Op Fl a Op Fl x Ar cmd Op Fl q Ar cpu.quota Op Fl c Ar cpu.period Op Fl m Ar memory.max-bytes Op Fl p Ar proc.max Op Fl d Ar fd.max Op Fl s Ar sockbuf.max-bytes Op Fl l Ar profile Op Fl r Ar port[,port...] Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar name
+Create directories and metadata for one jail:
+.Pa root ,
+.Pa data ,
+and
+.Pa dev .
+If necessary,
+.Pa etc.tar.xz
+is extracted for that jail, but only the
+.Pa ./etc ,
+.Pa ./root ,
+.Pa ./var
+entries are unpacked into
+.Pa data/ .
+For local jail
+.Pa /dev
+setup,
+.Pa ./dev/MAKEDEV
+and optional
+.Pa ./dev/MAKEDEV.local
+are extracted directly from
+.Pa etc.tar.xz
+into the jail's mounted
+.Pa /dev
+tmpfs.
+If host
+.Pa /etc/resolv.conf
+exists,
+it is copied to
+.Pa data/etc/resolv.conf
+at create time.
+A jail-local shell configuration file is written to
+.Pa ${JAIL_DATA_DIR}/name/jail.conf .
+When
+.Fl a
+is provided,
+.Ev JAIL_AUTOSTART
+is initialized to
+.Dq YES
+in that generated
+.Pa jail.conf .
+When
+.Fl x
+is provided,
+.Ev JAIL_SUPERVISE_CMD
+is initialized to the specified command string in the generated
+.Pa jail.conf .
+When
+.Fl q
+and
+.Fl c
+are provided,
+.Nm
+persists jail CPU quota and period window values and forwards them unchanged to
+.Xr jailctl 8
+at start time.
+When
+.Fl m ,
+.Fl p ,
+.Fl d ,
+and
+.Fl s
+are provided,
+.Nm
+persists jail-scoped memory/process/fd/socket-buffer ceilings and forwards them unchanged to
+.Xr jailctl 8
+at start time.
+
+When
+.Fl l
+is provided,
+the generated
+.Pa jail.conf
+stores the corresponding
+.Xr jailctl 8
+create profile
+.Pq Dq low ,
+.Dq medium ,
+or
+.Dq high .
+When
+.Fl r
+is provided,
+the generated
+.Pa jail.conf
+stores the corresponding
+.Xr jailctl 8
+create-time reserved listening ports
+.Pq comma-separated list forwarded to Cm create Fl r .
+When
+.Fl f ,
+.Fl o ,
+.Fl e ,
+or
+.Fl t
+is provided,
+the generated
+.Pa jail.conf
+stores the corresponding
+.Xr jailctl 8
+supervisor logging settings.
+.It Cm start Ar name
+Mount the composed jail root and start the jail with
+.Xr jailctl 8 , using required per-jail settings from
+.Pa jail.conf .
+.It Cm start Cm --all
+Start all jails found under
+.Ev JAIL_DATA_DIR
+with a
+.Pa jail.conf
+and
+.Ev JAIL_AUTOSTART=YES .
+If one jail fails to start, processing continues with the next jail.
+.It Cm stop Ar name
+Terminate the corresponding
+.Xr jailctl 8
+supervise process for the jail named
+.Ar name ,
+then destroy the jail by name through
+.Xr jailctl 8
+and unmount its root composition.
+.It Cm stop Cm --all
+Stop and unmount all jails found under
+.Ev JAIL_DATA_DIR
+with a
+.Pa jail.conf
+and
+.Ev JAIL_AUTOSTART=YES .
+.It Cm restart Ar name
+Run
+.Cm stop
+for jail
+.Ar name
+and then
+.Cm start
+for the same jail, using the optional settings from
+.Pa jail.conf .
+.It Cm restart Cm --all
+Run
+.Cm stop Cm --all
+followed by
+.Cm start Cm --all .
+.It Cm apply Op Cm --ephemeral Ar name Op Ar script | Cm - Op Cm -- Ar arg ...
+Execute a shell script inside jail
+.Ar name
+using
+.Xr jexec 8
+and
+.Pa /bin/sh .
+If the jail is not running, it is started first.
+When started by
+.Cm apply ,
+only the jail runtime is created;
+the configured
+.Cm jailctl supervise
+process is not launched.
+The script can be provided as a filesystem path, as
+.Cm -
+to read from standard input, or omitted when standard input is not a terminal
+.Pq for heredoc use .
+The script is copied into jail
+.Pa /tmp
+with a unique temporary filename before execution and removed afterwards.
+Arguments after
+.Cm --
+are passed through to the script.
+By default, a jail started for
+.Cm apply
+remains running.
+When
+.Cm --ephemeral
+is specified, a jail that was started by
+.Cm apply
+is stopped again after script execution.
+.It Cm config Ar name
+Open
+.Pa ${JAIL_DATA_DIR}/name/jail.conf
+for editing in the standard editor for the current environment.
+.Nm
+uses
+.Ev VISUAL
+when set,
+otherwise
+.Ev EDITOR ,
+and falls back to
+.Cm vi .
+.It Cm list
+List all configured jails as a table with columns
+.Li NAME ,
+.Li ROOT ,
+.Li SUPERVISE_CMD ,
+and
+.Li AUTOSTART .
+.It Cm status
+Show
+.Xr jailctl 8
+status and mount status for all configured jails.
+.El
+.Sh CONFIGURATION
+.Nm
+accepts shell-style variable assignments in
+.Pa /etc/jailmgr.conf
+(or the file referenced by
+.Ev JAILMGR_CONF ) .
+.Pp
+Important variables:
+.Bl -tag -width "JAIL_RELEASE_DIR"
+.It Ev RELEASE
+NetBSD release used for set download paths, in
+.Dq major.minor
+form only
+.Pq no suffixes such as Dq _STABLE , Dq _BETA , Dq _RC1 .
+.It Ev MACHINE_ARCH
+Machine architecture used for set download paths.
+.It Ev NETBSD_MIRROR
+Base URL for set downloads.
+.It Ev JAIL_BASE_DIR
+Directory containing extracted shared base layers.
+.It Ev JAIL_DATA_DIR
+Directory containing per-jail writable state.
+.It Ev JAIL_RELEASE_DIR
+Directory containing downloaded set archives.
+.It Ev JAIL_LOCAL_DEV
+When set to
+.Dq YES
+(default), mount a jail-local tmpfs on
+.Pa /dev
+and populate a minimal device set with
+.Xr MAKEDEV 8 .
+.It Ev JAIL_DEV_SIZE
+Size argument used for the tmpfs mounted at jail-local
+.Pa /dev
+(default
+.Dq 8m ) .
+.It Ev JAIL_DEVICES
+Whitespace-separated list of
+.Xr MAKEDEV 8
+targets used to populate jail-local
+.Pa /dev .
+.It Ev JAIL_PTYFS
+When set to
+.Dq YES
+(default), mount
+.Xr ptyfs 5
+at
+.Pa /dev/pts
+inside each jail-local
+.Pa /dev
+to support pseudo terminals.
+.El
+.Pp
+Each jail also has a jail-local configuration file at
+.Pa ${JAIL_DATA_DIR}/name/jail.conf
+that provides:
+.Bl -tag -width "JAIL_CREATE_RESERVED_PORTS"
+.It Ev JAIL_NAME
+Jail name recorded by
+.Nm
+at create time.
+This must match the directory name used by
+.Nm
+.Pq Pa ${JAIL_DATA_DIR}/name/ .
+.It Ev JAIL_RELEASE
+Release value recorded by
+.Nm
+at create time.
+This is informational and tracks the host-side base-layer release used when
+the jail was created.
+.It Ev JAIL_ARCH
+Architecture value recorded by
+.Nm
+at create time.
+This is informational and tracks the host-side base-layer architecture used
+when the jail was created.
+.It Ev JAIL_AUTOSTART
+When set to
+.Dq YES ,
+include that jail in
+.Cm start --all ,
+.Cm stop --all ,
+and
+.Cm restart --all .
+.It Ev JAIL_SUPERVISE_CMD
+Required command (with optional arguments) passed to
+.Xr jailctl 8
+.Cm supervise
+after jail creation.
+Only the supervised command's stdout/stderr are forwarded to host syslog.
+Programs that default to internal syslog logging (for example
+.Xr bozohttpd 8
+without
+.Fl s )
+must be configured to emit to stderr if those logs should be captured by
+.Nm .
+.It Ev JAIL_CREATE_CPU_QUOTA
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl q .
+.It Ev JAIL_CREATE_CPU_PERIOD
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl c .
+.It Ev JAIL_CREATE_MEMORY_MAX
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl m
+.Pq memory.max-bytes .
+.It Ev JAIL_CREATE_PROC_MAX
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl p
+.Pq proc.max .
+.It Ev JAIL_CREATE_FD_MAX
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl d
+.Pq fd.max .
+.It Ev JAIL_CREATE_SOCKBUF_MAX
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl s
+.Pq sockbuf.max-bytes .
+.It Ev JAIL_CREATE_PROFILE
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl l
+.Pq one of
+.Dq low ,
+.Dq medium ,
+or
+.Dq high .
+.It Ev JAIL_CREATE_RESERVED_PORTS
+Optional value forwarded to
+.Xr jailctl 8
+.Cm create Fl r
+.Pq comma-separated TCP/UDP port list .
+.It Ev JAIL_SUPERVISE_FACILITY
+Optional value forwarded to
+.Xr jailctl 8
+.Cm supervise Fl f .
+.It Ev JAIL_SUPERVISE_STDOUT_LEVEL
+Optional value forwarded to
+.Xr jailctl 8
+.Cm supervise Fl o .
+.It Ev JAIL_SUPERVISE_STDERR_LEVEL
+Optional value forwarded to
+.Xr jailctl 8
+.Cm supervise Fl e .
+.It Ev JAIL_SUPERVISE_TAG
+Optional value forwarded to
+.Xr jailctl 8
+.Cm supervise Fl t .
+.El
+.Sh RESOURCE QUOTA TUNING
+The resource values accepted by
+.Nm
+are forwarded to
+.Xr jailctl 8
+as-is.
+That means quota tuning should follow application behaviour,
+not generic defaults.
+.Pp
+Quick meaning of the create-time quota flags:
+.Bl -tag -width "Fl s Ar sockbuf.max-bytes"
+.It Fl m Ar memory.max-bytes
+Maximum memory growth admitted for the jail.
+If this is too low,
+processes can fail allocations
+.Pq often seen as Dv ENOMEM .
+.It Fl p Ar proc.max
+Maximum number of processes in the jail.
+Too low usually appears as failed forks or missing worker processes
+.Pq Dv EAGAIN .
+.It Fl d Ar fd.max
+Maximum number of file descriptors across jail processes.
+Too low causes
+.Dv EMFILE
+and accept/connect/open failures.
+.It Fl s Ar sockbuf.max-bytes
+Maximum socket-buffer reservation for the jail.
+Too low limits throughput under many concurrent connections.
+.It Fl q Ar cpu.quota
+CPU budget per period in scheduler ticks.
+.It Fl c Ar cpu.period
+Length of one CPU accounting window in microseconds.
+The jail can consume up to
+.Ar cpu.quota
+scheduler ticks during each
+.Ar cpu.period
+window.
+.El
+.Pp
+For CPU tuning,
+.Dq ticks
+are scheduler clock ticks
+.Pq see Dv kern.hz via Xr sysctl 8 .
+A practical approximation for average CPU share is:
+.Bd -literal -offset indent
+share ~= cpu.quota / (kern.hz * cpu.period_seconds)
+.Ed
+Example with
+.Dv kern.hz=100
+and
+.Ar -c 1000000
+.Pq 1 second period :
+.Ar -q 50
+is about 50% of one CPU,
+.Ar -q 100
+about 100% of one CPU,
+and
+.Ar -q 200
+about two CPU-seconds per second aggregate
+.Pq e.g. one core fully plus burst on another core .
+.Pp
+If your host uses a different
+.Dv kern.hz ,
+scale
+.Ar cpu.quota
+proportionally.
+Longer periods smooth throughput but make throttling bursts longer;
+shorter periods react faster but can feel more "choppy" at tight quotas.
+.Pp
+Recommended practical workflow:
+.Bl -enum
+.It
+Start with realistic traffic and no tight limits,
+measure peaks,
+then set limits.
+.It
+Set
+.Fl m
+first
+.Pq peak + 20-30% headroom for restart/update bursts .
+.It
+Set
+.Fl p
+from worst-case worker/process fan-out.
+.It
+Set
+.Fl d
+from concurrent clients and per-worker fd usage.
+For web services,
+count at least listener sockets + active connections + log files.
+.It
+Set
+.Fl s
+for the expected connection profile:
+higher for many concurrent high-latency clients,
+lower for internal batch jobs.
+.It
+Set
+.Fl q
+and
+.Fl c
+last,
+and test both steady load and burst events
+.Pq startup, reload, log rotation, package upgrades .
+.El
+.Pp
+Change one class of limit at a time,
+re-test,
+and keep chosen values documented in each jail's
+.Pa jail.conf .
+.Sh FILES
+.Bl -tag -width "/usr/share/examples/jailmgr/jailmgr.conf.sample"
+.It Pa /etc/jailmgr.conf
+Default configuration file.
+.It Pa /etc/rc.d/jailmgr
+Service script for boot-time start/stop of autostart-enabled jails.
+.It Pa /usr/share/examples/jailmgr/jailmgr.conf.sample
+Sample configuration file.
+.It Pa /usr/share/examples/jailmgr/README
+Operational notes and quick-start guidance.
+.El
+.Sh EXAMPLES
+Bring a host to operational readiness and deploy one web jail:
+.Bd -literal -offset indent
+# jailmgr bootstrap
+# jailmgr create -a -x '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -q 200 -c 1000000 -m 536870912 -p 512 -d 8192 -s 134217728 -l medium -r 8080 -f local3 -o info -e err -t jail-web web
+# jailmgr apply --ephemeral web <<'APPLY'
+mkdir -p /var/www/mysite
+echo "<html>Hello NetBSD!</html>" > /var/www/mysite/index.html
+APPLY
+# jailmgr config web
+# jailmgr start --all
+.Ed
+.Sh NOTES
+Jail resource controls are jail-scoped.
+Memory, process-count, file-descriptor, and socket-buffer ceilings are
+enforced at kernel admission points.
+CPU controls are enforced with quota/period window accounting and
+throttling.
+
+.Sh SEE ALSO
+.Xr jailctl 8 ,
+.Xr mount_null 8 ,
+.Xr secmodel_jail 9 ,
+.Xr rc.d 8
+.Sh HISTORY
+The
+.Nm
+script first appeared as a prototype patch for
+.Nx 10.1 .
+This manual page was expanded when
+.Nm
+was moved to its own
+.Pa usr.sbin/jailmgr
+subdirectory.
+.Sh AUTHORS
+.An Matthias Petermann Aq Mt mp@petermann-digital.de
