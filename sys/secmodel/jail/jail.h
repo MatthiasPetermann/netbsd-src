@@ -45,7 +45,7 @@
 #define SECMODEL_JAIL_ID   "org.netbsd.secmodel.jail"
 #define SECMODEL_JAIL_NAME "NetBSD Jail"
 
-void secmodel_jail_init(void);
+int secmodel_jail_init(void);
 void secmodel_jail_start(void);
 void secmodel_jail_stop(void);
 
@@ -65,30 +65,51 @@ int secmodel_jail_cred_cb(kauth_cred_t, kauth_action_t, void *,
 #define SECMODEL_JAIL_EVAL_SOCKBUF_CHARGE "sockbuf-charge"
 #define SECMODEL_JAIL_SETINFO_SOCKBUF_UNCHARGE "sockbuf-uncharge"
 #define SECMODEL_JAIL_EVAL_CPU_CAN_RUN "cpu-can-run"
-#define SECMODEL_JAIL_EVAL_CPU_CAN_RUN_TRY "cpu-can-run-try"
 
 struct secmodel_jail_eval_admit_args {
+	/* Subject credential. */
 	kauth_cred_t cred;
+	/* Current usage. */
 	uint64_t current;
+	/* Requested increment. */
 	uint64_t delta;
 };
 
+/*
+ * Generic payload for set-current style telemetry updates.
+ */
 struct secmodel_jail_setinfo_set_current_args {
+	/* Subject credential. */
 	kauth_cred_t cred;
+	/* Observed current usage. */
 	uint64_t current;
 };
 
+/*
+ * Payload for socket-buffer charge admission checks.
+ */
 struct secmodel_jail_eval_sockbuf_charge_args {
+	/* Subject credential. */
 	kauth_cred_t cred;
+	/* Bytes to charge. */
 	uint64_t bytes;
 };
 
+/*
+ * Payload for socket-buffer uncharge telemetry updates.
+ */
 struct secmodel_jail_setinfo_sockbuf_args {
+	/* Subject credential. */
 	kauth_cred_t cred;
+	/* Bytes to uncharge. */
 	uint64_t bytes;
 };
 
+/*
+ * Payload for CPU admission checks.
+ */
 struct secmodel_jail_eval_cpu_can_run_args {
+	/* Subject credential. */
 	kauth_cred_t cred;
 };
 

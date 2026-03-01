@@ -46,17 +46,29 @@ static int
 secmodel_jail_modcmd(modcmd_t cmd, void *arg)
 {
 	int error = 0;
+	int init_error;
+
+	(void)arg;
 
 	switch (cmd) {
 	case MODULE_CMD_INIT:
 		error = secmodel_register(&jail_sm,
 		    SECMODEL_JAIL_ID, SECMODEL_JAIL_NAME,
 		    NULL, secmodel_jail_eval, secmodel_jail_setinfo_adapter);
-		if (error != 0)
+		if (error != 0) {
 			printf("secmodel_jail_modcmd::init: "
 			    "secmodel_register returned %d\n", error);
+			return error;
+		}
 
-		secmodel_jail_init();
+		init_error = secmodel_jail_init();
+		if (init_error != 0) {
+			error = secmodel_deregister(jail_sm);
+			if (error != 0)
+				printf("secmodel_jail_modcmd::init: "
+				    "secmodel_deregister returned %d\n", error);
+			return init_error;
+		}
 		secmodel_jail_start();
 		log(LOG_INFO, "secmodel_jail: loaded\n");
 		break;
@@ -72,6 +84,10 @@ secmodel_jail_modcmd(modcmd_t cmd, void *arg)
 		if (error != 0)
 			printf("secmodel_jail_modcmd::fini: "
 			    "secmodel_deregister returned %d\n", error);
+		break;
+
+	case MODULE_CMD_AUTOUNLOAD:
+		error = EPERM;
 		break;
 
 	default:

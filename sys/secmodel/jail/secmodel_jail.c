@@ -114,6 +114,9 @@ secmodel_jail_assert_jail_lock_held(void)
 	KASSERT(mutex_owned(&jail_lock));
 }
 
+/*
+ * Return true when CPU quota enforcement is configured for a jail entry.
+ */
 bool
 secmodel_jail_cpu_limit_enabled(const struct jail_entry *entry)
 {
@@ -139,6 +142,30 @@ secmodel_jail_within_limit(uint64_t current, uint64_t delta, uint64_t limit)
 	if (delta > UINT64_MAX - current)
 		return false;
 	return current + delta <= limit;
+}
+
+/*
+ * Resolve a jail entry from credentials while jail_lock is held.
+ *
+ * Returns true only for non-host credentials. Host credentials intentionally
+ * bypass jail accounting/limits and report no entry.
+ */
+static bool
+secmodel_jail_lookup_cred_entry_locked(kauth_cred_t cred, struct jail_entry **entryp)
+{
+	jailid_t id;
+
+	secmodel_jail_assert_jail_lock_held();
+	KASSERT(entryp != NULL);
+
+	id = secmodel_jail_cred_id(cred);
+	if (id == JAILID_HOST) {
+		*entryp = NULL;
+		return false;
+	}
+
+	*entryp = secmodel_jail_lookup(id);
+	return true;
 }
 
 /*
@@ -239,21 +266,25 @@ secmodel_jail_cpu_account_tick(void *arg)
 	}
 	mutex_exit(&jail_lock);
 
-	callout_schedule(&jail_cpu_account_ch, hz);
+callout_schedule(&jail_cpu_account_ch, hz);
 }
 
+/*
+ * Admission check for memory growth within jail-local limits.
+ *
+ * Liveness policy: fail open when jail_lock is contended.
+ */
 bool
 secmodel_jail_memory_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 {
 	struct jail_entry *entry;
-	jailid_t id;
 
-	id = secmodel_jail_cred_id(cred);
-	if (id == JAILID_HOST)
+	if (!mutex_tryenter(&jail_lock))
 		return true;
-
-	mutex_enter(&jail_lock);
-	entry = secmodel_jail_lookup(id);
+	if (!secmodel_jail_lookup_cred_entry_locked(cred, &entry)) {
+		mutex_exit(&jail_lock);
+		return true;
+	}
 	if (entry == NULL) {
 		mutex_exit(&jail_lock);
 		return true;
@@ -268,35 +299,40 @@ secmodel_jail_memory_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 	return true;
 }
 
+/*
+ * Publish the latest observed memory usage for a jailed credential.
+ */
 void
 secmodel_jail_memory_set_current(kauth_cred_t cred, uint64_t current)
 {
 	struct jail_entry *entry;
-	jailid_t id;
-
-	id = secmodel_jail_cred_id(cred);
-	if (id == JAILID_HOST)
-		return;
 
 	mutex_enter(&jail_lock);
-	entry = secmodel_jail_lookup(id);
+	if (!secmodel_jail_lookup_cred_entry_locked(cred, &entry)) {
+		mutex_exit(&jail_lock);
+		return;
+	}
 	if (entry != NULL)
 		entry->je_memory_current = current;
 	mutex_exit(&jail_lock);
 }
 
+/*
+ * Admission check for file descriptor growth within jail-local limits.
+ *
+ * Liveness policy: fail open when jail_lock is contended.
+ */
 bool
 secmodel_jail_fd_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 {
 	struct jail_entry *entry;
-	jailid_t id;
 
-	id = secmodel_jail_cred_id(cred);
-	if (id == JAILID_HOST)
+	if (!mutex_tryenter(&jail_lock))
 		return true;
-
-	mutex_enter(&jail_lock);
-	entry = secmodel_jail_lookup(id);
+	if (!secmodel_jail_lookup_cred_entry_locked(cred, &entry)) {
+		mutex_exit(&jail_lock);
+		return true;
+	}
 	if (entry == NULL) {
 		mutex_exit(&jail_lock);
 		return true;
@@ -311,35 +347,43 @@ secmodel_jail_fd_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 	return true;
 }
 
+/*
+ * Publish the latest observed descriptor usage for a jailed credential.
+ */
 void
 secmodel_jail_fd_set_current(kauth_cred_t cred, uint64_t current)
 {
 	struct jail_entry *entry;
-	jailid_t id;
-
-	id = secmodel_jail_cred_id(cred);
-	if (id == JAILID_HOST)
-		return;
 
 	mutex_enter(&jail_lock);
-	entry = secmodel_jail_lookup(id);
+	if (!secmodel_jail_lookup_cred_entry_locked(cred, &entry)) {
+		mutex_exit(&jail_lock);
+		return;
+	}
 	if (entry != NULL)
 		entry->je_fd_current = current;
 	mutex_exit(&jail_lock);
 }
 
+/*
+ * Admission check and accounting update for socket-buffer charges.
+ *
+ * Liveness policy: fail open when jail_lock is contended.
+ */
 bool
 secmodel_jail_sockbuf_charge(kauth_cred_t cred, uint64_t bytes)
 {
 	struct jail_entry *entry;
-	jailid_t id;
 
-	id = secmodel_jail_cred_id(cred);
-	if (id == JAILID_HOST || bytes == 0)
+	if (bytes == 0)
 		return true;
 
-	mutex_enter(&jail_lock);
-	entry = secmodel_jail_lookup(id);
+	if (!mutex_tryenter(&jail_lock))
+		return true;
+	if (!secmodel_jail_lookup_cred_entry_locked(cred, &entry)) {
+		mutex_exit(&jail_lock);
+		return true;
+	}
 	if (entry == NULL) {
 		mutex_exit(&jail_lock);
 		return true;
@@ -355,6 +399,11 @@ secmodel_jail_sockbuf_charge(kauth_cred_t cred, uint64_t bytes)
 	return true;
 }
 
+/*
+ * CPU run admission gate used by scheduler-facing callers.
+ *
+ * Liveness policy: fail open when jail_lock is contended.
+ */
 bool
 secmodel_jail_cpu_can_run(kauth_cred_t cred)
 {
@@ -365,7 +414,17 @@ secmodel_jail_cpu_can_run(kauth_cred_t cred)
 	if (id == JAILID_HOST)
 		return true;
 
-	mutex_enter(&jail_lock);
+	/*
+	 * Unified CPU admission API: callers always use this function.
+	 *
+	 * If no jail has CPU quotas configured, avoid lock traffic in hot scheduler
+	 * paths and allow execution immediately.
+	 */
+	if (atomic_load_acquire(&jail_cpu_limits_active) == 0)
+		return true;
+
+	if (!mutex_tryenter(&jail_lock))
+		return true;
 	entry = secmodel_jail_lookup(id);
 	if (entry == NULL) {
 		mutex_exit(&jail_lock);
@@ -380,62 +439,22 @@ secmodel_jail_cpu_can_run(kauth_cred_t cred)
 	return true;
 }
 
-int
-secmodel_jail_cpu_can_run_try(kauth_cred_t cred, bool *okp)
-{
-	struct jail_entry *entry;
-	jailid_t id;
-
-	id = secmodel_jail_cred_id(cred);
-	if (id == JAILID_HOST) {
-		*okp = true;
-		return 0;
-	}
-
-	/*
-	 * Fast path: if no jail has CPU quota configured, skip lock traffic in
-	 * the scheduler path and allow execution immediately.
-	 *
-	 * Why this matters: this function may be queried in hot scheduling paths.
-	 * Even one extra contested mutex can affect whole-system latency.
-	 */
-	if (atomic_load_acquire(&jail_cpu_limits_active) == 0) {
-		*okp = true;
-		return 0;
-	}
-
-	if (!mutex_tryenter(&jail_lock))
-		return EBUSY;
-
-	entry = secmodel_jail_lookup(id);
-	if (entry == NULL) {
-		mutex_exit(&jail_lock);
-		*okp = true;
-		return 0;
-	}
-	if (entry->je_cpu_over_quota) {
-		entry->je_throttle_cpu++;
-		mutex_exit(&jail_lock);
-		*okp = false;
-		return 0;
-	}
-	mutex_exit(&jail_lock);
-	*okp = true;
-	return 0;
-}
-
+/*
+ * Release previously charged socket-buffer bytes from jail accounting.
+ */
 void
 secmodel_jail_sockbuf_uncharge(kauth_cred_t cred, uint64_t bytes)
 {
 	struct jail_entry *entry;
-	jailid_t id;
 
-	id = secmodel_jail_cred_id(cred);
-	if (id == JAILID_HOST || bytes == 0)
+	if (bytes == 0)
 		return;
 
 	mutex_enter(&jail_lock);
-	entry = secmodel_jail_lookup(id);
+	if (!secmodel_jail_lookup_cred_entry_locked(cred, &entry)) {
+		mutex_exit(&jail_lock);
+		return;
+	}
 	if (entry != NULL) {
 		if (bytes >= entry->je_sockbuf_current)
 			entry->je_sockbuf_current = 0;
@@ -523,6 +542,9 @@ secmodel_jail_lookup(jailid_t id)
 	return NULL;
 }
 
+/*
+ * Look up a jail entry by configured name. Callers must hold jail_lock.
+ */
 static struct jail_entry *
 secmodel_jail_lookup_name(const char *name)
 {
@@ -538,6 +560,9 @@ secmodel_jail_lookup_name(const char *name)
 	return NULL;
 }
 
+/*
+ * Fetch the normalized policy configuration for an existing jail id.
+ */
 bool
 secmodel_jail_get_config(jailid_t id, struct jail_config *config)
 {
@@ -629,7 +654,7 @@ secmodel_jail_create(const struct jail_create *create,
 	if (config != NULL) {
 		entry->je_cpu_quota = config->jc_cpu_quota;
 		entry->je_cpu_period = config->jc_cpu_period;
-				entry->je_memory_max = config->jc_memory_max;
+		entry->je_memory_max = config->jc_memory_max;
 		entry->je_proc_max = config->jc_proc_max;
 		entry->je_fd_max = config->jc_fd_max;
 		entry->je_sockbuf_max = config->jc_sockbuf_max;
@@ -645,7 +670,9 @@ secmodel_jail_create(const struct jail_create *create,
 	*idp = id;
 	return 0;
 }
-
+/*
+ * Check whether the given jail id owns a specific reserved local port.
+ */
 bool
 secmodel_jail_port_reserved_by_id(jailid_t id, in_port_t lport)
 {
@@ -666,6 +693,9 @@ secmodel_jail_port_reserved_by_id(jailid_t id, in_port_t lport)
 	return false;
 }
 
+/*
+ * Check whether any configured jail reserves the supplied local port.
+ */
 bool
 secmodel_jail_port_reserved_any(in_port_t lport)
 {
@@ -684,6 +714,9 @@ secmodel_jail_port_reserved_any(in_port_t lport)
 	return false;
 }
 
+/*
+ * Extract local bind port from IPv4/IPv6 sockaddr payloads.
+ */
 bool
 secmodel_jail_addr_port(const struct sockaddr *sa, in_port_t *port)
 {
@@ -877,16 +910,26 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 /*
  * Initialize secmodel jail structures and register per-credential storage.
  */
-void
+int
 secmodel_jail_init(void)
 {
+	int error;
+
 	mutex_init(&jail_lock, MUTEX_DEFAULT, IPL_NONE);
 	jail_cpu_limits_active = 0;
 	callout_init(&jail_cpu_account_ch, CALLOUT_MPSAFE);
 	callout_setfunc(&jail_cpu_account_ch, secmodel_jail_cpu_account_tick,
 	    NULL);
-	if (kauth_register_key(jail_sm, &jail_key) != 0)
+
+	error = kauth_register_key(jail_sm, &jail_key);
+	if (error != 0) {
 		printf("secmodel_jail: unable to register kauth key\n");
+		callout_destroy(&jail_cpu_account_ch);
+		mutex_destroy(&jail_lock);
+		return error;
+	}
+
+	return 0;
 }
 
 /*

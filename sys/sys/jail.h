@@ -57,6 +57,9 @@ typedef uint32_t jailid_t;
 #define JAIL_PROFILE_MEDIUM	1
 #define JAIL_PROFILE_HIGH	2
 
+/*
+ * Userland-to-kernel payload for creating a jail and optional policy limits.
+ */
 struct jail_create {
 	uint32_t jc_flags;
 	uint32_t jc_id;
@@ -73,6 +76,9 @@ struct jail_create {
 	char jc_root[JAIL_ROOT_MAX + 1];
 };
 
+/*
+ * Read-only jail snapshot exported through security.models.jail.list.
+ */
 struct jail_info {
 	jailid_t ji_id;
 	uint32_t ji_refcount;

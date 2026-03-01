@@ -316,20 +316,16 @@ Existing specs/ops docs:
 - Observed failure mode during stress tests: host freeze severe enough that
   kernel debugger interaction can become unavailable.
 
-Current mitigation (as of this tree):
-- `sys/kern/kern_runq.c` uses `SECMODEL_JAIL_EVAL_CPU_CAN_RUN_TRY` instead of
-  a potentially blocking CPU-admission query.
-- `sys/secmodel/jail/secmodel_jail.c` implements the try variant with
-  `mutex_tryenter(&jail_lock)` and returns `EBUSY` if lock acquisition would
-  block.
-- Scheduler behavior on `EBUSY` is fail-open for that pick attempt: it keeps
-  progress guarantees and retries on subsequent scheduler passes.
+Current implementation status (as of this tree):
+- `secmodel_jail` now exposes a single CPU-admission operation:
+  `SECMODEL_JAIL_EVAL_CPU_CAN_RUN`.
+- There is no separate try API in secmodel_jail. Callers receive a direct
+  boolean allow/deny result from one unified interface.
 
 Trade-offs of current mitigation:
-- Deadlock risk in the critical runqueue path is reduced significantly.
-- CPU throttling may be temporarily bypassed during high lock contention.
-- Therefore admission behavior is safe-first (liveness) rather than fully
-  deterministic under contention.
+- Interface semantics are simpler and easier to consume consistently.
+- Any scheduler integration must still honor lock-order constraints because
+  CPU admission may acquire `jail_lock`.
 
 Long-term fixes (recommended):
 - Introduce a scheduler-safe lockless CPU admission snapshot (per-jail atomic

@@ -37,6 +37,72 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <secmodel/jail/secmodel_jail_int.h>
 
+/*
+ * Shared deny matrix for system-scope actions that are never delegated to jail
+ * members when profile >= MEDIUM.
+ */
+static bool
+secmodel_jail_system_action_always_denied(kauth_action_t action)
+{
+	switch (action) {
+	case KAUTH_SYSTEM_MODULE:
+	case KAUTH_SYSTEM_MKNOD:
+	case KAUTH_SYSTEM_FILEHANDLE:
+	case KAUTH_SYSTEM_CHROOT:
+	case KAUTH_SYSTEM_REBOOT:
+	case KAUTH_SYSTEM_SWAPCTL:
+	case KAUTH_SYSTEM_ACCOUNTING:
+	case KAUTH_SYSTEM_CPU:
+	case KAUTH_SYSTEM_PSET:
+	case KAUTH_SYSTEM_TIME:
+	case KAUTH_SYSTEM_SEMAPHORE:
+	case KAUTH_SYSTEM_MQUEUE:
+	case KAUTH_SYSTEM_DEVMAPPER:
+	case KAUTH_SYSTEM_INTR:
+	case KAUTH_SYSTEM_KERNADDR:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
+ * Mount operations denied inside jailed context for profile >= MEDIUM.
+ */
+static bool
+secmodel_jail_mount_req_denied(enum kauth_system_req req)
+{
+	switch (req) {
+	case KAUTH_REQ_SYSTEM_MOUNT_DEVICE:
+	case KAUTH_REQ_SYSTEM_MOUNT_NEW:
+	case KAUTH_REQ_SYSTEM_MOUNT_UNMOUNT:
+	case KAUTH_REQ_SYSTEM_MOUNT_UPDATE:
+	case KAUTH_REQ_SYSTEM_MOUNT_UMAP:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
+ * Sysctl write operations denied inside jailed context for profile >= MEDIUM.
+ */
+static bool
+secmodel_jail_sysctl_req_denied(enum kauth_system_req req)
+{
+	switch (req) {
+	case KAUTH_REQ_SYSTEM_SYSCTL_ADD:
+	case KAUTH_REQ_SYSTEM_SYSCTL_DELETE:
+	case KAUTH_REQ_SYSTEM_SYSCTL_MODIFY:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
+ * kauth(9) listener for network scope.
+ */
 int
 secmodel_jail_network_cb(kauth_cred_t cred, kauth_action_t action,
     void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
@@ -134,50 +200,24 @@ secmodel_jail_system_cb(kauth_cred_t cred, kauth_action_t action,
 	if (config.jc_profile == JAIL_PROFILE_POLICY_LOW)
 		return KAUTH_RESULT_DEFER;
 
-	switch (action) {
-	case KAUTH_SYSTEM_MOUNT: /* Deny mounting/unmounting or mount reconfiguration inside jail. */
-		switch (req) {
-		case KAUTH_REQ_SYSTEM_MOUNT_DEVICE: /* Block use of raw block devices as mount sources. */
-		case KAUTH_REQ_SYSTEM_MOUNT_NEW: /* Block creation of new mounts. */
-		case KAUTH_REQ_SYSTEM_MOUNT_UNMOUNT: /* Block unmounting existing filesystems. */
-		case KAUTH_REQ_SYSTEM_MOUNT_UPDATE: /* Block remount/update flag changes. */
-		case KAUTH_REQ_SYSTEM_MOUNT_UMAP: /* Block uid/gid remapping mount operations. */
-			return KAUTH_RESULT_DENY;
-		default:
-			return KAUTH_RESULT_DEFER;
-		}
-
-	case KAUTH_SYSTEM_MODULE: /* Block loading/unloading kernel modules from jail context. */
-	case KAUTH_SYSTEM_MKNOD: /* Block creation of device special files. */
-	case KAUTH_SYSTEM_FILEHANDLE: /* Block generation/use of kernel file handles. */
-	case KAUTH_SYSTEM_CHROOT: /* Block nested chroot/fchroot privilege operations. */
-	case KAUTH_SYSTEM_REBOOT: /* Block reboot or halt style host control actions. */
-	case KAUTH_SYSTEM_SWAPCTL: /* Block swap device/table administration. */
-	case KAUTH_SYSTEM_ACCOUNTING: /* Block kernel process accounting configuration. */
-	case KAUTH_SYSTEM_CPU: /* Block global CPU administrative state changes. */
-	case KAUTH_SYSTEM_PSET: /* Block processor-set management and binding controls. */
-	case KAUTH_SYSTEM_TIME: /* Block host clock/ntp/timecounter administration. */
-	case KAUTH_SYSTEM_SEMAPHORE: /* Block global kernel semaphore administration. */
-	case KAUTH_SYSTEM_MQUEUE: /* Block POSIX message queue subsystem administration. */
-	case KAUTH_SYSTEM_DEVMAPPER: /* Block device-mapper table/control operations. */
-	case KAUTH_SYSTEM_INTR: /* Block interrupt affinity and routing controls. */
-	case KAUTH_SYSTEM_KERNADDR: /* Block privileged kernel address disclosure access. */
+	if (secmodel_jail_system_action_always_denied(action))
 		return KAUTH_RESULT_DENY;
 
-	case KAUTH_SYSTEM_SYSVIPC: /* Block SysV IPC administrative bypass/override controls. */
+	switch (action) {
+	case KAUTH_SYSTEM_MOUNT:
+		if (secmodel_jail_mount_req_denied(req))
+			return KAUTH_RESULT_DENY;
+		return KAUTH_RESULT_DEFER;
+
+	case KAUTH_SYSTEM_SYSVIPC:
 		if (config.jc_profile == JAIL_PROFILE_POLICY_MEDIUM)
 			return KAUTH_RESULT_DEFER;
 		return KAUTH_RESULT_DENY;
 
-	case KAUTH_SYSTEM_SYSCTL: /* Constrain jail writes to global kernel sysctl tree. */
-		switch (req) {
-		case KAUTH_REQ_SYSTEM_SYSCTL_ADD: /* Block runtime creation of sysctl nodes. */
-		case KAUTH_REQ_SYSTEM_SYSCTL_DELETE: /* Block runtime deletion of sysctl nodes. */
-		case KAUTH_REQ_SYSTEM_SYSCTL_MODIFY: /* Block writes to privileged sysctl values. */
+	case KAUTH_SYSTEM_SYSCTL:
+		if (secmodel_jail_sysctl_req_denied(req))
 			return KAUTH_RESULT_DENY;
-		default:
-			return KAUTH_RESULT_DEFER;
-		}
+		return KAUTH_RESULT_DEFER;
 
 	default:
 		return KAUTH_RESULT_DEFER;
@@ -306,4 +346,3 @@ secmodel_jail_cred_cb(kauth_cred_t cred, kauth_action_t action,
 		return KAUTH_RESULT_DEFER;
 	}
 }
-

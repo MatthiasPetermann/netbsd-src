@@ -39,6 +39,122 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <secmodel/jail/secmodel_jail_int.h>
 
 /*
+ * Validate caller-supplied jail creation flags.
+ *
+ * This keeps the write-side ABI strict: unknown bits are rejected so future
+ * extensions cannot be accidentally accepted with unexpected semantics.
+ */
+static int
+secmodel_jail_validate_create_flags(uint32_t flags)
+{
+	if ((flags & ~(JAIL_CREATE_CPU_QUOTA |
+	    JAIL_CREATE_CPU_PERIOD |
+	    JAIL_CREATE_MEMORY_MAX |
+	    JAIL_CREATE_PROC_MAX |
+	    JAIL_CREATE_FD_MAX |
+	    JAIL_CREATE_SOCKBUF_MAX |
+	    JAIL_CREATE_PROFILE |
+	    JAIL_CREATE_PORTS)) != 0)
+		return EINVAL;
+
+	return 0;
+}
+
+/*
+ * Validate optional reserved-port list in jail_create.
+ */
+static int
+secmodel_jail_validate_create_ports(const struct jail_create *create)
+{
+	size_t i;
+	size_t j;
+
+	if ((create->jc_flags & JAIL_CREATE_PORTS) == 0)
+		return create->jc_nports == 0 ? 0 : EINVAL;
+
+	if (create->jc_nports == 0 || create->jc_nports > JAIL_PORTS_MAX)
+		return EINVAL;
+
+	for (i = 0; i < create->jc_nports; i++) {
+		if (create->jc_ports[i] == 0)
+			return EINVAL;
+		for (j = i + 1; j < create->jc_nports; j++) {
+			if (create->jc_ports[i] == create->jc_ports[j])
+				return EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * Translate jail_create into internal policy config and validate limit fields.
+ */
+static int
+secmodel_jail_build_config(const struct jail_create *create,
+    struct jail_config *config)
+{
+	uint32_t flags;
+
+	flags = create->jc_flags;
+	memset(config, 0, sizeof(*config));
+	config->jc_profile = JAIL_PROFILE_POLICY_HIGH;
+
+	if ((flags & JAIL_CREATE_PROFILE) != 0) {
+		switch (create->jc_profile) {
+		case JAIL_PROFILE_LOW:
+			config->jc_profile = JAIL_PROFILE_POLICY_LOW;
+			break;
+		case JAIL_PROFILE_MEDIUM:
+			config->jc_profile = JAIL_PROFILE_POLICY_MEDIUM;
+			break;
+		case JAIL_PROFILE_HIGH:
+			config->jc_profile = JAIL_PROFILE_POLICY_HIGH;
+			break;
+		default:
+			return EINVAL;
+		}
+	}
+
+	if ((flags & JAIL_CREATE_CPU_QUOTA) != 0) {
+		if (create->jc_cpu_quota == 0)
+			return EINVAL;
+		config->jc_cpu_quota = create->jc_cpu_quota;
+	}
+	if ((flags & JAIL_CREATE_CPU_PERIOD) != 0) {
+		if (create->jc_cpu_period == 0)
+			return EINVAL;
+		config->jc_cpu_period = create->jc_cpu_period;
+	}
+	if ((flags & JAIL_CREATE_MEMORY_MAX) != 0) {
+		if (create->jc_memory_max == 0)
+			return EINVAL;
+		config->jc_memory_max = create->jc_memory_max;
+	}
+	if ((flags & JAIL_CREATE_PROC_MAX) != 0) {
+		if (create->jc_proc_max == 0)
+			return EINVAL;
+		config->jc_proc_max = create->jc_proc_max;
+	}
+	if ((flags & JAIL_CREATE_FD_MAX) != 0) {
+		if (create->jc_fd_max == 0)
+			return EINVAL;
+		config->jc_fd_max = create->jc_fd_max;
+	}
+	if ((flags & JAIL_CREATE_SOCKBUF_MAX) != 0) {
+		if (create->jc_sockbuf_max == 0)
+			return EINVAL;
+		config->jc_sockbuf_max = create->jc_sockbuf_max;
+	}
+
+	if ((config->jc_cpu_quota != 0 && config->jc_cpu_period == 0) ||
+	    (config->jc_cpu_quota == 0 && config->jc_cpu_period != 0))
+		return EINVAL;
+
+	return 0;
+}
+
+/*
  * sysctl handler for security.models.jail.create
  *
  * Writing a value allocates a new jail id. The newly created id is returned
@@ -51,8 +167,6 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 	int error;
 	struct jail_create create;
 	struct jail_config config;
-	struct jail_config *configp;
-	uint32_t flags;
 
 	if (newp == NULL)
 		return EINVAL;
@@ -60,99 +174,31 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 	if (!secmodel_jail_is_host_root(l->l_cred))
 		return EPERM;
 
-	if (newlen == sizeof(create)) {
-		error = sysctl_copyin(l, newp, &create, sizeof(create));
-		if (error != 0)
-			return error;
-
-		flags = create.jc_flags;
-		if ((flags & ~(JAIL_CREATE_CPU_QUOTA |
-		    JAIL_CREATE_CPU_PERIOD |
-				    JAIL_CREATE_MEMORY_MAX |
-		    JAIL_CREATE_PROC_MAX |
-		    JAIL_CREATE_FD_MAX |
-		    JAIL_CREATE_SOCKBUF_MAX |
-		    JAIL_CREATE_PROFILE |
-		    JAIL_CREATE_PORTS)) != 0)
-			return EINVAL;
-		if ((flags & JAIL_CREATE_PORTS) != 0) {
-			size_t i, j;
-
-			if (create.jc_nports == 0 || create.jc_nports > JAIL_PORTS_MAX)
-				return EINVAL;
-			for (i = 0; i < create.jc_nports; i++) {
-				if (create.jc_ports[i] == 0)
-					return EINVAL;
-				for (j = i + 1; j < create.jc_nports; j++) {
-					if (create.jc_ports[i] == create.jc_ports[j])
-						return EINVAL;
-				}
-			}
-		} else if (create.jc_nports != 0) {
-			return EINVAL;
-		}
-
-		memset(&config, 0, sizeof(config));
-		config.jc_profile = JAIL_PROFILE_POLICY_HIGH;
-		if ((flags & JAIL_CREATE_PROFILE) != 0) {
-			switch (create.jc_profile) {
-			case JAIL_PROFILE_LOW:
-				config.jc_profile = JAIL_PROFILE_POLICY_LOW;
-				break;
-			case JAIL_PROFILE_MEDIUM:
-				config.jc_profile = JAIL_PROFILE_POLICY_MEDIUM;
-				break;
-			case JAIL_PROFILE_HIGH:
-				config.jc_profile = JAIL_PROFILE_POLICY_HIGH;
-				break;
-			default:
-				return EINVAL;
-			}
-		}
-		if ((flags & JAIL_CREATE_CPU_QUOTA) != 0) {
-			if (create.jc_cpu_quota == 0)
-				return EINVAL;
-			config.jc_cpu_quota = create.jc_cpu_quota;
-		}
-		if ((flags & JAIL_CREATE_CPU_PERIOD) != 0) {
-			if (create.jc_cpu_period == 0)
-				return EINVAL;
-			config.jc_cpu_period = create.jc_cpu_period;
-		}
-		if ((flags & JAIL_CREATE_MEMORY_MAX) != 0) {
-			if (create.jc_memory_max == 0)
-				return EINVAL;
-			config.jc_memory_max = create.jc_memory_max;
-		}
-		if ((flags & JAIL_CREATE_PROC_MAX) != 0) {
-			if (create.jc_proc_max == 0)
-				return EINVAL;
-			config.jc_proc_max = create.jc_proc_max;
-		}
-		if ((flags & JAIL_CREATE_FD_MAX) != 0) {
-			if (create.jc_fd_max == 0)
-				return EINVAL;
-			config.jc_fd_max = create.jc_fd_max;
-		}
-		if ((flags & JAIL_CREATE_SOCKBUF_MAX) != 0) {
-			if (create.jc_sockbuf_max == 0)
-				return EINVAL;
-			config.jc_sockbuf_max = create.jc_sockbuf_max;
-		}
-		if ((config.jc_cpu_quota != 0 && config.jc_cpu_period == 0) ||
-		    (config.jc_cpu_quota == 0 && config.jc_cpu_period != 0))
-			return EINVAL;
-		configp = &config;
-	} else {
+	if (newlen != sizeof(create))
 		return EINVAL;
-	}
+
+	error = sysctl_copyin(l, newp, &create, sizeof(create));
+	if (error != 0)
+		return error;
+
+	error = secmodel_jail_validate_create_flags(create.jc_flags);
+	if (error != 0)
+		return error;
+
+	error = secmodel_jail_validate_create_ports(&create);
+	if (error != 0)
+		return error;
+
+	error = secmodel_jail_build_config(&create, &config);
+	if (error != 0)
+		return error;
 
 	if (create.jc_name[0] == '\0' || create.jc_root[0] == '\0')
 		return EINVAL;
 	if (memchr(create.jc_name, '\n', sizeof(create.jc_name)) != NULL ||
 	    memchr(create.jc_root, '\n', sizeof(create.jc_root)) != NULL)
 		return EINVAL;
-	error = secmodel_jail_create(&create, configp, &id);
+	error = secmodel_jail_create(&create, &config, &id);
 
 	if (error != 0)
 		return error;
@@ -160,7 +206,7 @@ secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
 	log(LOG_INFO,
 	    "secmodel_jail: created jail id=%u name=\"%s\" root=\"%s\" profile=%u by pid=%d euid=%u\n",
 	    id, create.jc_name, create.jc_root,
-	    (unsigned)configp->jc_profile, l->l_proc->p_pid,
+	    (unsigned)config.jc_profile, l->l_proc->p_pid,
 	    kauth_cred_geteuid(l->l_cred));
 	create.jc_id = id;
 	if (oldp == NULL) {
@@ -261,7 +307,7 @@ secmodel_jail_sysctl_list(SYSCTLFN_ARGS)
 
 	if (newp != NULL)
 		return EPERM;
-	if (!secmodel_jail_is_host_cred(l->l_cred))
+	if (!secmodel_jail_is_host_root(l->l_cred))
 		return EPERM;
 
 	retry = false;
@@ -393,7 +439,7 @@ SYSCTL_SETUP(sysctl_security_jail_setup, "secmodel_jail sysctl")
 
 	sysctl_createv(clog, 0, &rnode, NULL,
 	       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-	       CTLTYPE_INT, "create",
+	       CTLTYPE_STRUCT, "create",
 	       SYSCTL_DESCR("Create a new jail id"),
 	       secmodel_jail_sysctl_create, 0, NULL, 0,
 	       CTL_CREATE, CTL_EOL);
@@ -413,4 +459,3 @@ SYSCTL_SETUP(sysctl_security_jail_setup, "secmodel_jail sysctl")
 	       CTL_CREATE, CTL_EOL);
 
 }
-

@@ -24,7 +24,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .
-.Dd February 20, 2026
+.Dd March 1, 2026
 .Dt SECMODEL_JAIL 9
 .Os
 .Sh NAME
@@ -54,13 +54,10 @@ Read the current process jail id, or write a jail id to request entry to that
 jail.
 .It Va create
 Create a new jail id.
-The write side accepts either a legacy integer form or a
+The write side accepts a
 .Vt struct jail_create
-request.
-.Pp
-In the legacy form, writing an integer creates a jail id with default policy.
-In the structured form, callers provide jail metadata and optional settings,
-including:
+request only.
+Callers provide jail metadata and optional settings, including:
 .Bl -tag -width JAIL_CREATE_MEMLIMIT
 .It Dv JAIL_CREATE_MEMLIMIT
 Set a per-process address-space limit for processes that enter the jail.
@@ -78,6 +75,7 @@ allowed only from members of the jail that reserved it.
 Destroy a jail id that has no remaining process members.
 .It Va list
 Read-only list of active jail ids and reference counts.
+Access is restricted to host root.
 .El
 .Sh RESOURCE ENFORCEMENT DESIGN
 .Nm

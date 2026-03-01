@@ -86,14 +86,6 @@ secmodel_jail_eval(const char *what, void *arg, void *ret)
 		return 0;
 	}
 
-	if (strcmp(what, SECMODEL_JAIL_EVAL_CPU_CAN_RUN_TRY) == 0) {
-		if (arg == NULL || ret == NULL)
-			return EINVAL;
-		cra = arg;
-		okp = ret;
-		return secmodel_jail_cpu_can_run_try(cra->cred, okp);
-	}
-
 	return ENOENT;
 }
 
