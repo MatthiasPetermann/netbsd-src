@@ -54,12 +54,9 @@ int secmodel_jail_process_cb(kauth_cred_t, kauth_action_t, void *,
 int secmodel_jail_cred_cb(kauth_cred_t, kauth_action_t, void *,
     void *, void *, void *, void *);
 
-bool secmodel_jail_cred_matches(kauth_cred_t, const char *);
-
 /*
  * secmodel_jail eval operations: synchronous policy queries.
  */
-#define SECMODEL_JAIL_EVAL_CRED_MATCHES "cred-matches"
 #define SECMODEL_JAIL_EVAL_MEMORY_ADMIT "memory-admit"
 /* secmodel_jail setinfo operations: best-effort accounting updates. */
 #define SECMODEL_JAIL_SETINFO_MEMORY_SET_CURRENT "memory-set-current"
@@ -69,11 +66,6 @@ bool secmodel_jail_cred_matches(kauth_cred_t, const char *);
 #define SECMODEL_JAIL_SETINFO_SOCKBUF_UNCHARGE "sockbuf-uncharge"
 #define SECMODEL_JAIL_EVAL_CPU_CAN_RUN "cpu-can-run"
 #define SECMODEL_JAIL_EVAL_CPU_CAN_RUN_TRY "cpu-can-run-try"
-
-struct secmodel_jail_eval_cred_matches_args {
-	kauth_cred_t cred;
-	const char *name;
-};
 
 struct secmodel_jail_eval_admit_args {
 	kauth_cred_t cred;

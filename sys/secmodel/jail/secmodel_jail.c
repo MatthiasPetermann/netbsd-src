@@ -468,49 +468,6 @@ secmodel_jail_cred_setid(kauth_cred_t cred, jailid_t id)
 	kauth_cred_setdata(cred, jail_key, (void *)(uintptr_t)id);
 }
 
-bool
-secmodel_jail_cred_matches(kauth_cred_t cred, const char *name)
-{
-	const struct jail_entry *entry;
-	jailid_t id;
-	bool match;
-
-	/*
-	 * This function is intentionally verbose in logging because it is used by
-	 * userland tooling/debug flows where "why did this not match" matters.
-	 */
-	id = secmodel_jail_cred_id(cred);
-	if (name == NULL) {
-		match = id == JAILID_HOST;
-		log(LOG_DEBUG,
-		    "secmodel_jail debug: cred_matches id=%u name=<none> match=%d\n",
-		    (unsigned)id, match);
-		return match;
-	}
-
-	mutex_enter(&jail_lock);
-	entry = secmodel_jail_lookup(id);
-	if (entry == NULL) {
-		mutex_exit(&jail_lock);
-		log(LOG_DEBUG,
-		    "secmodel_jail debug: cred_matches id=%u name=\"%s\" match=0 (entry missing)\n",
-		    (unsigned)id, name);
-		return false;
-	}
-	if (strcmp(entry->je_name, name) != 0) {
-		mutex_exit(&jail_lock);
-		log(LOG_DEBUG,
-		    "secmodel_jail debug: cred_matches id=%u name=\"%s\" entry=\"%s\" match=0\n",
-		    (unsigned)id, name, entry->je_name);
-		return false;
-	}
-	mutex_exit(&jail_lock);
-	log(LOG_DEBUG,
-	    "secmodel_jail debug: cred_matches id=%u name=\"%s\" match=1\n",
-	    (unsigned)id, name);
-	return true;
-}
-
 /*
  * Host credentials are those with jail id 0.
  */

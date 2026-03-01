@@ -45,28 +45,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 int
 secmodel_jail_eval(const char *what, void *arg, void *ret)
 {
-	const struct secmodel_jail_eval_cred_matches_args *a;
 	const struct secmodel_jail_eval_admit_args *aa;
 	const struct secmodel_jail_eval_sockbuf_charge_args *sba;
 	const struct secmodel_jail_eval_cpu_can_run_args *cra;
-	bool *matchp;
 	bool *okp;
-
-	if (strcmp(what, SECMODEL_JAIL_EVAL_CRED_MATCHES) == 0) {
-		if (arg == NULL || ret == NULL)
-			return EINVAL;
-
-		a = arg;
-		matchp = ret;
-		log(LOG_DEBUG,
-		    "secmodel_jail debug: eval what=\"%s\" cred_matches name=%s\n",
-		    what, a->name ? a->name : "<none>");
-		*matchp = secmodel_jail_cred_matches(a->cred, a->name);
-		log(LOG_DEBUG,
-		    "secmodel_jail debug: eval result what=\"%s\" match=%d\n",
-		    what, *matchp);
-		return 0;
-	}
 
 	if (strcmp(what, SECMODEL_JAIL_EVAL_MEMORY_ADMIT) == 0) {
 		if (arg == NULL || ret == NULL)
@@ -177,4 +159,3 @@ secmodel_jail_setinfo_adapter(void *v)
 
 	return secmodel_jail_setinfo(call->what, call->arg);
 }
-

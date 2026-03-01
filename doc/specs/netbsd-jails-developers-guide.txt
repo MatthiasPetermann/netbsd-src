@@ -124,7 +124,6 @@ Kernel integrations calling secmodel eval:
 - scheduler run gate (`sys/kern/kern_runq.c`)
 
 Eval API surface (brokered by secmodel core):
-- `cred-matches`
 - `memory-admit`, `memory-set-current`
 - `fd-admit`, `fd-set-current`
 - `sockbuf-charge`, `sockbuf-uncharge`
