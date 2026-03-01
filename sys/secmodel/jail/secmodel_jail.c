@@ -83,10 +83,25 @@ static bool	secmodel_jail_has_entries(void);
 static jailid_t	secmodel_jail_cred_id(kauth_cred_t);
 
 /*
- * Each jail is tracked by an entry in a global list. The entry stores identity
- * metadata, policy profile, configured resource ceilings, and live accounting
- * counters exposed through the list sysctl. Actual process membership is stored
- * per-credential via kauth specificdata.
+ * Big picture for newcomers:
+ *
+ * This file implements a kernel security model that groups processes into
+ * "jails" and then applies policy/rate limits per jail id.
+ *
+ * The core idea is intentionally simple:
+ * 1) Each credential gets one integer jail id via kauth specificdata.
+ * 2) Global policy/configuration for each jail id lives in `jail_list`.
+ * 3) kauth listeners consult both pieces to allow/deny actions.
+ *
+ * Why this split exists:
+ * - Credential data must be tiny and cheap to copy on fork/exec paths.
+ * - Rich per-jail metadata (limits, names, counters) is shared global state.
+ * - This keeps process credential operations fast while still allowing
+ *   userland management via sysctl.
+ *
+ * TODO(next): Replace linear jail lookup with an id-indexed structure
+ * (for example a hash table or pserialize-friendly map) once jail counts grow.
+ * The current LIST walk is simple and robust but O(n) on every lookup.
  */
 struct jail_entry {
 	jailid_t je_id;
@@ -127,8 +142,15 @@ static struct callout jail_cpu_account_ch;
 static unsigned int jail_cpu_limits_active;
 
 /*
- * Global lock order when both are needed: proc_lock -> jail_lock.
- * Never acquire proc_lock while holding jail_lock.
+ * Locking contract (important for deadlock avoidance):
+ *
+ * - If code needs both process lists and jail metadata, lock order is always:
+ *     proc_lock -> jail_lock
+ * - Never grab proc_lock while already holding jail_lock.
+ *
+ * Why: lots of process-manipulating kernel paths already use proc_lock. If we
+ * invert the order in one place, rare deadlocks can appear under load and are
+ * extremely hard to debug.
  */
 
 static struct jail_entry *secmodel_jail_lookup(jailid_t);
@@ -162,6 +184,10 @@ struct jail_config {
  * Generic helper for jail-scoped "current + delta <= limit" admission.
  *
  * A limit value of zero means "unlimited" for that specific resource.
+ *
+ * Why this helper exists:
+ * - all limit checks should share identical overflow-safe arithmetic
+ * - duplicated ad-hoc checks are error-prone in kernel code
  */
 static bool
 secmodel_jail_within_limit(uint64_t current, uint64_t delta, uint64_t limit)
@@ -182,8 +208,13 @@ secmodel_jail_within_limit(uint64_t current, uint64_t delta, uint64_t limit)
  * - Also samples per-jail process/ref counters consumed by list sysctl reads,
  *   so stats polling never walks allproc/zombproc from sysctl context.
  *
- * The sampling cadence is low (1Hz) to keep overhead bounded and avoid adding
- * scheduler hot-path lock contention.
+ * Why this is timer-based instead of exact real-time enforcement:
+ * - exact CPU policing in scheduler hot paths is invasive and expensive
+ * - this approach is intentionally conservative and low-overhead
+ * - it gives predictable behavior with minimal impact on non-jailed workloads
+ *
+ * TODO(next): move from 1Hz coarse windows to scheduler-integrated usage
+ * buckets (or shorter adaptive intervals) for smoother throttling decisions.
  */
 static void
 secmodel_jail_cpu_account_tick(void *arg)
@@ -423,6 +454,9 @@ secmodel_jail_cpu_can_run_try(kauth_cred_t cred, bool *okp)
 	/*
 	 * Fast path: if no jail has CPU quota configured, skip lock traffic in
 	 * the scheduler path and allow execution immediately.
+	 *
+	 * Why this matters: this function may be queried in hot scheduling paths.
+	 * Even one extra contested mutex can affect whole-system latency.
 	 */
 	if (atomic_load_acquire(&jail_cpu_limits_active) == 0) {
 		*okp = true;
@@ -500,6 +534,10 @@ secmodel_jail_cred_matches(kauth_cred_t cred, const char *name)
 	jailid_t id;
 	bool match;
 
+	/*
+	 * This function is intentionally verbose in logging because it is used by
+	 * userland tooling/debug flows where "why did this not match" matters.
+	 */
 	id = secmodel_jail_cred_id(cred);
 	if (name == NULL) {
 		match = id == JAILID_HOST;
@@ -575,6 +613,10 @@ secmodel_jail_lookup(jailid_t id)
 
 	secmodel_jail_assert_jail_lock_held();
 
+	/*
+	 * Linear scan is acceptable for small jail counts and keeps code easy to
+	 * audit. It is not ideal for very large fleets.
+	 */
 	LIST_FOREACH(entry, &jail_list, je_entry) {
 		if (entry->je_id == id)
 			return entry;
@@ -614,7 +656,7 @@ secmodel_jail_get_config(jailid_t id, struct jail_config *config)
 	}
 	config->jc_cpu_quota = entry->je_cpu_quota;
 	config->jc_cpu_period = entry->je_cpu_period;
-		config->jc_memory_max = entry->je_memory_max;
+	config->jc_memory_max = entry->je_memory_max;
 	config->jc_proc_max = entry->je_proc_max;
 	config->jc_fd_max = entry->je_fd_max;
 	config->jc_sockbuf_max = entry->je_sockbuf_max;
@@ -658,11 +700,21 @@ secmodel_jail_create(const struct jail_create *create,
 		}
 	}
 
+	/*
+	 * `jail_next_id` wrap to 0 would collide with the reserved host id.
+	 * We fail hard with EOVERFLOW instead of trying to recycle ids silently.
+	 */
 	if (jail_next_id == 0) {
 		mutex_exit(&jail_lock);
 		return EOVERFLOW;
 	}
 
+	/*
+	 * IDs are monotonic for predictability in logs and tooling.
+	 *
+	 * TODO(next): consider generation counters if id reuse is introduced later,
+	 * to avoid stale userland references accidentally pointing to new jails.
+	 */
 	id = jail_next_id++;
 
 	entry = kmem_zalloc(sizeof(*entry), KM_SLEEP);
@@ -782,6 +834,15 @@ secmodel_jail_has_processes(jailid_t id)
 	struct proc *p;
 	bool found = false;
 
+	/*
+	 * This is an O(number-of-processes) safety check.
+	 *
+	 * Why it is done this way: correctness first; destroy must refuse while any
+	 * member still exists (including zombies), so we scan both lists.
+	 *
+	 * TODO(next): maintain per-jail live membership counters with precise
+	 * lifetime hooks to avoid full scans at destroy time.
+	 */
 	mutex_enter(&proc_lock);
 	PROCLIST_FOREACH(p, &allproc) {
 		if (secmodel_jail_cred_id(p->p_cred) == id) {
@@ -848,6 +909,14 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 	cred = p->p_cred;
 	cur = secmodel_jail_cred_id(cred);
 
+	/*
+	 * Phase 1 validate, phase 2 commit:
+	 * - We first validate policy/existence.
+	 * - Then we re-enter credential modification and re-validate before commit.
+	 *
+	 * Why duplicate checks: another thread could change credentials or destroy a
+	 * jail between validation and commit. Re-check keeps this race safe.
+	 */
 	if (!secmodel_jail_is_host_root(l->l_cred)) {
 		proc_crmod_leave(cred, NULL, false);
 		return EPERM;
@@ -872,6 +941,12 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 	if (cur == id) {
 		return 0;
 	}
+
+	/*
+	 * TODO(next): this is still a TOCTOU-style two-phase pattern. It is safe due
+	 * to revalidation, but not elegant. Investigate whether proc credential
+	 * framework can support a single transaction-style update helper.
+	 */
 
 	proc_crmod_enter();
 	cred = p->p_cred;
@@ -1191,6 +1266,13 @@ again:
 	mutex_exit(&jail_lock);
 
 	if (retry) {
+		/*
+		 * The list changed while copying. We intentionally retry to present a
+		 * coherent snapshot rather than returning a partially mixed generation.
+		 *
+		 * TODO(next): consider lockless snapshot generation with sequence counters
+		 * to avoid retries under heavy jail churn.
+		 */
 		kmem_free(entries, needed);
 		retry = false;
 		goto again;
@@ -1356,6 +1438,13 @@ secmodel_jail_network_cb(kauth_cred_t cred, kauth_action_t action,
 	if (lport == 0)
 		return KAUTH_RESULT_DEFER;
 
+	/*
+	 * Port policy model:
+	 * - if no jail reserves this port, defer to normal kernel policy
+	 * - if reserved, only the owning jail may bind it
+	 *
+	 * This prevents accidental or malicious cross-jail port hijacking.
+	 */
 	id = secmodel_jail_cred_id(cred);
 
 	mutex_enter(&jail_lock);
@@ -1410,6 +1499,14 @@ secmodel_jail_system_cb(kauth_cred_t cred, kauth_action_t action,
 	    req == KAUTH_REQ_SYSTEM_SYSCTL_PRVT)
 		return KAUTH_RESULT_DENY;
 
+	/*
+	 * Profile handling strategy:
+	 * - LOW: mostly defer, only absolute jail invariants are enforced.
+	 * - MEDIUM/HIGH: progressively deny broader host-admin capabilities.
+	 *
+	 * Why defer: secmodel_jail should compose with other security models instead
+	 * of claiming all decisions unconditionally.
+	 */
 	if (config.jc_profile == JAIL_PROFILE_POLICY_LOW)
 		return KAUTH_RESULT_DEFER;
 
@@ -1510,6 +1607,11 @@ secmodel_jail_process_cb(kauth_cred_t cred, kauth_action_t action,
 			return KAUTH_RESULT_DEFER;
 
 		current = 0;
+		/*
+		 * TODO(next): replace full process walks with maintained counters updated
+		 * on fork/exit hooks. Current behavior is correct but scales poorly on
+		 * systems with very high process counts.
+		 */
 		mutex_enter(&proc_lock);
 		PROCLIST_FOREACH(p, &allproc) {
 			if (secmodel_jail_cred_id(p->p_cred) == id)
