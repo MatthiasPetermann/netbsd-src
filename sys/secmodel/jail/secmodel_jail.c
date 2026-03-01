@@ -85,8 +85,7 @@ static kauth_listener_t l_network;
  * (for example a hash table or pserialize-friendly map) once jail counts grow.
  * The current LIST walk is simple and robust but O(n) on every lookup.
  */
-LIST_HEAD(, jail_entry) jail_list =
-    LIST_HEAD_INITIALIZER(jail_list);
+struct jail_list_head jail_list = LIST_HEAD_INITIALIZER(jail_list);
 kmutex_t jail_lock;
 static jailid_t jail_next_id = 1;
 static struct callout jail_cpu_account_ch;

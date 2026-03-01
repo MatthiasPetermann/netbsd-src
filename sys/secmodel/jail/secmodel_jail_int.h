@@ -100,7 +100,9 @@ struct jail_config {
 	enum jail_policy_profile jc_profile;
 };
 
-extern LIST_HEAD(, jail_entry) jail_list;
+LIST_HEAD(jail_list_head, jail_entry);
+
+extern struct jail_list_head jail_list;
 extern kmutex_t jail_lock;
 extern secmodel_t jail_sm;
 extern kauth_key_t jail_key;
