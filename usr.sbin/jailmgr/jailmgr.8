@@ -297,11 +297,19 @@ Important variables:
 .Bl -tag -width "JAIL_RELEASE_DIR"
 .It Ev RELEASE
 NetBSD release used for set download paths, in
-.Dq major.minor
-form only
-.Pq no suffixes such as Dq _STABLE , Dq _BETA , Dq _RC1 .
+.Dq NetBSD release directory
+form
+.Pq e.g. Dq 11.0 or Dq 11.0_RC1 ; avoid branch suffixes like Dq _STABLE .
+If unset or empty,
+.Nm
+auto-detects it from
+.Xr uname 1 .
 .It Ev MACHINE_ARCH
 Machine architecture used for set download paths.
+If unset or empty,
+.Nm
+auto-detects it from
+.Xr uname 1 .
 .It Ev NETBSD_MIRROR
 Base URL for set downloads.
 .It Ev JAIL_BASE_DIR

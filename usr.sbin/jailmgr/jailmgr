@@ -46,11 +46,23 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin
 CONF_FILE=${JAILMGR_CONF:-/etc/jailmgr.conf}
 
 detect_release() {
-	# Normalize running kernel version (e.g. 10.1_STABLE, 10.1_RC1)
-	# to <major>.<minor> so it is always safe for NetBSD-${RELEASE} URLs.
+	# Derive a release token from uname -r suitable for set URLs.
+	# Keep official release tags like _RC* / _BETA*, but drop build/source
+	# branch suffixes like _STABLE.
 	rel=$(uname -r)
-	rel=${rel%%_*}
-	rel=$(printf '%s' "${rel}" | sed -e 's/[^0-9.].*$//')
+	rel=$(printf '%s' "${rel}" | sed -e 's/[^A-Za-z0-9._-].*$//')
+
+	case "${rel}" in
+	*_[Rr][Cc]*|*_[Bb][Ee][Tt][Aa]*)
+		# Keep prerelease tag (e.g. 11.0_RC1).
+		:
+		;;
+	*_* )
+		# Drop non-release suffixes (e.g. _STABLE, _current snapshot tags).
+		rel=${rel%%_*}
+		:
+		;;
+	esac
 
 	major=${rel%%.*}
 	if [ -z "${major}" ] || [ "${major}" = "${rel}" ]; then
@@ -68,8 +80,11 @@ detect_release() {
 	printf '%s.%s\n' "${major}" "${minor}"
 }
 
-RELEASE=$(detect_release)
-MACHINE_ARCH=$(uname -m)
+DETECTED_RELEASE=$(detect_release)
+DETECTED_MACHINE_ARCH=$(uname -m)
+
+RELEASE=${DETECTED_RELEASE}
+MACHINE_ARCH=${DETECTED_MACHINE_ARCH}
 NETBSD_MIRROR=
 JAIL_BASE_DIR=/var/jailmgr/base
 JAIL_DATA_DIR=/var/jailmgr/jails
@@ -84,6 +99,14 @@ JAIL_PTYFS=YES
 if [ -r "${CONF_FILE}" ]; then
 	# shellcheck disable=SC1090
 	. "${CONF_FILE}"
+fi
+
+if [ -z "${RELEASE:-}" ]; then
+	RELEASE=${DETECTED_RELEASE}
+fi
+
+if [ -z "${MACHINE_ARCH:-}" ]; then
+	MACHINE_ARCH=${DETECTED_MACHINE_ARCH}
 fi
 
 write_default_conf() {
