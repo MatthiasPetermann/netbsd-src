@@ -3,3 +3,7 @@
 defflag secmodel_jail
 
 file	secmodel/jail/secmodel_jail.c	secmodel_jail
+file	secmodel/jail/secmodel_jail_module.c	secmodel_jail
+file	secmodel/jail/secmodel_jail_policy.c	secmodel_jail
+file	secmodel/jail/secmodel_jail_secmodel.c	secmodel_jail
+file	secmodel/jail/secmodel_jail_sysctl.c	secmodel_jail

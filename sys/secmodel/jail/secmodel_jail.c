@@ -54,33 +54,15 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <secmodel/secmodel.h>
 #include <secmodel/jail/jail.h>
 
-MODULE(MODULE_CLASS_SECMODEL, secmodel_jail, NULL);
+#include <secmodel/jail/secmodel_jail_int.h>
+
+secmodel_t jail_sm;
+kauth_key_t jail_key;
 
 static kauth_listener_t l_process;
 static kauth_listener_t l_cred;
 static kauth_listener_t l_system;
 static kauth_listener_t l_network;
-
-static secmodel_t jail_sm;
-static kauth_key_t jail_key;
-
-struct jail_config;
-
-enum jail_policy_profile {
-	JAIL_PROFILE_POLICY_LOW = JAIL_PROFILE_LOW,
-	JAIL_PROFILE_POLICY_MEDIUM = JAIL_PROFILE_MEDIUM,
-	JAIL_PROFILE_POLICY_HIGH = JAIL_PROFILE_HIGH,
-};
-
-static int	secmodel_jail_system_cb(kauth_cred_t, kauth_action_t, void *,
-		    void *, void *, void *, void *);
-static int	secmodel_jail_network_cb(kauth_cred_t, kauth_action_t, void *,
-		    void *, void *, void *, void *);
-static bool	secmodel_jail_port_reserved_by_id(jailid_t, in_port_t);
-static bool	secmodel_jail_port_reserved_any(in_port_t);
-static bool	secmodel_jail_addr_port(const struct sockaddr *, in_port_t *);
-static bool	secmodel_jail_has_entries(void);
-static jailid_t	secmodel_jail_cred_id(kauth_cred_t);
 
 /*
  * Big picture for newcomers:
@@ -103,43 +85,12 @@ static jailid_t	secmodel_jail_cred_id(kauth_cred_t);
  * (for example a hash table or pserialize-friendly map) once jail counts grow.
  * The current LIST walk is simple and robust but O(n) on every lookup.
  */
-struct jail_entry {
-	jailid_t je_id;
-	char je_name[JAIL_NAME_MAX + 1];
-	char je_root[JAIL_ROOT_MAX + 1];
-	uint64_t je_cpu_quota;
-	uint64_t je_cpu_period;
-	uint64_t je_memory_max;
-	uint64_t je_proc_max;
-	uint64_t je_fd_max;
-	uint64_t je_sockbuf_max;
-	enum jail_policy_profile je_profile;
-	uint64_t je_proc_current;
-	uint64_t je_refcount;
-	uint64_t je_fd_current;
-	uint64_t je_sockbuf_current;
-	uint64_t je_memory_current;
-	uint64_t je_cpu_usage;
-	uint64_t je_cpu_used_window;
-	uint64_t je_cpu_total_ticks;
-	time_t je_cpu_window_start;
-	bool je_cpu_over_quota;
-	uint64_t je_deny_proc;
-	uint64_t je_deny_fd;
-	uint64_t je_deny_sockbuf;
-	uint64_t je_deny_memory;
-	uint64_t je_throttle_cpu;
-	uint16_t je_nports;
-	uint16_t je_ports[JAIL_PORTS_MAX];
-	LIST_ENTRY(jail_entry) je_entry;
-};
-
-static LIST_HEAD(, jail_entry) jail_list =
+LIST_HEAD(, jail_entry) jail_list =
     LIST_HEAD_INITIALIZER(jail_list);
-static kmutex_t jail_lock;
+kmutex_t jail_lock;
 static jailid_t jail_next_id = 1;
 static struct callout jail_cpu_account_ch;
-static unsigned int jail_cpu_limits_active;
+unsigned int jail_cpu_limits_active;
 
 /*
  * Locking contract (important for deadlock avoidance):
@@ -153,32 +104,22 @@ static unsigned int jail_cpu_limits_active;
  * extremely hard to debug.
  */
 
-static struct jail_entry *secmodel_jail_lookup(jailid_t);
+struct jail_entry *secmodel_jail_lookup(jailid_t);
 static void secmodel_jail_cpu_account_tick(void *);
 
-static inline void
+void
 secmodel_jail_assert_jail_lock_held(void)
 {
 
 	KASSERT(mutex_owned(&jail_lock));
 }
 
-static inline bool
+bool
 secmodel_jail_cpu_limit_enabled(const struct jail_entry *entry)
 {
 
 	return entry->je_cpu_quota != 0 && entry->je_cpu_period != 0;
 }
-
-struct jail_config {
-	uint64_t jc_cpu_quota;
-	uint64_t jc_cpu_period;
-	uint64_t jc_memory_max;
-	uint64_t jc_proc_max;
-	uint64_t jc_fd_max;
-	uint64_t jc_sockbuf_max;
-	enum jail_policy_profile jc_profile;
-};
 
 /*
  * Generic helper for jail-scoped "current + delta <= limit" admission.
@@ -301,7 +242,7 @@ secmodel_jail_cpu_account_tick(void *arg)
 	callout_schedule(&jail_cpu_account_ch, hz);
 }
 
-static bool
+bool
 secmodel_jail_memory_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 {
 	struct jail_entry *entry;
@@ -327,7 +268,7 @@ secmodel_jail_memory_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 	return true;
 }
 
-static void
+void
 secmodel_jail_memory_set_current(kauth_cred_t cred, uint64_t current)
 {
 	struct jail_entry *entry;
@@ -344,7 +285,7 @@ secmodel_jail_memory_set_current(kauth_cred_t cred, uint64_t current)
 	mutex_exit(&jail_lock);
 }
 
-static bool
+bool
 secmodel_jail_fd_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 {
 	struct jail_entry *entry;
@@ -370,7 +311,7 @@ secmodel_jail_fd_admit(kauth_cred_t cred, uint64_t current, uint64_t delta)
 	return true;
 }
 
-static void
+void
 secmodel_jail_fd_set_current(kauth_cred_t cred, uint64_t current)
 {
 	struct jail_entry *entry;
@@ -387,7 +328,7 @@ secmodel_jail_fd_set_current(kauth_cred_t cred, uint64_t current)
 	mutex_exit(&jail_lock);
 }
 
-static bool
+bool
 secmodel_jail_sockbuf_charge(kauth_cred_t cred, uint64_t bytes)
 {
 	struct jail_entry *entry;
@@ -414,7 +355,7 @@ secmodel_jail_sockbuf_charge(kauth_cred_t cred, uint64_t bytes)
 	return true;
 }
 
-static bool
+bool
 secmodel_jail_cpu_can_run(kauth_cred_t cred)
 {
 	struct jail_entry *entry;
@@ -439,7 +380,7 @@ secmodel_jail_cpu_can_run(kauth_cred_t cred)
 	return true;
 }
 
-static int
+int
 secmodel_jail_cpu_can_run_try(kauth_cred_t cred, bool *okp)
 {
 	struct jail_entry *entry;
@@ -483,7 +424,7 @@ secmodel_jail_cpu_can_run_try(kauth_cred_t cred, bool *okp)
 	return 0;
 }
 
-static void
+void
 secmodel_jail_sockbuf_uncharge(kauth_cred_t cred, uint64_t bytes)
 {
 	struct jail_entry *entry;
@@ -508,7 +449,7 @@ secmodel_jail_sockbuf_uncharge(kauth_cred_t cred, uint64_t bytes)
  * Fetch the jail id associated with a credential. The value lives in the
  * secmodel-specific kauth data slot.
  */
-static jailid_t
+jailid_t
 secmodel_jail_cred_id(kauth_cred_t cred)
 {
 	void *data;
@@ -521,7 +462,7 @@ secmodel_jail_cred_id(kauth_cred_t cred)
  * Set the jail id on a credential. This is the only state we store for
  * membership; all policy checks rely on this value.
  */
-static void
+void
 secmodel_jail_cred_setid(kauth_cred_t cred, jailid_t id)
 {
 	kauth_cred_setdata(cred, jail_key, (void *)(uintptr_t)id);
@@ -573,7 +514,7 @@ secmodel_jail_cred_matches(kauth_cred_t cred, const char *name)
 /*
  * Host credentials are those with jail id 0.
  */
-static bool
+bool
 secmodel_jail_is_host_cred(kauth_cred_t cred)
 {
 	return secmodel_jail_cred_id(cred) == JAILID_HOST;
@@ -582,7 +523,7 @@ secmodel_jail_is_host_cred(kauth_cred_t cred)
 /*
  * Host root (euid 0, jail id 0) bypasses jail restrictions.
  */
-static bool
+bool
 secmodel_jail_is_host_root(kauth_cred_t cred)
 {
 	return kauth_cred_geteuid(cred) == 0 &&
@@ -593,7 +534,7 @@ secmodel_jail_is_host_root(kauth_cred_t cred)
  * Determine whether a credential can interact with a target process.
  * Host root can always interact. Otherwise, both must be in the same jail.
  */
-static bool
+bool
 secmodel_jail_match(kauth_cred_t cred, struct proc *p)
 {
 	if (secmodel_jail_is_host_root(cred))
@@ -606,7 +547,7 @@ secmodel_jail_match(kauth_cred_t cred, struct proc *p)
 /*
  * Look up a jail entry by id. Callers must hold jail_lock.
  */
-static struct jail_entry *
+struct jail_entry *
 secmodel_jail_lookup(jailid_t id)
 {
 	struct jail_entry *entry;
@@ -640,7 +581,7 @@ secmodel_jail_lookup_name(const char *name)
 	return NULL;
 }
 
-static bool
+bool
 secmodel_jail_get_config(jailid_t id, struct jail_config *config)
 {
 	struct jail_entry *entry;
@@ -670,7 +611,7 @@ secmodel_jail_get_config(jailid_t id, struct jail_config *config)
  * Create a new jail id. The id is monotonic, starting at 1, and 0 is reserved
  * for the host. Returns the new id to the caller.
  */
-static int
+int
 secmodel_jail_create(const struct jail_create *create,
     const struct jail_config *config, jailid_t *idp)
 {
@@ -748,7 +689,7 @@ secmodel_jail_create(const struct jail_create *create,
 	return 0;
 }
 
-static bool
+bool
 secmodel_jail_port_reserved_by_id(jailid_t id, in_port_t lport)
 {
 	struct jail_entry *entry;
@@ -768,7 +709,7 @@ secmodel_jail_port_reserved_by_id(jailid_t id, in_port_t lport)
 	return false;
 }
 
-static bool
+bool
 secmodel_jail_port_reserved_any(in_port_t lport)
 {
 	struct jail_entry *entry;
@@ -786,7 +727,7 @@ secmodel_jail_port_reserved_any(in_port_t lport)
 	return false;
 }
 
-static bool
+bool
 secmodel_jail_addr_port(const struct sockaddr *sa, in_port_t *port)
 {
 	const struct sockaddr_in *sin;
@@ -812,7 +753,7 @@ secmodel_jail_addr_port(const struct sockaddr *sa, in_port_t *port)
 /*
  * Check whether any jail ids still exist.
  */
-static bool
+bool
 secmodel_jail_has_entries(void)
 {
 	bool has_entries;
@@ -828,7 +769,7 @@ secmodel_jail_has_entries(void)
  * Check whether any process (including zombies) currently belongs to the
  * specified jail id. Used to prevent destroying active jails.
  */
-static bool
+bool
 secmodel_jail_has_processes(jailid_t id)
 {
 	struct proc *p;
@@ -867,7 +808,7 @@ secmodel_jail_has_processes(jailid_t id)
  * Remove a jail entry. This does not touch processes; callers should ensure
  * there are no remaining members before destroying.
  */
-static int
+int
 secmodel_jail_destroy(jailid_t id)
 {
 	struct jail_entry *entry;
@@ -897,7 +838,7 @@ secmodel_jail_destroy(jailid_t id)
  * an existing jail). The jail id is stored in the process credentials to
  * ensure it follows the process and its children.
  */
-static int
+int
 secmodel_jail_enter(struct lwp *l, jailid_t id)
 {
 	struct proc *p;
@@ -977,382 +918,6 @@ secmodel_jail_enter(struct lwp *l, jailid_t id)
 }
 
 /*
- * sysctl handler for security.models.jail.create
- *
- * Writing a value allocates a new jail id. The newly created id is returned
- * to userland.
- */
-static int
-secmodel_jail_sysctl_create(SYSCTLFN_ARGS)
-{
-	uint32_t id;
-	int error;
-	struct jail_create create;
-	struct jail_config config;
-	struct jail_config *configp;
-	uint32_t flags;
-
-	if (newp == NULL)
-		return EINVAL;
-
-	if (!secmodel_jail_is_host_root(l->l_cred))
-		return EPERM;
-
-	if (newlen == sizeof(create)) {
-		error = sysctl_copyin(l, newp, &create, sizeof(create));
-		if (error != 0)
-			return error;
-
-		flags = create.jc_flags;
-		if ((flags & ~(JAIL_CREATE_CPU_QUOTA |
-		    JAIL_CREATE_CPU_PERIOD |
-				    JAIL_CREATE_MEMORY_MAX |
-		    JAIL_CREATE_PROC_MAX |
-		    JAIL_CREATE_FD_MAX |
-		    JAIL_CREATE_SOCKBUF_MAX |
-		    JAIL_CREATE_PROFILE |
-		    JAIL_CREATE_PORTS)) != 0)
-			return EINVAL;
-		if ((flags & JAIL_CREATE_PORTS) != 0) {
-			size_t i, j;
-
-			if (create.jc_nports == 0 || create.jc_nports > JAIL_PORTS_MAX)
-				return EINVAL;
-			for (i = 0; i < create.jc_nports; i++) {
-				if (create.jc_ports[i] == 0)
-					return EINVAL;
-				for (j = i + 1; j < create.jc_nports; j++) {
-					if (create.jc_ports[i] == create.jc_ports[j])
-						return EINVAL;
-				}
-			}
-		} else if (create.jc_nports != 0) {
-			return EINVAL;
-		}
-
-		memset(&config, 0, sizeof(config));
-		config.jc_profile = JAIL_PROFILE_POLICY_HIGH;
-		if ((flags & JAIL_CREATE_PROFILE) != 0) {
-			switch (create.jc_profile) {
-			case JAIL_PROFILE_LOW:
-				config.jc_profile = JAIL_PROFILE_POLICY_LOW;
-				break;
-			case JAIL_PROFILE_MEDIUM:
-				config.jc_profile = JAIL_PROFILE_POLICY_MEDIUM;
-				break;
-			case JAIL_PROFILE_HIGH:
-				config.jc_profile = JAIL_PROFILE_POLICY_HIGH;
-				break;
-			default:
-				return EINVAL;
-			}
-		}
-		if ((flags & JAIL_CREATE_CPU_QUOTA) != 0) {
-			if (create.jc_cpu_quota == 0)
-				return EINVAL;
-			config.jc_cpu_quota = create.jc_cpu_quota;
-		}
-		if ((flags & JAIL_CREATE_CPU_PERIOD) != 0) {
-			if (create.jc_cpu_period == 0)
-				return EINVAL;
-			config.jc_cpu_period = create.jc_cpu_period;
-		}
-		if ((flags & JAIL_CREATE_MEMORY_MAX) != 0) {
-			if (create.jc_memory_max == 0)
-				return EINVAL;
-			config.jc_memory_max = create.jc_memory_max;
-		}
-		if ((flags & JAIL_CREATE_PROC_MAX) != 0) {
-			if (create.jc_proc_max == 0)
-				return EINVAL;
-			config.jc_proc_max = create.jc_proc_max;
-		}
-		if ((flags & JAIL_CREATE_FD_MAX) != 0) {
-			if (create.jc_fd_max == 0)
-				return EINVAL;
-			config.jc_fd_max = create.jc_fd_max;
-		}
-		if ((flags & JAIL_CREATE_SOCKBUF_MAX) != 0) {
-			if (create.jc_sockbuf_max == 0)
-				return EINVAL;
-			config.jc_sockbuf_max = create.jc_sockbuf_max;
-		}
-		if ((config.jc_cpu_quota != 0 && config.jc_cpu_period == 0) ||
-		    (config.jc_cpu_quota == 0 && config.jc_cpu_period != 0))
-			return EINVAL;
-		configp = &config;
-	} else {
-		return EINVAL;
-	}
-
-	if (create.jc_name[0] == '\0' || create.jc_root[0] == '\0')
-		return EINVAL;
-	if (memchr(create.jc_name, '\n', sizeof(create.jc_name)) != NULL ||
-	    memchr(create.jc_root, '\n', sizeof(create.jc_root)) != NULL)
-		return EINVAL;
-	error = secmodel_jail_create(&create, configp, &id);
-
-	if (error != 0)
-		return error;
-
-	log(LOG_INFO,
-	    "secmodel_jail: created jail id=%u name=\"%s\" root=\"%s\" profile=%u by pid=%d euid=%u\n",
-	    id, create.jc_name, create.jc_root,
-	    (unsigned)configp->jc_profile, l->l_proc->p_pid,
-	    kauth_cred_geteuid(l->l_cred));
-	create.jc_id = id;
-	if (oldp == NULL) {
-		*oldlenp = sizeof(create);
-		return 0;
-	}
-
-	if (*oldlenp < sizeof(create))
-		return ENOMEM;
-
-	*oldlenp = sizeof(create);
-	return sysctl_copyout(l, &create, oldp, sizeof(create));
-}
-
-/*
- * sysctl handler for security.models.jail.destroy
- *
- * Writing a jail id destroys it if there are no remaining processes.
- */
-static int
-secmodel_jail_sysctl_destroy(SYSCTLFN_ARGS)
-{
-	uint32_t id;
-	int error;
-
-	if (newp == NULL)
-		return EINVAL;
-
-	if (!secmodel_jail_is_host_root(l->l_cred))
-		return EPERM;
-
-	if (newlen < sizeof(id))
-		return EINVAL;
-
-	error = sysctl_copyin(l, newp, &id, sizeof(id));
-	if (error != 0)
-		return error;
-
-	if (id == JAILID_HOST)
-		return EINVAL;
-
-	if (secmodel_jail_has_processes(id))
-		return EBUSY;
-
-	error = secmodel_jail_destroy(id);
-	if (error != 0)
-		return error;
-
-	log(LOG_INFO,
-	    "secmodel_jail: destroyed jail id=%u by pid=%d euid=%u\n",
-	    id, l->l_proc->p_pid, kauth_cred_geteuid(l->l_cred));
-
-	return 0;
-}
-
-/*
- * sysctl handler for security.models.jail.id
- *
- * Reading returns the current process jail id. Writing an id requests the
- * process to enter that jail.
- */
-static int
-secmodel_jail_sysctl_id(SYSCTLFN_ARGS)
-{
-	jailid_t id;
-	int error;
-	struct sysctlnode node;
-
-	if (!secmodel_jail_is_host_root(l->l_cred))
-		return EPERM;
-
-	id = secmodel_jail_cred_id(l->l_cred);
-
-	node = *rnode;
-	node.sysctl_data = &id;
-	node.sysctl_size = sizeof(id);
-
-	error = sysctl_lookup(SYSCTLFN_CALL(&node));
-	if (error || newp == NULL)
-		return error;
-
-	return secmodel_jail_enter(l, id);
-}
-
-/*
- * sysctl handler for security.models.jail.list
- *
- * Reading returns an array of jail_info entries with sampled process counts.
- */
-static int
-secmodel_jail_sysctl_list(SYSCTLFN_ARGS)
-{
-	struct jail_entry *entry;
-	struct jail_info *entries;
-	size_t count, i, needed, used;
-	int error;
-	bool retry;
-
-	if (newp != NULL)
-		return EPERM;
-	if (!secmodel_jail_is_host_cred(l->l_cred))
-		return EPERM;
-
-	retry = false;
-again:
-	/*
-	 * Snapshot path intentionally avoids proc_lock and only copies sampled
-	 * counters from jail entries, keeping stats sysctl reads bounded.
-	 */
-	mutex_enter(&jail_lock);
-	count = 0;
-	LIST_FOREACH(entry, &jail_list, je_entry)
-		count++;
-	needed = count * sizeof(*entries);
-
-	if (oldp == NULL) {
-		mutex_exit(&jail_lock);
-		*oldlenp = needed;
-		return 0;
-	}
-
-	if (count == 0) {
-		mutex_exit(&jail_lock);
-		*oldlenp = 0;
-		return 0;
-	}
-	mutex_exit(&jail_lock);
-
-	if (*oldlenp < needed)
-		return ENOMEM;
-
-	entries = kmem_zalloc(needed, KM_SLEEP);
-
-	mutex_enter(&jail_lock);
-	i = 0;
-	LIST_FOREACH(entry, &jail_list, je_entry) {
-		if (i >= count) {
-			retry = true;
-			break;
-		}
-		entries[i].ji_id = entry->je_id;
-		entries[i].ji_refcount = entry->je_refcount;
-		entries[i].ji_cpu_quota = entry->je_cpu_quota;
-		entries[i].ji_cpu_period = entry->je_cpu_period;
-		entries[i].ji_memory_max = entry->je_memory_max;
-		entries[i].ji_proc_max = entry->je_proc_max;
-		entries[i].ji_fd_max = entry->je_fd_max;
-		entries[i].ji_sockbuf_max = entry->je_sockbuf_max;
-		entries[i].ji_proc_current = entry->je_proc_current;
-		entries[i].ji_fd_current = entry->je_fd_current;
-		entries[i].ji_sockbuf_current = entry->je_sockbuf_current;
-		entries[i].ji_memory_current = entry->je_memory_current;
-		entries[i].ji_cpu_usage = entry->je_cpu_usage;
-		entries[i].ji_deny_proc = entry->je_deny_proc;
-		entries[i].ji_deny_fd = entry->je_deny_fd;
-		entries[i].ji_deny_sockbuf = entry->je_deny_sockbuf;
-		entries[i].ji_deny_memory = entry->je_deny_memory;
-		entries[i].ji_throttle_cpu = entry->je_throttle_cpu;
-		strlcpy(entries[i].ji_name, entry->je_name,
-		    sizeof(entries[i].ji_name));
-		strlcpy(entries[i].ji_root, entry->je_root,
-		    sizeof(entries[i].ji_root));
-		i++;
-	}
-	mutex_exit(&jail_lock);
-
-	if (retry) {
-		/*
-		 * The list changed while copying. We intentionally retry to present a
-		 * coherent snapshot rather than returning a partially mixed generation.
-		 *
-		 * TODO(next): consider lockless snapshot generation with sequence counters
-		 * to avoid retries under heavy jail churn.
-		 */
-		kmem_free(entries, needed);
-		retry = false;
-		goto again;
-	}
-
-	used = i * sizeof(*entries);
-
-	error = 0;
-	for (i = 0; i < used / sizeof(*entries); i++) {
-		error = sysctl_copyout(l, &entries[i], oldp,
-		    sizeof(*entries));
-		if (error != 0)
-			break;
-		oldp = (char *)oldp + sizeof(*entries);
-	}
-
-	if (error == 0)
-		*oldlenp = used;
-
-	kmem_free(entries, needed);
-	return error;
-}
-
-/*
- * Create the sysctl tree for jail controls under security.models.jail.
- */
-SYSCTL_SETUP(sysctl_security_jail_setup, "secmodel_jail sysctl")
-{
-	const struct sysctlnode *rnode;
-
-	sysctl_createv(clog, 0, NULL, &rnode,
-	       CTLFLAG_PERMANENT,
-	       CTLTYPE_NODE, "models", NULL,
-	       NULL, 0, NULL, 0,
-	       CTL_SECURITY, CTL_CREATE, CTL_EOL);
-
-	sysctl_createv(clog, 0, &rnode, &rnode,
-	       CTLFLAG_PERMANENT,
-	       CTLTYPE_NODE, "jail",
-	       SYSCTL_DESCR("Jail security model"),
-	       NULL, 0, NULL, 0,
-	       CTL_CREATE, CTL_EOL);
-
-	sysctl_createv(clog, 0, &rnode, NULL,
-	       CTLFLAG_PERMANENT,
-	       CTLTYPE_STRING, "name", NULL,
-	       NULL, 0, __UNCONST(SECMODEL_JAIL_NAME), 0,
-	       CTL_CREATE, CTL_EOL);
-
-	sysctl_createv(clog, 0, &rnode, NULL,
-	       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-	       CTLTYPE_INT, "id",
-	       SYSCTL_DESCR("Current process jail id"),
-	       secmodel_jail_sysctl_id, 0, NULL, 0,
-	       CTL_CREATE, CTL_EOL);
-
-	sysctl_createv(clog, 0, &rnode, NULL,
-	       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-	       CTLTYPE_INT, "create",
-	       SYSCTL_DESCR("Create a new jail id"),
-	       secmodel_jail_sysctl_create, 0, NULL, 0,
-	       CTL_CREATE, CTL_EOL);
-
-	sysctl_createv(clog, 0, &rnode, NULL,
-	       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-	       CTLTYPE_INT, "destroy",
-	       SYSCTL_DESCR("Destroy a jail id with no processes"),
-	       secmodel_jail_sysctl_destroy, 0, NULL, 0,
-	       CTL_CREATE, CTL_EOL);
-
-	sysctl_createv(clog, 0, &rnode, NULL,
-	       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
-	       CTLTYPE_STRUCT, "list",
-	       SYSCTL_DESCR("List active jail ids"),
-	       secmodel_jail_sysctl_list, 0, NULL, 0,
-	       CTL_CREATE, CTL_EOL);
-
-}
-
-/*
  * Initialize secmodel jail structures and register per-credential storage.
  */
 void
@@ -1411,460 +976,4 @@ secmodel_jail_stop(void)
 	}
 	mutex_exit(&jail_lock);
 	mutex_destroy(&jail_lock);
-}
-
-static int
-secmodel_jail_network_cb(kauth_cred_t cred, kauth_action_t action,
-    void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
-{
-	enum kauth_network_req req;
-	in_port_t lport;
-	jailid_t id;
-
-	(void)cookie;
-	(void)arg1;
-	(void)arg3;
-
-	if (action != KAUTH_NETWORK_BIND)
-		return KAUTH_RESULT_DEFER;
-
-	req = (enum kauth_network_req)(uintptr_t)arg0;
-	if (req != KAUTH_REQ_NETWORK_BIND_PORT &&
-	    req != KAUTH_REQ_NETWORK_BIND_PRIVPORT)
-		return KAUTH_RESULT_DEFER;
-
-	if (!secmodel_jail_addr_port((const struct sockaddr *)arg2, &lport))
-		return KAUTH_RESULT_DEFER;
-	if (lport == 0)
-		return KAUTH_RESULT_DEFER;
-
-	/*
-	 * Port policy model:
-	 * - if no jail reserves this port, defer to normal kernel policy
-	 * - if reserved, only the owning jail may bind it
-	 *
-	 * This prevents accidental or malicious cross-jail port hijacking.
-	 */
-	id = secmodel_jail_cred_id(cred);
-
-	mutex_enter(&jail_lock);
-	if (!secmodel_jail_port_reserved_any(lport)) {
-		mutex_exit(&jail_lock);
-		return KAUTH_RESULT_DEFER;
-	}
-	if (secmodel_jail_port_reserved_by_id(id, lport)) {
-		mutex_exit(&jail_lock);
-		return KAUTH_RESULT_ALLOW;
-	}
-	mutex_exit(&jail_lock);
-
-	return KAUTH_RESULT_DENY;
-}
-
-/*
- * kauth(9) listener for system scope.
- *
- * Denies host-level administrative actions for jailed credentials while
- * deferring host credentials and host root to other security models.
- */
-static int
-secmodel_jail_system_cb(kauth_cred_t cred, kauth_action_t action,
-    void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
-{
-	enum kauth_system_req req;
-	struct jail_config config;
-
-	(void)cookie;
-	(void)arg1;
-	(void)arg2;
-	(void)arg3;
-
-	if (secmodel_jail_is_host_root(cred))
-		return KAUTH_RESULT_DEFER;
-
-	if (secmodel_jail_cred_id(cred) == JAILID_HOST)
-		return KAUTH_RESULT_DEFER;
-
-	if (!secmodel_jail_get_config(secmodel_jail_cred_id(cred), &config))
-		return KAUTH_RESULT_DEFER;
-
-	req = (enum kauth_system_req)(uintptr_t)arg0;
-
-	/*
-	 * Always deny private sysctl reads from jail context, regardless of
-	 * policy profile. This keeps private nodes (for example kern.msgbuf)
-	 * inaccessible to jailed credentials.
-	 */
-	if (action == KAUTH_SYSTEM_SYSCTL &&
-	    req == KAUTH_REQ_SYSTEM_SYSCTL_PRVT)
-		return KAUTH_RESULT_DENY;
-
-	/*
-	 * Profile handling strategy:
-	 * - LOW: mostly defer, only absolute jail invariants are enforced.
-	 * - MEDIUM/HIGH: progressively deny broader host-admin capabilities.
-	 *
-	 * Why defer: secmodel_jail should compose with other security models instead
-	 * of claiming all decisions unconditionally.
-	 */
-	if (config.jc_profile == JAIL_PROFILE_POLICY_LOW)
-		return KAUTH_RESULT_DEFER;
-
-	switch (action) {
-	case KAUTH_SYSTEM_MOUNT: /* Deny mounting/unmounting or mount reconfiguration inside jail. */
-		switch (req) {
-		case KAUTH_REQ_SYSTEM_MOUNT_DEVICE: /* Block use of raw block devices as mount sources. */
-		case KAUTH_REQ_SYSTEM_MOUNT_NEW: /* Block creation of new mounts. */
-		case KAUTH_REQ_SYSTEM_MOUNT_UNMOUNT: /* Block unmounting existing filesystems. */
-		case KAUTH_REQ_SYSTEM_MOUNT_UPDATE: /* Block remount/update flag changes. */
-		case KAUTH_REQ_SYSTEM_MOUNT_UMAP: /* Block uid/gid remapping mount operations. */
-			return KAUTH_RESULT_DENY;
-		default:
-			return KAUTH_RESULT_DEFER;
-		}
-
-	case KAUTH_SYSTEM_MODULE: /* Block loading/unloading kernel modules from jail context. */
-	case KAUTH_SYSTEM_MKNOD: /* Block creation of device special files. */
-	case KAUTH_SYSTEM_FILEHANDLE: /* Block generation/use of kernel file handles. */
-	case KAUTH_SYSTEM_CHROOT: /* Block nested chroot/fchroot privilege operations. */
-	case KAUTH_SYSTEM_REBOOT: /* Block reboot or halt style host control actions. */
-	case KAUTH_SYSTEM_SWAPCTL: /* Block swap device/table administration. */
-	case KAUTH_SYSTEM_ACCOUNTING: /* Block kernel process accounting configuration. */
-	case KAUTH_SYSTEM_CPU: /* Block global CPU administrative state changes. */
-	case KAUTH_SYSTEM_PSET: /* Block processor-set management and binding controls. */
-	case KAUTH_SYSTEM_TIME: /* Block host clock/ntp/timecounter administration. */
-	case KAUTH_SYSTEM_SEMAPHORE: /* Block global kernel semaphore administration. */
-	case KAUTH_SYSTEM_MQUEUE: /* Block POSIX message queue subsystem administration. */
-	case KAUTH_SYSTEM_DEVMAPPER: /* Block device-mapper table/control operations. */
-	case KAUTH_SYSTEM_INTR: /* Block interrupt affinity and routing controls. */
-	case KAUTH_SYSTEM_KERNADDR: /* Block privileged kernel address disclosure access. */
-		return KAUTH_RESULT_DENY;
-
-	case KAUTH_SYSTEM_SYSVIPC: /* Block SysV IPC administrative bypass/override controls. */
-		if (config.jc_profile == JAIL_PROFILE_POLICY_MEDIUM)
-			return KAUTH_RESULT_DEFER;
-		return KAUTH_RESULT_DENY;
-
-	case KAUTH_SYSTEM_SYSCTL: /* Constrain jail writes to global kernel sysctl tree. */
-		switch (req) {
-		case KAUTH_REQ_SYSTEM_SYSCTL_ADD: /* Block runtime creation of sysctl nodes. */
-		case KAUTH_REQ_SYSTEM_SYSCTL_DELETE: /* Block runtime deletion of sysctl nodes. */
-		case KAUTH_REQ_SYSTEM_SYSCTL_MODIFY: /* Block writes to privileged sysctl values. */
-			return KAUTH_RESULT_DENY;
-		default:
-			return KAUTH_RESULT_DEFER;
-		}
-
-	default:
-		return KAUTH_RESULT_DEFER;
-	}
-}
-
-/*
- * kauth(9) listener for process scope.
- *
- * Enforces jail-local process visibility/signal policy.
- */
-int
-secmodel_jail_process_cb(kauth_cred_t cred, kauth_action_t action,
-    void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
-{
-	struct proc *p;
-	(void)cookie;
-	(void)arg1;
-	(void)arg2;
-	(void)arg3;
-
-	switch (action) {
-	case KAUTH_PROCESS_FORK: {
-		jailid_t id;
-		struct jail_entry *entry;
-		uint64_t current;
-		uint64_t proc_max;
-
-		id = secmodel_jail_cred_id(cred);
-		if (id == JAILID_HOST)
-			return KAUTH_RESULT_DEFER;
-
-		/*
-		 * Read jail-local fork policy first. This cheap check avoids walking
-		 * allproc/zombproc when process limits are disabled for this jail.
-		 */
-		proc_max = 0;
-		mutex_enter(&jail_lock);
-		entry = secmodel_jail_lookup(id);
-		if (entry != NULL) {
-			if (entry->je_cpu_over_quota) {
-				entry->je_throttle_cpu++;
-				mutex_exit(&jail_lock);
-				return KAUTH_RESULT_DENY;
-			}
-			proc_max = entry->je_proc_max;
-		}
-		mutex_exit(&jail_lock);
-
-		if (proc_max == 0)
-			return KAUTH_RESULT_DEFER;
-
-		current = 0;
-		/*
-		 * TODO(next): replace full process walks with maintained counters updated
-		 * on fork/exit hooks. Current behavior is correct but scales poorly on
-		 * systems with very high process counts.
-		 */
-		mutex_enter(&proc_lock);
-		PROCLIST_FOREACH(p, &allproc) {
-			if (secmodel_jail_cred_id(p->p_cred) == id)
-				current++;
-		}
-		PROCLIST_FOREACH(p, &zombproc) {
-			if (secmodel_jail_cred_id(p->p_cred) == id)
-				current++;
-		}
-		mutex_exit(&proc_lock);
-
-		/*
-		 * Revalidate under jail_lock: jail policy may have changed while we
-		 * counted processes, and the jail could have been destroyed/recreated.
-		 */
-		mutex_enter(&jail_lock);
-		entry = secmodel_jail_lookup(id);
-		if (entry != NULL) {
-			if (entry->je_cpu_over_quota) {
-				entry->je_throttle_cpu++;
-				mutex_exit(&jail_lock);
-				return KAUTH_RESULT_DENY;
-			}
-			entry->je_proc_current = current;
-			if (entry->je_proc_max != 0 && current >= entry->je_proc_max) {
-				entry->je_deny_proc++;
-				mutex_exit(&jail_lock);
-				return KAUTH_RESULT_DENY;
-			}
-		}
-		mutex_exit(&jail_lock);
-		return KAUTH_RESULT_DEFER;
-	}
-	case KAUTH_PROCESS_CANSEE:
-	case KAUTH_PROCESS_SIGNAL:
-		p = arg0;
-		if (!secmodel_jail_match(cred, p))
-			return KAUTH_RESULT_DENY;
-		return KAUTH_RESULT_DEFER;
-	default:
-		return KAUTH_RESULT_DEFER;
-	}
-}
-
-/*
- * kauth(9) listener for credential scope.
- *
- * Initializes new credentials to host jail (id 0) and preserves the jail id
- * when credentials are copied.
- */
-int
-secmodel_jail_cred_cb(kauth_cred_t cred, kauth_action_t action,
-    void *cookie, void *arg0, void *arg1, void *arg2, void *arg3)
-{
-	(void)cookie;
-	(void)arg1;
-	(void)arg2;
-	(void)arg3;
-
-	switch (action) {
-	case KAUTH_CRED_INIT:
-		secmodel_jail_cred_setid(cred, JAILID_HOST);
-		return KAUTH_RESULT_ALLOW;
-	case KAUTH_CRED_COPY:
-		secmodel_jail_cred_setid(arg0, secmodel_jail_cred_id(cred));
-		return KAUTH_RESULT_ALLOW;
-	default:
-		return KAUTH_RESULT_DEFER;
-	}
-}
-
-/*
- * secmodel_jail_eval() handles only policy decisions that can succeed/fail.
- *
- * The complementary state/accounting updates are handled by
- * secmodel_jail_setinfo(); keeping these paths separate makes call sites
- * self-documenting and avoids conflating admission checks with telemetry.
- */
-static int
-secmodel_jail_eval(const char *what, void *arg, void *ret)
-{
-	const struct secmodel_jail_eval_cred_matches_args *a;
-	const struct secmodel_jail_eval_admit_args *aa;
-	const struct secmodel_jail_eval_sockbuf_charge_args *sba;
-	const struct secmodel_jail_eval_cpu_can_run_args *cra;
-	bool *matchp;
-	bool *okp;
-
-	if (strcmp(what, SECMODEL_JAIL_EVAL_CRED_MATCHES) == 0) {
-		if (arg == NULL || ret == NULL)
-			return EINVAL;
-
-		a = arg;
-		matchp = ret;
-		log(LOG_DEBUG,
-		    "secmodel_jail debug: eval what=\"%s\" cred_matches name=%s\n",
-		    what, a->name ? a->name : "<none>");
-		*matchp = secmodel_jail_cred_matches(a->cred, a->name);
-		log(LOG_DEBUG,
-		    "secmodel_jail debug: eval result what=\"%s\" match=%d\n",
-		    what, *matchp);
-		return 0;
-	}
-
-	if (strcmp(what, SECMODEL_JAIL_EVAL_MEMORY_ADMIT) == 0) {
-		if (arg == NULL || ret == NULL)
-			return EINVAL;
-		aa = arg;
-		okp = ret;
-		*okp = secmodel_jail_memory_admit(aa->cred, aa->current, aa->delta);
-		return 0;
-	}
-
-	if (strcmp(what, SECMODEL_JAIL_EVAL_FD_ADMIT) == 0) {
-		if (arg == NULL || ret == NULL)
-			return EINVAL;
-		aa = arg;
-		okp = ret;
-		*okp = secmodel_jail_fd_admit(aa->cred, aa->current, aa->delta);
-		return 0;
-	}
-
-	if (strcmp(what, SECMODEL_JAIL_EVAL_SOCKBUF_CHARGE) == 0) {
-		if (arg == NULL || ret == NULL)
-			return EINVAL;
-		sba = arg;
-		okp = ret;
-		*okp = secmodel_jail_sockbuf_charge(sba->cred, sba->bytes);
-		return 0;
-	}
-
-	if (strcmp(what, SECMODEL_JAIL_EVAL_CPU_CAN_RUN) == 0) {
-		if (arg == NULL || ret == NULL)
-			return EINVAL;
-		cra = arg;
-		okp = ret;
-		*okp = secmodel_jail_cpu_can_run(cra->cred);
-		return 0;
-	}
-
-	if (strcmp(what, SECMODEL_JAIL_EVAL_CPU_CAN_RUN_TRY) == 0) {
-		if (arg == NULL || ret == NULL)
-			return EINVAL;
-		cra = arg;
-		okp = ret;
-		return secmodel_jail_cpu_can_run_try(cra->cred, okp);
-	}
-
-	return ENOENT;
-}
-
-/*
- * secmodel_jail_setinfo() receives best-effort runtime updates from other
- * subsystems. These updates are intentionally side-effect free from an access
- * control perspective: failure to deliver an update must not grant or deny a
- * permission check.
- */
-static int
-secmodel_jail_setinfo(const char *what, void *arg)
-{
-	const struct secmodel_jail_setinfo_set_current_args *sca;
-	const struct secmodel_jail_setinfo_sockbuf_args *sba;
-
-	if (strcmp(what, SECMODEL_JAIL_SETINFO_MEMORY_SET_CURRENT) == 0) {
-		if (arg == NULL)
-			return EINVAL;
-		sca = arg;
-		secmodel_jail_memory_set_current(sca->cred, sca->current);
-		return 0;
-	}
-
-	if (strcmp(what, SECMODEL_JAIL_SETINFO_FD_SET_CURRENT) == 0) {
-		if (arg == NULL)
-			return EINVAL;
-		sca = arg;
-		secmodel_jail_fd_set_current(sca->cred, sca->current);
-		return 0;
-	}
-
-	if (strcmp(what, SECMODEL_JAIL_SETINFO_SOCKBUF_UNCHARGE) == 0) {
-		if (arg == NULL)
-			return EINVAL;
-		sba = arg;
-		secmodel_jail_sockbuf_uncharge(sba->cred, sba->bytes);
-		return 0;
-	}
-
-	return ENOENT;
-}
-
-/*
- * secmodel_setinfo_t currently passes an opaque argument only. Use a tiny
- * adapter so secmodel_jail_setinfo() can keep its named-operation dispatch.
- */
-struct secmodel_jail_setinfo_call {
-	const char *what;
-	void *arg;
-};
-
-static int
-secmodel_jail_setinfo_adapter(void *v)
-{
-	const struct secmodel_jail_setinfo_call *call;
-
-	if (v == NULL)
-		return EINVAL;
-
-	call = v;
-	if (call->what == NULL)
-		return EINVAL;
-
-	return secmodel_jail_setinfo(call->what, call->arg);
-}
-
-/*
- * Module command handler: register/deregister the security model.
- */
-static int
-secmodel_jail_modcmd(modcmd_t cmd, void *arg)
-{
-	int error = 0;
-
-	switch (cmd) {
-	case MODULE_CMD_INIT:
-		error = secmodel_register(&jail_sm,
-		    SECMODEL_JAIL_ID, SECMODEL_JAIL_NAME,
-		    NULL, secmodel_jail_eval, secmodel_jail_setinfo_adapter);
-		if (error != 0)
-			printf("secmodel_jail_modcmd::init: "
-			    "secmodel_register returned %d\n", error);
-
-		secmodel_jail_init();
-		secmodel_jail_start();
-		log(LOG_INFO, "secmodel_jail: loaded\n");
-		break;
-
-	case MODULE_CMD_FINI:
-		if (secmodel_jail_has_entries())
-			return EBUSY;
-
-		log(LOG_INFO, "secmodel_jail: unloading\n");
-		secmodel_jail_stop();
-
-		error = secmodel_deregister(jail_sm);
-		if (error != 0)
-			printf("secmodel_jail_modcmd::fini: "
-			    "secmodel_deregister returned %d\n", error);
-		break;
-
-	default:
-		error = ENOTTY;
-		break;
-	}
-
-	return error;
 }
