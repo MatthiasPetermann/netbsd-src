@@ -1,0 +1,468 @@
+." $NetBSD$
+.Dd February 13, 2026
+.Dt CELLMGR 8
+.Os
+.Sh NAME
+.Nm cellmgr
+.Nd provision and manage multiple cellctl cells from one configuration
+.Sh SYNOPSIS
+.Nm
+.Ar command
+.Op Ar args ...
+.Sh DESCRIPTION
+The
+.Nm
+utility is a shell-script helper around
+.Xr cellctl 8
+for provisioning and operating multiple cells.
+It is designed for setups that use:
+.Bl -bullet -compact
+.It
+a shared, read-only base filesystem extracted from
+.Pa base.tar.xz ,
+.It
+a per-cell writable
+.Pa /.data
+mount for mutable state (with base-layer symlinks from
+.Pa /etc ,
+.Pa /var ,
+.Pa /tmp ,
+.Pa /home ,
+.Pa /root ,
+and
+.Pa /usr/pkg
+into
+.Pa /.data ) ,
+a cell-local
+.Pa /dev ,
+and
+.It
+cell naming and lifecycle management via
+.Xr cellctl 8 .
+.El
+.Pp
+By default,
+.Nm
+reads configuration from
+.Pa /etc/cellmgr.conf .
+A different configuration file can be selected with the
+.Ev CELLMGR_CONF
+environment variable.
+.Pp
+Most commands require superuser privileges.
+.Sh COMMANDS
+The following commands are supported:
+.Bl -tag -width "restart --all"
+.It Cm bootstrap
+Download
+.Pa base.tar.xz
+and
+.Pa etc.tar.xz
+from
+.Ev NETBSD_MIRROR
+after ensuring the
+.Li secmodel_cell
+kernel module is loaded,
+and persist
+.Li secmodel_cell
+in
+.Pa /etc/modules.conf
+for future boots.
+Also ensure
+.Li cellmgr=
+exists in
+.Pa /etc/rc.conf
+and initialize it to
+.Dq NO
+if absent.
+If
+.Pa /etc/cellmgr.conf
+does not exist, create it using the running system release normalized to
+.Dq major.minor
+.Pq e.g. Dq 10.1
+so mirror URLs do not include suffixes like
+.Dq _STABLE
+or
+.Dq _RC1 .
+Then
+extract
+.Pa base.tar.xz
+into the configured shared base layer directory.
+.It Cm create Op Fl a Op Fl x Ar cmd Op Fl l Ar profile Op Fl r Ar port[,port...] Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar name
+Create directories and metadata for one cell:
+.Pa root ,
+.Pa data ,
+and
+.Pa dev .
+If necessary,
+.Pa etc.tar.xz
+is extracted for that cell, but only the
+.Pa ./etc ,
+.Pa ./root ,
+.Pa ./var
+entries are unpacked into
+.Pa data/ .
+For local cell
+.Pa /dev
+setup,
+.Pa ./dev/MAKEDEV
+and optional
+.Pa ./dev/MAKEDEV.local
+are extracted directly from
+.Pa etc.tar.xz
+into the cell's mounted
+.Pa /dev
+tmpfs.
+If host
+.Pa /etc/resolv.conf
+exists,
+it is copied to
+.Pa data/etc/resolv.conf
+at create time.
+A cell-local shell configuration file is written to
+.Pa ${CELL_DATA_DIR}/name/cell.conf .
+When
+.Fl a
+is provided,
+.Ev CELL_AUTOSTART
+is initialized to
+.Dq YES
+in that generated
+.Pa cell.conf .
+When
+.Fl x
+is provided,
+.Ev CELL_SUPERVISE_CMD
+is initialized to the specified command string in the generated
+.Pa cell.conf .
+When
+.Fl l
+is provided,
+the generated
+.Pa cell.conf
+stores the corresponding
+.Xr cellctl 8
+create profile
+.Pq Dq low ,
+.Dq medium ,
+or
+.Dq high .
+When
+.Fl r
+is provided,
+the generated
+.Pa cell.conf
+stores the corresponding
+.Xr cellctl 8
+create-time reserved listening ports
+.Pq comma-separated list forwarded to Cm create Fl r .
+When
+.Fl f ,
+.Fl o ,
+.Fl e ,
+or
+.Fl t
+is provided,
+the generated
+.Pa cell.conf
+stores the corresponding
+.Xr cellctl 8
+supervisor logging settings.
+.It Cm start Ar name
+Mount the composed cell root and start the cell with
+.Xr cellctl 8 , using required per-cell settings from
+.Pa cell.conf .
+.It Cm start Cm --all
+Start all cells found under
+.Ev CELL_DATA_DIR
+with a
+.Pa cell.conf
+and
+.Ev CELL_AUTOSTART=YES .
+If one cell fails to start, processing continues with the next cell.
+.It Cm stop Ar name
+Terminate the corresponding
+.Xr cellctl 8
+supervise process for the cell named
+.Ar name ,
+then destroy the cell by name through
+.Xr cellctl 8
+and unmount its root composition.
+.It Cm stop Cm --all
+Stop and unmount all cells found under
+.Ev CELL_DATA_DIR
+with a
+.Pa cell.conf
+and
+.Ev CELL_AUTOSTART=YES .
+.It Cm restart Ar name
+Run
+.Cm stop
+for cell
+.Ar name
+and then
+.Cm start
+for the same cell, using the optional settings from
+.Pa cell.conf .
+.It Cm restart Cm --all
+Run
+.Cm stop Cm --all
+followed by
+.Cm start Cm --all .
+.It Cm apply Op Cm --ephemeral Ar name Op Ar script | Cm - Op Cm -- Ar arg ...
+Execute a shell script inside cell
+.Ar name
+using
+.Xr jexec 8
+and
+.Pa /bin/sh .
+If the cell is not running, it is started first.
+When started by
+.Cm apply ,
+only the cell runtime is created;
+the configured
+.Cm cellctl supervise
+process is not launched.
+The script can be provided as a filesystem path, as
+.Cm -
+to read from standard input, or omitted when standard input is not a terminal
+.Pq for heredoc use .
+The script is copied into cell
+.Pa /tmp
+with a unique temporary filename before execution and removed afterwards.
+Arguments after
+.Cm --
+are passed through to the script.
+By default, a cell started for
+.Cm apply
+remains running.
+When
+.Cm --ephemeral
+is specified, a cell that was started by
+.Cm apply
+is stopped again after script execution.
+.It Cm config Ar name
+Open
+.Pa ${CELL_DATA_DIR}/name/cell.conf
+for editing in the standard editor for the current environment.
+.Nm
+uses
+.Ev VISUAL
+when set,
+otherwise
+.Ev EDITOR ,
+and falls back to
+.Cm vi .
+.It Cm list
+List all configured cells as a table with columns
+.Li NAME ,
+.Li ROOT ,
+.Li SUPERVISE_CMD ,
+and
+.Li AUTOSTART .
+.It Cm status
+Show
+.Xr cellctl 8
+status and mount status for all configured cells.
+.El
+.Sh CONFIGURATION
+.Nm
+accepts shell-style variable assignments in
+.Pa /etc/cellmgr.conf
+(or the file referenced by
+.Ev CELLMGR_CONF ) .
+.Pp
+Important variables:
+.Bl -tag -width "CELL_RELEASE_DIR"
+.It Ev RELEASE
+NetBSD release used for set download paths, in
+.Dq NetBSD release directory
+form
+.Pq e.g. Dq 11.0 or Dq 11.0_RC1 ; avoid branch suffixes like Dq _STABLE .
+If unset or empty,
+.Nm
+auto-detects it from
+.Xr uname 1 .
+.It Ev MACHINE_ARCH
+Machine architecture used for set download paths.
+If unset or empty,
+.Nm
+auto-detects it from
+.Xr uname 1 .
+.It Ev NETBSD_MIRROR
+Base URL for set downloads.
+.It Ev CELL_BASE_DIR
+Directory containing extracted shared base layers.
+.It Ev CELL_DATA_DIR
+Directory containing per-cell writable state.
+.It Ev CELL_RELEASE_DIR
+Directory containing downloaded set archives.
+.It Ev CELL_LOCAL_DEV
+When set to
+.Dq YES
+(default), mount a cell-local tmpfs on
+.Pa /dev
+and populate a minimal device set with
+.Xr MAKEDEV 8 .
+.It Ev CELL_DEV_SIZE
+Size argument used for the tmpfs mounted at cell-local
+.Pa /dev
+(default
+.Dq 8m ) .
+.It Ev CELL_DEVICES
+Whitespace-separated list of
+.Xr MAKEDEV 8
+targets used to populate cell-local
+.Pa /dev .
+.It Ev CELL_PTYFS
+When set to
+.Dq YES
+(default), mount
+.Xr ptyfs 5
+at
+.Pa /dev/pts
+inside each cell-local
+.Pa /dev
+to support pseudo terminals.
+.El
+.Pp
+Each cell also has a cell-local configuration file at
+.Pa ${CELL_DATA_DIR}/name/cell.conf
+that provides:
+.Bl -tag -width "CELL_CREATE_RESERVED_PORTS"
+.It Ev CELL_NAME
+Cell name recorded by
+.Nm
+at create time.
+This must match the directory name used by
+.Nm
+.Pq Pa ${CELL_DATA_DIR}/name/ .
+.It Ev CELL_RELEASE
+Release value recorded by
+.Nm
+at create time.
+This is informational and tracks the host-side base-layer release used when
+the cell was created.
+.It Ev CELL_ARCH
+Architecture value recorded by
+.Nm
+at create time.
+This is informational and tracks the host-side base-layer architecture used
+when the cell was created.
+.It Ev CELL_AUTOSTART
+When set to
+.Dq YES ,
+include that cell in
+.Cm start --all ,
+.Cm stop --all ,
+and
+.Cm restart --all .
+.It Ev CELL_SUPERVISE_CMD
+Required command (with optional arguments) passed to
+.Xr cellctl 8
+.Cm supervise
+after cell creation.
+Only the supervised command's stdout/stderr are forwarded to host syslog.
+Programs that default to internal syslog logging (for example
+.Xr bozohttpd 8
+without
+.Fl s )
+must be configured to emit to stderr if those logs should be captured by
+.Nm .
+.It Ev CELL_CREATE_PROFILE
+Optional value forwarded to
+.Xr cellctl 8
+.Cm create Fl l
+.Pq one of
+.Dq low ,
+.Dq medium ,
+or
+.Dq high .
+.It Ev CELL_CREATE_RESERVED_PORTS
+Optional value forwarded to
+.Xr cellctl 8
+.Cm create Fl r
+.Pq comma-separated TCP/UDP port list .
+.It Ev CELL_SUPERVISE_FACILITY
+Optional value forwarded to
+.Xr cellctl 8
+.Cm supervise Fl f .
+.It Ev CELL_SUPERVISE_STDOUT_LEVEL
+Optional value forwarded to
+.Xr cellctl 8
+.Cm supervise Fl o .
+.It Ev CELL_SUPERVISE_STDERR_LEVEL
+Optional value forwarded to
+.Xr cellctl 8
+.Cm supervise Fl e .
+.It Ev CELL_SUPERVISE_TAG
+Optional value forwarded to
+.Xr cellctl 8
+.Cm supervise Fl t .
+.El
+.Sh POLICY AND METRICS
+.Nm
+persists create-time isolation policy values
+.Pq profile and optional reserved-port list
+in each cell's
+.Pa cell.conf
+and forwards them unchanged to
+.Xr cellctl 8
+on start.
+.Pp
+Runtime resource visibility is intentionally observation-only:
+use
+.Cm cellctl stats
+to read kernel snapshot metrics per cell.
+No per-cell resource admission limits are configured by
+.Nm .
+.Sh FILES
+.Bl -tag -width "/usr/share/examples/cellmgr/cellmgr.conf.sample"
+.It Pa /etc/cellmgr.conf
+Default configuration file.
+.It Pa /etc/rc.d/cellmgr
+Service script for boot-time start/stop of autostart-enabled cells.
+.It Pa /usr/share/examples/cellmgr/cellmgr.conf.sample
+Sample configuration file.
+.It Pa /usr/share/examples/cellmgr/README
+Operational notes and quick-start guidance.
+.El
+.Sh EXAMPLES
+Bring a host to operational readiness and deploy one web cell:
+.Bd -literal -offset indent
+# cellmgr bootstrap
+# cellmgr create -a -x '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -l medium -r 8080 -f local3 -o info -e err -t cell-web web
+# cellmgr apply --ephemeral web <<'APPLY'
+mkdir -p /var/www/mysite
+echo "<html>Hello NetBSD!</html>" > /var/www/mysite/index.html
+APPLY
+# cellmgr config web
+# cellmgr start --all
+.Ed
+.Sh NOTES
+Cell isolation policy is enforced in
+.Xr secmodel_cell 9
+through
+.Xr kauth 9
+listeners.
+Resource data exposed by
+.Cm cellctl stats
+is snapshot telemetry and does not configure admission limits.
+
+.Sh SEE ALSO
+.Xr cellctl 8 ,
+.Xr mount_null 8 ,
+.Xr secmodel_cell 9 ,
+.Xr rc.d 8
+.Sh HISTORY
+The
+.Nm
+script first appeared as a prototype patch for
+.Nx 10.1 .
+This manual page was expanded when
+.Nm
+was moved to its own
+.Pa usr.sbin/cellmgr
+subdirectory.
+.Sh AUTHORS
+.An Matthias Petermann Aq Mt mp@petermann-digital.de

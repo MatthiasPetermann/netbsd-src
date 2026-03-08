@@ -497,6 +497,7 @@
 ./usr/share/examples/getdate
 ./usr/share/examples/hostapd
 ./usr/share/examples/ipf
+./usr/share/examples/cellmgr
 ./usr/share/examples/kerberos
 ./usr/share/examples/kyua-cli
 ./usr/share/examples/libsaslc
@@ -517,6 +518,7 @@
 ./usr/share/examples/rpcapd
 ./usr/share/examples/rtadvd
 ./usr/share/examples/slip
+./usr/share/examples/svcmgr
 ./usr/share/examples/syslogd
 ./usr/share/examples/tmux
 ./usr/share/examples/wpa_supplicant

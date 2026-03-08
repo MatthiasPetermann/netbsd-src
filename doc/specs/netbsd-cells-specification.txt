@@ -1,0 +1,216 @@
+NetBSD cells-v2 specification (experimental)
+============================================
+
+Status
+------
+This document specifies the currently implemented, experimental cell stack in
+this tree:
+- secmodel_cell (kernel policy model)
+- cellctl (low-level operational interface)
+- cellmgr (multi-cell provisioning/operations)
+- svcmgr (inside-cell service bundle launcher)
+
+This implementation is referred to as "cells-v2".
+The design focus of cells-v2 is practical kauth-based isolation plus
+snapshot-based per-cell metrics.
+
+
+1. Conceptual model and goals
+-----------------------------
+- Lightweight process isolation based on a per-credential cell ID (jid).
+- Host context is cell ID 0.
+- Host root (euid 0 + jid 0) is the privileged control-plane actor.
+- Isolation focus:
+  - process visibility/signal boundaries
+  - system-scope hardening by profile
+  - optional per-cell reserved listening-port ownership
+- Observability focus:
+  - periodic per-cell snapshot metrics exported via cell list/stat interfaces
+
+
+2. High-level architecture
+--------------------------
+- secmodel_cell:
+  - owns cell metadata, policy state, and snapshot counters
+  - exposes sysctl control API under security.models.cell.*
+  - enforces isolation policy via kauth listeners
+- cellctl:
+  - creates/destroys/lists cells
+  - enters cells and executes workloads
+  - provides supervised process mode with syslog forwarding
+  - exports snapshot counters as table or Prometheus metrics via stats
+- cellmgr:
+  - prepares base filesystem layout for many cells
+  - persists per-cell configuration and automates start/stop/restart
+  - supports host-driven in-cell script execution via apply
+  - maps persisted profile/port settings 1:1 into cellctl create options
+- svcmgr:
+  - starts multiple tagged services from config inside one cell
+  - multiplexes service stdout/stderr into tagged line output
+  - performs coordinated TERM/KILL shutdown without auto-respawn
+
+
+3. secmodel_cell kernel specification
+-------------------------------------
+3.1 Cell identity and metadata
+- Cell IDs are monotonic uint32 values starting at 1.
+- Cell ID 0 is host context.
+- Each cell tracks:
+  - cell ID
+  - cell name
+  - cell root metadata
+  - profile (low/medium/high)
+  - optional reserved listening-port set
+  - snapshot telemetry (CPU ticks over 1s and rolling 10s windows,
+    process count, references, sampled virtual-memory size)
+
+3.2 Privilege model
+- Host root (euid 0, jid 0) can:
+  - create/destroy/list cells
+  - read/write current cell ID control
+  - enter target cell IDs
+- Non-host-root credentials are denied those control operations.
+
+3.3 Process isolation semantics
+- KAUTH_PROCESS_CANSEE denies cross-cell visibility.
+- KAUTH_PROCESS_SIGNAL denies cross-cell signaling.
+- Host root bypasses these checks.
+
+3.4 System hardening semantics
+- System-scope kauth requests are filtered for celled credentials.
+- Profile behavior:
+  - low: process-isolation semantics only; system hardening mostly deferred
+  - medium: hardening enabled, but SysV IPC administrative requests deferred
+  - high: hardening enabled, including SysV IPC administrative denial
+- Denied families include mount/module/mknod/chroot/reboot/swapctl/accounting,
+  CPU/PSET/time administration, selected kernel sysctl admin operations,
+  and other host-scope controls.
+
+3.5 Network bind reservation semantics
+- secmodel_cell listens on KAUTH_SCOPE_NETWORK bind checks.
+- If a concrete local port is reserved by any cell:
+  - bind is allowed only for credentials in the cell that owns reservation.
+- Unreserved ports are deferred to normal authorization behavior.
+- Port 0 (ephemeral assignment) is not reservation-restricted.
+
+3.6 Snapshot telemetry semantics
+- Snapshot sampling runs periodically in secmodel_cell.
+- Sampling is observation-only and does not deny resource operations.
+- Exported values are best-effort snapshots intended for operational metrics.
+- Exported values are gauge-style snapshots (not monotonic lifecycle counters).
+- CPU telemetry is exported as per-second tick deltas plus a rolling
+  10-second average.
+
+3.7 Credential lifecycle behavior
+- New credentials initialize with cell ID 0.
+- Credential copies retain cell ID.
+
+3.8 Cell lifecycle constraints
+- Destroy is refused while live or zombie processes still reference the cell.
+
+3.9 Sysctl control API (security.models.cell.*)
+- id
+  - read: current process cell ID
+  - write: request cell entry
+- create
+  - structured payload only (struct cell_create)
+  - supports metadata, profile, reserved ports
+- destroy
+  - destroy by ID (only when empty)
+- list
+  - enumerate cell metadata and snapshot counters
+
+3.10 Logging model
+- Module load/unload messages.
+- Create/destroy audit messages.
+
+
+4. cellctl specification
+------------------------
+4.1 Scope
+- Thin userland controller over security.models.cell sysctls.
+
+4.2 Core operations
+- create [-l low|medium|high] [-r port[,port...]] -n name <root>
+- destroy <cell-id|name>
+- exec <cell-id|name> [command [args...]]
+- supervise [logging flags] <cell-id|name> <command> [args...]
+- list
+- stats [-P] [-v] [-h]
+
+4.3 Profile and reserved-port options
+- -l configures secmodel profile behavior.
+- -r accepts comma-separated lists and can be repeated.
+- Values are validated as 1..65535 and deduplicated per create call.
+
+4.4 Supervision model
+- supervise daemonizes and forwards stdout/stderr to syslog.
+- restart strategy uses exponential backoff with cap.
+
+4.5 Metrics model
+- stats reads the same cell_info snapshot used by list.
+- default mode prints compact human-oriented counters.
+- -v prints extended context (including root/refcount).
+- -P emits Prometheus text exposition; -h prepends HTTP 200 headers.
+
+
+5. cellmgr specification
+------------------------
+5.1 Scope
+- Operational orchestration around cellctl and filesystem layout.
+
+5.2 Bootstrap/startup behavior
+- bootstrap ensures secmodel_cell module is loaded.
+- bootstrap ensures secmodel_cell is listed in /etc/modules.conf.
+- bootstrap prepares base layers and default config artifacts.
+
+5.3 Per-cell configuration model
+- Persists autostart and supervise command.
+- Persists optional create-time profile/reserved-ports values.
+- Forwards persisted settings unchanged to cellctl create on start.
+
+5.4 Additional lifecycle operations
+- apply executes shell scripts inside a cell via cellctl exec
+  (optionally with ephemeral start/stop behavior).
+- list and status provide lightweight fleet/runtime visibility helpers.
+
+5.5 Runtime coupling note
+- The management path is intentionally explicit about secmodel_cell dependency.
+- If secmodel_cell is absent, cellctl sysctl operations fail; there is no
+  implicit fallback mode that emulates cell behavior via generic defaults.
+
+
+6. svcmgr specification
+-----------------------
+6.1 Scope
+- Minimal inside-cell service launcher for small multi-process bundles.
+
+6.2 Configuration and execution
+- Reads `/etc/svcmgr.conf` by default.
+- Each configured line is `<tag> <command...>`.
+- Spawns each command under `/bin/sh -c` with independent session/group.
+
+6.3 Stream handling and shutdown
+- Polls stdout/stderr pipes for all services and emits `tag + line` records.
+- Flushes line-buffered output immediately.
+- On TERM/INT/QUIT sends SIGTERM to all running service groups, then SIGKILL
+  after grace timeout for holdouts.
+- No built-in service respawn loop; outer cell-level supervisor handles restarts.
+
+
+7. Operational summary
+----------------------
+- Normal lifecycle:
+  1) cellmgr create (or direct cellctl create)
+  2) cellctl supervise / cellmgr start
+  3) cellctl destroy / cellmgr stop after workloads exit
+- Control-plane operations remain host-root only.
+- Resource observability is snapshot-based and exported through cellctl stats.
+
+
+8. Threat-model note
+--------------------
+- This model provides process-level containment and policy hardening but does
+  not provide full virtualization guarantees.
+- For stronger isolation requirements, prefer stronger primitives
+  (virtualization, hardware partitioning, etc.) where appropriate.

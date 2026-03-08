@@ -1,0 +1,8 @@
+# $NetBSD$
+
+defflag secmodel_cell
+
+file	secmodel/cell/secmodel_cell.c	secmodel_cell
+file	secmodel/cell/secmodel_cell_module.c	secmodel_cell
+file	secmodel/cell/secmodel_cell_policy.c	secmodel_cell
+file	secmodel/cell/secmodel_cell_sysctl.c	secmodel_cell

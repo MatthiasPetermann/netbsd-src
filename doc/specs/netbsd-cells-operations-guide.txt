@@ -1,0 +1,241 @@
+NetBSD cells-v2 operations guide (pragmatic)
+============================================
+
+Status
+------
+This document explains the operational model for the cells-v2 stack from a
+DevOps/SRE perspective. It is intentionally practical and complements the
+formal specification in:
+- doc/specs/netbsd-cells-specification.txt
+- doc/specs/netbsd-cells-developers-guide.txt
+
+Scope covered here:
+- secmodel_cell (kernel isolation policy + snapshot metrics)
+- cellctl (low-level control and supervised runtime entry)
+- cellmgr (fleet-level provisioning and lifecycle orchestration)
+- svcmgr (inside-cell lightweight multi-service launcher)
+
+
+1. Why this stack exists
+------------------------
+The stack follows a strict layering model:
+- kernel owns isolation policy and cell identity
+- userland tools transport intent with minimal hidden behavior
+- logs are centralized on the host through standard NetBSD syslog paths
+
+In practice this means:
+- secmodel_cell is the source of truth for cell identity and isolation policy
+- cellctl is the precise operational tool
+- cellmgr scales that operation for many cells and persistent config
+- svcmgr lets one cell run multiple tightly-coupled processes while still
+  presenting tagged logs through one supervise entrypoint
+
+
+2. Layered architecture at a glance
+-----------------------------------
+
++---------------------------------------------------------------+
+| Host root (jid 0)                                              |
+|                                                               |
+|  +----------------------+     +-----------------------------+  |
+|  | cellmgr              | --> | cellctl supervise/create... |  |
+|  | (orchestration)      |     | (runtime/control adapter)   |  |
+|  +----------------------+     +--------------+--------------+  |
+|                                               |                 |
+|                                               v                 |
+|                              +-------------------------------+  |
+|                              | secmodel_cell (kernel)        |  |
+|                              | - cell metadata               |  |
+|                              | - profile / ports             |  |
+|                              | - kauth isolation listeners   |  |
+|                              | - snapshot metrics sampler    |  |
+|                              +-------------------------------+  |
+|                                                               |
+| Host syslogd <--- stdout/stderr forwarded by cellctl supervise |
++---------------------------------------------------------------+
+
+Inside each cell runtime:
+
++---------------------------------------------------------------+
+| Cell "X"                                                      |
+|  svcmgr (optional)                                             |
+|   |- service A (stdout/stderr)                                 |
+|   |- service B (stdout/stderr)                                 |
+|   `- service C (stdout/stderr)                                 |
++---------------------------------------------------------------+
+
+
+3. Who does what (operational contract)
+---------------------------------------
+3.1 secmodel_cell (kernel)
+- Enforces cell-scoped identity and process boundaries.
+- Enforces create-time policy (profile, reserved ports).
+- Publishes periodic snapshot counters per cell.
+
+Operational takeaway:
+- If isolation behavior is surprising, inspect kernel/cell config first.
+- Userland tools are thin and generally do not reinterpret policy.
+
+3.2 cellctl
+- Creates/destroys/lists cells.
+- Enters cell runtime via exec.
+- Runs one supervised command per invocation:
+  - daemonized monitor
+  - stdout/stderr forwarding to host syslog
+  - restart with backoff
+
+Operational takeaway:
+- cellctl is the exact low-level primitive to debug first.
+- If you can do it with cellctl manually, cellmgr can generally automate it.
+
+3.3 cellmgr
+- Prepares filesystem/base layers and persistent per-cell config.
+- Encodes desired state in cell.conf and applies it at start.
+- Starts/stops multiple cells consistently.
+
+Operational takeaway:
+- Treat cellmgr as the fleet operator and source of persisted intent.
+
+3.4 svcmgr
+- Optional helper used as the single supervised entrypoint inside one cell.
+- Reads /etc/svcmgr.conf and starts multiple services in parallel.
+- Prefixes each emitted line with a service tag and flushes per line.
+- Does not respawn services itself; restart is delegated to outer supervision.
+
+Operational takeaway:
+- Use svcmgr when one cell intentionally contains a small process bundle.
+- Keep the host model simple: one supervise command per cell.
+
+
+4. Practical topology example
+-----------------------------
+Example desired topology:
+- Cell "mantisbt": nginx (port 3000) + php-fpm
+- Cell "postgresql": PostgreSQL service
+- Cell "egress": nginx (port 443) as edge ingress/egress endpoint
+
+ASCII deployment map:
+
+                         Internet
+                             |
+                             v
+                  +-----------------------+
+                  | cell: egress          |
+                  | nginx :443            |
+                  +-----------+-----------+
+                              |
+                              | upstream over TCP
+                              v
+                  +-----------------------+
+                  | cell: mantisbt        |
+                  | nginx :3000           |
+                  | php-fpm               |
+                  +-----------+-----------+
+                              |
+                              | DB over TCP
+                              v
+                  +-----------------------+
+                  | cell: postgresql      |
+                  | postgresql :5432      |
+                  +-----------------------+
+
+Notes:
+- Cross-cell communication is typically TCP.
+- Keep explicit ports and network paths documented per cell.
+- Use reserved-port/profile controls at create time as needed.
+
+
+5. Recommended setup flow
+-------------------------
+5.1 Bootstrap and base prep (host)
+1) Ensure secmodel_cell is active (bootstrap path).
+2) Prepare base layers and cellmgr directories.
+3) Keep /etc/cellmgr.conf under config management.
+
+5.2 Create cells with cellmgr
+- Create mantisbt, postgresql, egress cells.
+- Set create-time profile/ports in each cell.conf.
+
+5.3 Define runtime entrypoints
+Option A (single process cell):
+- CELL_SUPERVISE_CMD starts the service directly.
+
+Option B (multi-process cell, recommended for tightly-coupled app stacks):
+- CELL_SUPERVISE_CMD starts svcmgr.
+- /etc/svcmgr.conf defines tagged services.
+
+Example for mantisbt cell:
+- tag: nginx, command: nginx foreground mode on 3000
+- tag: phpfpm, command: php-fpm no-daemon mode
+
+5.4 Start and verify
+- Start cells via cellmgr start <name> (or --all with autostart).
+- Verify runtime with cellctl list/status paths.
+- Export counters with cellctl stats (human or Prometheus mode).
+- Treat stats values as snapshot gauges, not monotonic lifecycle counters.
+- Verify host syslog contains expected tagged lines.
+
+
+6. Log-flow model (important)
+-----------------------------
+The log path is intentionally stdout/stderr-centric and NetBSD-native.
+
+For one cell using svcmgr:
+
+service stdout/stderr
+        |
+        v
+      svcmgr (prefixes with service tag, line-buffered flush)
+        |
+        v
+cellctl supervise monitor (host side)
+  - forwards stdout/stderr to syslog with configured facility/levels/tag
+        |
+        v
+   host syslogd (central concentrator)
+
+Why this is operationally useful:
+- one canonical host log sink (syslogd)
+- no hidden side-channel per service by default
+- standard NetBSD syslog tooling applies uniformly
+
+Practical guidance:
+- Prefer foreground/no-daemon modes for supervised services.
+- Prefer service logging to stdout/stderr where possible.
+- If a daemon defaults to internal syslog only, decide explicitly whether to:
+  - keep internal syslog behavior, or
+  - switch to stderr/stdout mode for unified host forwarding.
+
+
+7. Operational runbook (day-2)
+------------------------------
+7.1 Incident triage order
+1) Host syslog: confirm service-level tagged output present.
+2) cellctl/cellmgr status: confirm cell exists and supervise process is alive.
+3) Service command health inside cell (cellctl exec ...).
+4) Isolation policy constraints: profile/port reservations.
+
+7.2 Restart strategy
+- Prefer restarting at the smallest effective scope:
+  - service-level (if svcmgr/service tooling supports it)
+  - cell-level via cellmgr restart <name>
+- For persistent crash loops, inspect command flags and foreground/logging mode.
+
+7.3 Change management
+- Keep cellmgr config and per-cell cell.conf in version control.
+- Treat svcmgr.conf as application deployment artifact.
+- Roll changes one cell at a time in production.
+
+
+8. NetBSD standards and operational philosophy
+----------------------------------------------
+This stack intentionally follows NetBSD conventions:
+- explicit, auditable control paths
+- syslogd-centered logging aggregation
+- small tools with clear boundaries
+- host-root control-plane for cell operations
+
+The result is a practical model for DevOps teams:
+- understandable layering
+- predictable lifecycle semantics
+- centralized logging plus simple snapshot observability

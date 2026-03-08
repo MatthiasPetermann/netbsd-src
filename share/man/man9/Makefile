@@ -56,7 +56,7 @@ MAN=	accept_filter.9 accf_data.9 accf_http.9 acl.9 \
 	scanc.9 \
 	sched_4bsd.9 sched_m2.9 scsipi.9 \
 	secmodel_bsd44.9 secmodel_extensions.9 \
-	secmodel_overlay.9
+	secmodel_cell.9 secmodel_overlay.9
 MAN+=	secmodel_securelevel.9 
 MLINKS+=secmodel_securelevel.9 securelevel.9
 MAN+=	secmodel_suser.9 \

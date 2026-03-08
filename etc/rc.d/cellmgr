@@ -1,0 +1,37 @@
+#!/bin/sh
+#	$NetBSD$
+#
+# PROVIDE: cellmgr
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+
+. /etc/rc.subr
+
+name="cellmgr"
+rcvar=$name
+command="/usr/sbin/cellmgr"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+: ${cellmgr:=NO}
+: ${cellmgr_conf:=/etc/cellmgr.conf}
+
+cellmgr_start()
+{
+	CELLMGR_CONF="${cellmgr_conf}" ${command} start --all
+}
+
+cellmgr_stop()
+{
+	CELLMGR_CONF="${cellmgr_conf}" ${command} stop --all
+}
+
+cellmgr_status()
+{
+	CELLMGR_CONF="${cellmgr_conf}" ${command} status
+}
+
+load_rc_config $name
+run_rc_command "$1"
