@@ -26,6 +26,7 @@ CONFIGFILES=\
 		hostapd httpd \
 		identd ifwatchd inetd ip6addrctl ipfilter ipfs ipmon ipnat \
 		ipsec irdaattach iscsi_target iscsid iscsid_volumes isibootd \
+		cellmgr \
 		kdc \
 		ldconfig ldpd lvmlockdir local lpd lvm \
 		makemandb mdnsd mixerctl modules mopd motd mountall \
