@@ -32,8 +32,8 @@
 #ifndef _SECMODEL_CELL_CELL_H_
 #define _SECMODEL_CELL_CELL_H_
 
-#include <sys/types.h>
 #include <sys/kauth.h>
+#include <sys/types.h>
 
 #include <secmodel/secmodel.h>
 
@@ -42,7 +42,7 @@
  * cell-safe system authorization restrictions based on a cell id stored in
  * credentials. Host root (cell id 0) bypasses these checks.
  */
-#define SECMODEL_CELL_ID	"org.netbsd.secmodel.cell"
+#define SECMODEL_CELL_ID "org.netbsd.secmodel.cell"
 #define SECMODEL_CELL_NAME "NetBSD Cell"
 
 int secmodel_cell_init(void);
