@@ -32,36 +32,36 @@
 #ifndef _SYS_CELL_H_
 #define _SYS_CELL_H_
 
-#include <sys/types.h>
 #include <sys/stdbool.h>
+#include <sys/types.h>
 
 typedef uint32_t cellid_t;
 
-#define CELL_NAME_MAX	63
-#define CELL_ROOT_MAX	255
+#define CELL_NAME_MAX 63
+#define CELL_ROOT_MAX 255
 
-#define CELLID_HOST	0
+#define CELLID_HOST 0
 
-#define CELL_CREATE_PROFILE	0x00000001
-#define CELL_CREATE_PORTS	0x00000002
+#define CELL_CREATE_PROFILE 0x00000001
+#define CELL_CREATE_PORTS 0x00000002
 
-#define CELL_PORTS_MAX	32
+#define CELL_PORTS_MAX 32
 
-#define CELL_PROFILE_LOW	0
-#define CELL_PROFILE_MEDIUM	1
-#define CELL_PROFILE_HIGH	2
+#define CELL_PROFILE_LOW 0
+#define CELL_PROFILE_MEDIUM 1
+#define CELL_PROFILE_HIGH 2
 
 /*
  * Userland-to-kernel payload for creating a cell and optional policy settings.
  */
 struct cell_create {
-	uint32_t jc_flags;
-	uint32_t jc_id;
-	uint32_t jc_profile;
-	uint16_t jc_nports;
-	uint16_t jc_ports[CELL_PORTS_MAX];
-	char jc_name[CELL_NAME_MAX + 1];
-	char jc_root[CELL_ROOT_MAX + 1];
+  uint32_t cc_flags;
+  uint32_t cc_id;
+  uint32_t cc_profile;
+  uint16_t cc_nports;
+  uint16_t cc_ports[CELL_PORTS_MAX];
+  char cc_name[CELL_NAME_MAX + 1];
+  char cc_root[CELL_ROOT_MAX + 1];
 };
 
 /*
@@ -69,14 +69,14 @@ struct cell_create {
  * CPU fields are windowed tick metrics: 1s delta and rolling 10s average.
  */
 struct cell_info {
-	cellid_t ji_id;
-	uint64_t ji_refcount;
-	char ji_name[CELL_NAME_MAX + 1];
-	char ji_root[CELL_ROOT_MAX + 1];
-	uint64_t ji_proc_current;
-	uint64_t ji_memory_current;
-	uint64_t ji_cpu_ticks_1s;
-	uint64_t ji_cpu_ticks_10s;
+  cellid_t ci_id;
+  uint64_t ci_refcount;
+  char ci_name[CELL_NAME_MAX + 1];
+  char ci_root[CELL_ROOT_MAX + 1];
+  uint64_t ci_proc_current;
+  uint64_t ci_memory_current;
+  uint64_t ci_cpu_ticks_1s;
+  uint64_t ci_cpu_ticks_10s;
 };
 
 #endif /* !_SYS_CELL_H_ */
