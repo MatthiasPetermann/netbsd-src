@@ -259,19 +259,19 @@ cell_stats(bool prometheus, bool verbose, bool http_header)
 		prom_escape_label(entries[i].ji_name, name, sizeof(name));
 		prom_escape_label(entries[i].ji_root, root, sizeof(root));
 
-		printf("cell_cpu_ticks_1s{jid=\"%" PRIu32
+		printf("cell_cpu_ticks_1s{cid=\"%" PRIu32
 		    "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
 		    entries[i].ji_id, name, root, entries[i].ji_cpu_ticks_1s);
-		printf("cell_cpu_ticks_10s_avg{jid=\"%" PRIu32
+		printf("cell_cpu_ticks_10s_avg{cid=\"%" PRIu32
 		    "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
 		    entries[i].ji_id, name, root, entries[i].ji_cpu_ticks_10s);
-		printf("cell_processes_current{jid=\"%" PRIu32
+		printf("cell_processes_current{cid=\"%" PRIu32
 		    "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
 		    entries[i].ji_id, name, root, entries[i].ji_proc_current);
-		printf("cell_references_current{jid=\"%" PRIu32
+		printf("cell_references_current{cid=\"%" PRIu32
 		    "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
 		    entries[i].ji_id, name, root, entries[i].ji_refcount);
-		printf("cell_memory_vmsize_bytes{jid=\"%" PRIu32
+		printf("cell_memory_vmsize_bytes{cid=\"%" PRIu32
 		    "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
 		    entries[i].ji_id, name, root, entries[i].ji_memory_current);
 	}
@@ -394,13 +394,13 @@ log_stream_data(int priority, const char *stream, cellid_t id, const char *name,
 	used = *usedp;
 	for (i = 0; i < chunklen; i++) {
 		if (chunk[i] == '\n') {
-			syslog(priority, "cell=%s jid=%" PRIu32 " %s: %.*s",
+			syslog(priority, "cell=%s cid=%" PRIu32 " %s: %.*s",
 			    name, id, stream, (int)used, linebuf);
 			used = 0;
 			continue;
 		}
 		if (used + 1 >= CELLCTL_LOG_MAX) {
-			syslog(priority, "cell=%s jid=%" PRIu32 " %s: %.*s",
+			syslog(priority, "cell=%s cid=%" PRIu32 " %s: %.*s",
 			    name, id, stream, (int)used, linebuf);
 			used = 0;
 		}
@@ -564,10 +564,10 @@ cell_run_monitor_once(cellid_t id, const char *name, int outfd, int errfd,
 	}
 
 	if (outused > 0)
-		syslog(stdout_priority, "cell=%s jid=%" PRIu32 " stdout: %.*s",
+		syslog(stdout_priority, "cell=%s cid=%" PRIu32 " stdout: %.*s",
 		    name, id, (int)outused, outline);
 	if (errused > 0)
-		syslog(stderr_priority, "cell=%s jid=%" PRIu32 " stderr: %.*s",
+		syslog(stderr_priority, "cell=%s cid=%" PRIu32 " stderr: %.*s",
 		    name, id, (int)errused, errline);
 
 	if (waitpid(child, statusp, 0) == -1 && errno != ECHILD)
@@ -582,7 +582,7 @@ cell_supervise_loop(cellid_t id, const char *root, const char *name,
 	struct sigaction sa;
 	int next_backoff_sec;
 
-	setproctitle("cellctl supervise cell=%s jid=%" PRIu32, name, id);
+	setproctitle("cellctl supervise cell=%s cid=%" PRIu32, name, id);
 	openlog(logtag, LOG_PID | LOG_NDELAY, facility);
 
 	memset(&sa, 0, sizeof(sa));
@@ -646,7 +646,7 @@ cell_supervise_loop(cellid_t id, const char *root, const char *name,
 		close(outpipe[1]);
 		close(errpipe[1]);
 
-		syslog(LOG_INFO, "cell=%s jid=%" PRIu32 " starting supervised command",
+		syslog(LOG_INFO, "cell=%s cid=%" PRIu32 " starting supervised command",
 		    name, id);
 		status = 0;
 		cell_run_monitor_once(id, name, outpipe[0], errpipe[0], child,
@@ -654,22 +654,22 @@ cell_supervise_loop(cellid_t id, const char *root, const char *name,
 
 		if (monitor_shutdown_requested) {
 			syslog(LOG_NOTICE,
-			    "cell=%s jid=%" PRIu32 " supervise shutdown requested",
+			    "cell=%s cid=%" PRIu32 " supervise shutdown requested",
 			    name, id);
 			break;
 		}
 
 		if (WIFEXITED(status)) {
 			syslog(LOG_WARNING,
-			    "cell=%s jid=%" PRIu32 " supervised command exited status=%d",
+			    "cell=%s cid=%" PRIu32 " supervised command exited status=%d",
 			    name, id, WEXITSTATUS(status));
 		} else if (WIFSIGNALED(status)) {
 			syslog(LOG_WARNING,
-			    "cell=%s jid=%" PRIu32 " supervised command killed by signal=%d",
+			    "cell=%s cid=%" PRIu32 " supervised command killed by signal=%d",
 			    name, id, WTERMSIG(status));
 		} else {
 			syslog(LOG_WARNING,
-			    "cell=%s jid=%" PRIu32 " supervised command ended unexpectedly",
+			    "cell=%s cid=%" PRIu32 " supervised command ended unexpectedly",
 			    name, id);
 		}
 
@@ -686,7 +686,7 @@ cell_supervise_loop(cellid_t id, const char *root, const char *name,
 			next_backoff_sec = 1;
 
 		syslog(LOG_NOTICE,
-		    "cell=%s jid=%" PRIu32 " restarting supervised command in %d seconds",
+		    "cell=%s cid=%" PRIu32 " restarting supervised command in %d seconds",
 		    name, id, next_backoff_sec);
 
 		{
