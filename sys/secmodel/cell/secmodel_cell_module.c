@@ -29,11 +29,11 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 
-#include <sys/types.h>
-#include <sys/module.h>
 #include <sys/kauth.h>
-#include <sys/systm.h>
+#include <sys/module.h>
 #include <sys/syslog.h>
+#include <sys/systm.h>
+#include <sys/types.h>
 
 #include <secmodel/cell/secmodel_cell_int.h>
 
@@ -42,58 +42,58 @@ MODULE(MODULE_CLASS_SECMODEL, secmodel_cell, NULL);
 /*
  * Module command handler: register/deregister the security model.
  */
-static int
-secmodel_cell_modcmd(modcmd_t cmd, void *arg)
-{
-	int error = 0;
-	int init_error;
+static int secmodel_cell_modcmd(modcmd_t cmd, void *arg) {
+  int error = 0;
+  int init_error;
 
-	(void)arg;
+  (void)arg;
 
-	switch (cmd) {
-	case MODULE_CMD_INIT:
-		error = secmodel_register(&cell_sm,
-		    SECMODEL_CELL_ID, SECMODEL_CELL_NAME,
-		    NULL, NULL, NULL);
-		if (error != 0) {
-			printf("secmodel_cell_modcmd::init: "
-			    "secmodel_register returned %d\n", error);
-			return error;
-		}
+  switch (cmd) {
+  case MODULE_CMD_INIT:
+    error = secmodel_register(&cell_sm, SECMODEL_CELL_ID, SECMODEL_CELL_NAME,
+                              NULL, NULL, NULL);
+    if (error != 0) {
+      printf("secmodel_cell_modcmd::init: "
+             "secmodel_register returned %d\n",
+             error);
+      return error;
+    }
 
-		init_error = secmodel_cell_init();
-		if (init_error != 0) {
-			error = secmodel_deregister(cell_sm);
-			if (error != 0)
-				printf("secmodel_cell_modcmd::init: "
-				    "secmodel_deregister returned %d\n", error);
-			return init_error;
-		}
-		secmodel_cell_start();
-		log(LOG_INFO, "secmodel_cell: loaded\n");
-		break;
+    init_error = secmodel_cell_init();
+    if (init_error != 0) {
+      error = secmodel_deregister(cell_sm);
+      if (error != 0)
+        printf("secmodel_cell_modcmd::init: "
+               "secmodel_deregister returned %d\n",
+               error);
+      return init_error;
+    }
+    secmodel_cell_start();
+    log(LOG_INFO, "secmodel_cell: loaded\n");
+    break;
 
-	case MODULE_CMD_FINI:
-		if (secmodel_cell_has_entries())
-			return EBUSY;
+  case MODULE_CMD_FINI:
+    if (secmodel_cell_has_entries())
+      return EBUSY;
 
-		log(LOG_INFO, "secmodel_cell: unloading\n");
-		secmodel_cell_stop();
+    log(LOG_INFO, "secmodel_cell: unloading\n");
+    secmodel_cell_stop();
 
-		error = secmodel_deregister(cell_sm);
-		if (error != 0)
-			printf("secmodel_cell_modcmd::fini: "
-			    "secmodel_deregister returned %d\n", error);
-		break;
+    error = secmodel_deregister(cell_sm);
+    if (error != 0)
+      printf("secmodel_cell_modcmd::fini: "
+             "secmodel_deregister returned %d\n",
+             error);
+    break;
 
-	case MODULE_CMD_AUTOUNLOAD:
-		error = EPERM;
-		break;
+  case MODULE_CMD_AUTOUNLOAD:
+    error = EPERM;
+    break;
 
-	default:
-		error = ENOTTY;
-		break;
-	}
+  default:
+    error = ENOTTY;
+    break;
+  }
 
-	return error;
+  return error;
 }
