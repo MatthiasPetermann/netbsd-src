@@ -168,9 +168,9 @@ static void cell_list(void) {
   printf("%-8s %-8s %-8s %-16s %s\n", "ID", "REFS", "PROCS", "NAME", "ROOT");
   for (i = 0; i < count; i++) {
     printf("%-8" PRIu32 " %-8" PRIu64 " %-8" PRIu64 " %-16s %s\n",
-           entries[i].ji_id, entries[i].ji_refcount, entries[i].ji_proc_current,
-           entries[i].ji_name[0] != '\0' ? entries[i].ji_name : "-",
-           entries[i].ji_root[0] != '\0' ? entries[i].ji_root : "-");
+           entries[i].ci_id, entries[i].ci_refcount, entries[i].ci_proc_current,
+           entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-",
+           entries[i].ci_root[0] != '\0' ? entries[i].ci_root : "-");
   }
 
   free(entries);
@@ -198,10 +198,10 @@ static void cell_stats(bool prometheus, bool verbose, bool http_header) {
       for (i = 0; i < count; i++) {
         printf("%-8" PRIu32 " %-16s %-10" PRIu64 " %-10" PRIu64 " %-8" PRIu64
                " %-12" PRIu64 "\n",
-               entries[i].ji_id,
-               entries[i].ji_name[0] != '\0' ? entries[i].ji_name : "-",
-               entries[i].ji_cpu_ticks_1s, entries[i].ji_cpu_ticks_10s,
-               entries[i].ji_proc_current, entries[i].ji_memory_current);
+               entries[i].ci_id,
+               entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-",
+               entries[i].ci_cpu_ticks_1s, entries[i].ci_cpu_ticks_10s,
+               entries[i].ci_proc_current, entries[i].ci_memory_current);
       }
     } else {
       printf("%-8s %-16s %-24s %-10s %-10s %-8s %-8s %-12s\n", "ID", "NAME",
@@ -209,12 +209,12 @@ static void cell_stats(bool prometheus, bool verbose, bool http_header) {
       for (i = 0; i < count; i++) {
         printf("%-8" PRIu32 " %-16s %-24s %-10" PRIu64 " %-10" PRIu64
                " %-8" PRIu64 " %-8" PRIu64 " %-12" PRIu64 "\n",
-               entries[i].ji_id,
-               entries[i].ji_name[0] != '\0' ? entries[i].ji_name : "-",
-               entries[i].ji_root[0] != '\0' ? entries[i].ji_root : "-",
-               entries[i].ji_cpu_ticks_1s, entries[i].ji_cpu_ticks_10s,
-               entries[i].ji_proc_current, entries[i].ji_refcount,
-               entries[i].ji_memory_current);
+               entries[i].ci_id,
+               entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-",
+               entries[i].ci_root[0] != '\0' ? entries[i].ci_root : "-",
+               entries[i].ci_cpu_ticks_1s, entries[i].ci_cpu_ticks_10s,
+               entries[i].ci_proc_current, entries[i].ci_refcount,
+               entries[i].ci_memory_current);
       }
     }
     free(entries);
@@ -231,24 +231,24 @@ static void cell_stats(bool prometheus, bool verbose, bool http_header) {
     char name[(CELL_NAME_MAX + 1) * 2 + 1];
     char root[(CELL_ROOT_MAX + 1) * 2 + 1];
 
-    prom_escape_label(entries[i].ji_name, name, sizeof(name));
-    prom_escape_label(entries[i].ji_root, root, sizeof(root));
+    prom_escape_label(entries[i].ci_name, name, sizeof(name));
+    prom_escape_label(entries[i].ci_root, root, sizeof(root));
 
     printf("cell_cpu_ticks_1s{cid=\"%" PRIu32
            "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
-           entries[i].ji_id, name, root, entries[i].ji_cpu_ticks_1s);
+           entries[i].ci_id, name, root, entries[i].ci_cpu_ticks_1s);
     printf("cell_cpu_ticks_10s_avg{cid=\"%" PRIu32
            "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
-           entries[i].ji_id, name, root, entries[i].ji_cpu_ticks_10s);
+           entries[i].ci_id, name, root, entries[i].ci_cpu_ticks_10s);
     printf("cell_processes_current{cid=\"%" PRIu32
            "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
-           entries[i].ji_id, name, root, entries[i].ji_proc_current);
+           entries[i].ci_id, name, root, entries[i].ci_proc_current);
     printf("cell_references_current{cid=\"%" PRIu32
            "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
-           entries[i].ji_id, name, root, entries[i].ji_refcount);
+           entries[i].ci_id, name, root, entries[i].ci_refcount);
     printf("cell_memory_vmsize_bytes{cid=\"%" PRIu32
            "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
-           entries[i].ji_id, name, root, entries[i].ji_memory_current);
+           entries[i].ci_id, name, root, entries[i].ci_memory_current);
   }
 
   free(entries);
@@ -291,7 +291,7 @@ static bool cell_lookup_by_id(cellid_t id, struct cell_info *jip) {
 
   entries = cell_fetch_list(&count);
   for (i = 0; i < count; i++) {
-    if (entries[i].ji_id == id) {
+    if (entries[i].ci_id == id) {
       *jip = entries[i];
       free(entries);
       return true;
@@ -307,7 +307,7 @@ static bool cell_lookup_by_name(const char *name, struct cell_info *jip) {
 
   entries = cell_fetch_list(&count);
   for (i = 0; i < count; i++) {
-    if (strcmp(entries[i].ji_name, name) == 0) {
+    if (strcmp(entries[i].ci_name, name) == 0) {
       *jip = entries[i];
       free(entries);
       return true;
@@ -848,7 +848,7 @@ static cellid_t resolve_cell_target(const char *arg, struct cell_info *ji) {
   }
 
   if (cell_lookup_by_name(arg, ji))
-    return ji->ji_id;
+    return ji->ci_id;
 
   errx(1, "cell '%s' not found", arg);
 }
@@ -943,7 +943,7 @@ int main(int argc, char *argv[]) {
       errx(1, "supervise requires command [args...]");
     cmd = &argv[optind];
 
-    cell_spawn_detached(id, ji.ji_root, ji.ji_name, logtag, cmd, facility,
+    cell_spawn_detached(id, ji.ci_root, ji.ci_name, logtag, cmd, facility,
                         facility | stdout_level, facility | stderr_level);
     return 0;
   }
@@ -963,7 +963,7 @@ int main(int argc, char *argv[]) {
 
     id = resolve_cell_target(argv[2], &ji);
 
-    cell_exec(id, ji.ji_root, argc > 3 ? &argv[3] : NULL);
+    cell_exec(id, ji.ci_root, argc > 3 ? &argv[3] : NULL);
     /* NOTREACHED */
   }
 

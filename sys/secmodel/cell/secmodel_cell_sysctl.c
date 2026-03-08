@@ -291,14 +291,14 @@ again:
       retry = true;
       break;
     }
-    entries[i].ji_id = entry->ce_id;
-    entries[i].ji_refcount = entry->ce_refcount;
-    entries[i].ji_proc_current = entry->ce_proc_current;
-    entries[i].ji_memory_current = entry->ce_memory_current;
-    entries[i].ji_cpu_ticks_1s = entry->ce_cpu_ticks_1s;
-    entries[i].ji_cpu_ticks_10s = entry->ce_cpu_ticks_10s;
-    strlcpy(entries[i].ji_name, entry->ce_name, sizeof(entries[i].ji_name));
-    strlcpy(entries[i].ji_root, entry->ce_root, sizeof(entries[i].ji_root));
+    entries[i].ci_id = entry->ce_id;
+    entries[i].ci_refcount = entry->ce_refcount;
+    entries[i].ci_proc_current = entry->ce_proc_current;
+    entries[i].ci_memory_current = entry->ce_memory_current;
+    entries[i].ci_cpu_ticks_1s = entry->ce_cpu_ticks_1s;
+    entries[i].ci_cpu_ticks_10s = entry->ce_cpu_ticks_10s;
+    strlcpy(entries[i].ci_name, entry->ce_name, sizeof(entries[i].ci_name));
+    strlcpy(entries[i].ci_root, entry->ce_root, sizeof(entries[i].ci_root));
     i++;
   }
   mutex_exit(&cell_lock);
