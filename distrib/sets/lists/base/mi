@@ -1583,6 +1583,7 @@
 ./usr/sbin/iwictl				base-sysutil-bin
 ./usr/sbin/cellctl				base-sysutil-bin
 ./usr/sbin/cellmgr				base-sysutil-bin
+./usr/sbin/cellui				base-sysutil-bin
 ./usr/sbin/svcmgr				base-sysutil-bin
 ./usr/sbin/kadmin				base-krb5-bin		kerberos
 ./usr/sbin/kcm					base-krb5-bin		kerberos

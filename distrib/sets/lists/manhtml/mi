@@ -2691,6 +2691,7 @@
 ./usr/share/man/html8/iwictl.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/cellctl.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/cellmgr.html		man-sysutil-htmlman	html
+./usr/share/man/html8/cellui.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/svcmgr.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/kadmin.html		man-krb5-htmlman	kerberos,html
 ./usr/share/man/html8/kadmind.html		man-krb5-htmlman	kerberos,html

@@ -1,0 +1,113 @@
+." $NetBSD$
+.Dd March 10, 2026
+.Dt CELLUI 8
+.Os
+.Sh NAME
+.Nm cellui
+.Nd interactive terminal UI for managing cellmgr cells
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+utility provides an interactive
+.Xr curses 3
+interface for operating cells managed by
+.Xr cellmgr 8
+and
+.Xr cellctl 8 .
+It shows configured and running cells in a table, displays per-cell details,
+and allows common lifecycle actions from the keyboard.
+.Pp
+By default,
+.Nm
+refreshes its view every 4 seconds.
+Status data is built from configured cells in
+.Ev CELL_DATA_DIR
+and runtime data from
+.Cm cellctl list
+and
+.Cm cellctl stats .
+.Sh KEY BINDINGS
+In normal mode, the following keys are available:
+.Bl -tag -width "enter"
+.It Cm j , Cm k , KEY_UP , KEY_DOWN
+Move selection down or up.
+.It KEY_PPAGE , KEY_NPAGE
+Move one page up or down.
+.It Cm r
+Refresh immediately.
+.It Cm f
+Cycle filter mode:
+.Dq all ,
+.Dq running ,
+or
+.Dq stopped .
+.It Cm m
+Rotate color theme.
+.It Cm enter
+Open an interactive shell inside the selected cell using
+.Cm cellctl exec .
+.It Cm s , Cm x , Cm t
+Start, stop, or restart the selected cell using
+.Xr cellmgr 8 .
+.It Cm a , Cm z , Cm y
+Start all, stop all, or restart all configured cells.
+.It Cm e
+Open the selected cell configuration via
+.Cm cellmgr config .
+.It Cm :
+Enter command mode.
+.It Cm q , Ctrl-C
+Quit.
+.El
+.Pp
+In command mode,
+.Nm
+shows a
+.Dq cellmgr
+prompt prefix.
+Typed input is parsed as shell-style words and executed as
+.Cm cellmgr Ar args ... .
+Press
+.Cm enter
+to run the command, or
+.Cm Esc
+to cancel.
+.Sh ENVIRONMENT
+.Bl -tag -width CELLMGR_CONF
+.It Ev CELLMGR_CONF
+Path to a
+.Xr cellmgr 8
+configuration file.
+If unset,
+.Pa /etc/cellmgr.conf
+is used.
+The
+.Ev CELL_DATA_DIR
+assignment from that file controls where configured cells are discovered.
+.El
+.Sh FILES
+.Bl -tag -width /var/cellmgr/cells/name/cell.conf
+.It Pa /etc/cellmgr.conf
+Default
+.Xr cellmgr 8
+configuration file.
+.It Pa /var/cellmgr/cells
+Default configured cell data directory.
+.It Pa /var/cellmgr/cells/name/cell.conf
+Per-cell configuration read for display metadata.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh SEE ALSO
+.Xr cellctl 8 ,
+.Xr cellmgr 8 ,
+.Xr curses 3
+.Sh HISTORY
+The
+.Nm
+utility first appeared in
+.Nx 11 .
+.Sh AUTHORS
+.An Matthias Petermann Aq Mt mp@petermann-digital.de
