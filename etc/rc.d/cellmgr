@@ -20,17 +20,18 @@ status_cmd="${name}_status"
 
 cellmgr_start()
 {
-	CELLMGR_CONF="${cellmgr_conf}" ${command} start --all
+	CELLMGR_CONF="${cellmgr_conf}" ${command} apply --all --silent
 }
 
 cellmgr_stop()
 {
-	CELLMGR_CONF="${cellmgr_conf}" ${command} stop --all
+	CELLMGR_CONF="${cellmgr_conf}" ${command} cell stop --all
 }
 
 cellmgr_status()
 {
-	CELLMGR_CONF="${cellmgr_conf}" ${command} status
+	CELLMGR_CONF="${cellmgr_conf}" ${command} cell list --view merged \
+	    -o name,running,cid,procs
 }
 
 load_rc_config $name

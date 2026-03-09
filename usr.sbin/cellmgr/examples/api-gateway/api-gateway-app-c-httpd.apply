@@ -1,0 +1,47 @@
+DIR /var/www/api-gateway-c mode=0755 owner=root group=wheel
+
+FILE_BEGIN /var/www/api-gateway-c/index.html mode=0644
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>api-gateway-c</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 25% 20%, #f2efff, #f8f5ff 60%);
+      color: #1d1830;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: min(640px, 92vw);
+      background: #ffffff;
+      border: 1px solid #ddd5f6;
+      border-radius: 14px;
+      padding: 1.2rem 1.3rem;
+      box-shadow: 0 10px 26px rgba(42, 31, 90, 0.08);
+    }
+    .tag {
+      display: inline-block;
+      background: #e5ddfb;
+      color: #4f3f95;
+      border-radius: 999px;
+      padding: .2rem .55rem;
+      font-size: .84rem;
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <span class="tag">service c</span>
+    <h1>API Gateway backend C</h1>
+    <p>This backend is healthy and listening on port <strong>8082</strong>.</p>
+    <p>Route this service through <code>/c/</code> on the edge gateway.</p>
+  </section>
+</body>
+</html>
+FILE_END

@@ -1,0 +1,47 @@
+DIR /var/www/api-gateway-b mode=0755 owner=root group=wheel
+
+FILE_BEGIN /var/www/api-gateway-b/index.html mode=0644
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>api-gateway-b</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 25% 20%, #fff6e5, #fff9f1 60%);
+      color: #2d1f12;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: min(640px, 92vw);
+      background: #ffffff;
+      border: 1px solid #f0d9b7;
+      border-radius: 14px;
+      padding: 1.2rem 1.3rem;
+      box-shadow: 0 10px 26px rgba(82, 55, 18, 0.08);
+    }
+    .tag {
+      display: inline-block;
+      background: #ffe8c9;
+      color: #7e4f0e;
+      border-radius: 999px;
+      padding: .2rem .55rem;
+      font-size: .84rem;
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <span class="tag">service b</span>
+    <h1>API Gateway backend B</h1>
+    <p>This backend is healthy and listening on port <strong>8081</strong>.</p>
+    <p>Route this service through <code>/b/</code> on the edge gateway.</p>
+  </section>
+</body>
+</html>
+FILE_END

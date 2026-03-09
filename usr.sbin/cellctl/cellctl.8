@@ -25,7 +25,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"-
-.Dd February 19, 2026
+.Dd March 13, 2026
 .Dt CELLCTL 8
 .Os
 .Sh NAME
@@ -36,6 +36,9 @@
 .Cm create
 .Op Fl l Ar profile
 .Op Fl r Ar port[,port...]
+.Op Fl N Ar nofile|unlimited
+.Op Fl A Ar as|unlimited
+.Op Fl C Ar core|unlimited
 .Fl n Ar name
 .Ar root
 .Nm
@@ -57,11 +60,15 @@
 .Op Ar args ...
 .Nm
 .Cm list
+.Op Fl T
+.Op Fl H
 .Nm
 .Cm stats
 .Op Fl P
 .Op Fl v
 .Op Fl h
+.Op Fl T
+.Op Fl H
 .Sh DESCRIPTION
 The
 .Nm
@@ -69,13 +76,25 @@ utility manages cells provided by the secmodel cell security model.
 Cells are process groups identified by a cell id.
 Processes in a cell can only signal or see other processes with the same
 cell id, while the host root user (cell id 0) can access all processes.
-Host users in cell id 0 may run read-only listing commands
+Read-only listing commands
 .Pq Cm list and Cm stats
+do not modify kernel state and are available to host users
+.Pq cell id 0
 without root privileges.
+These commands are denied to processes running inside non-host cells,
+including cell-local root.
+.Pp
+Cell names must match
+.Dq [A-Za-z0-9._-]
+and are validated by
+.Nm .
+When a command accepts
+.Ar cell-id | name ,
+non-numeric targets must satisfy this name format.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
-.It Cm create Op Fl l Ar profile Op Fl r Ar port[,port...] Fl n Ar name Ar root
+.It Cm create Op Fl l Ar profile Op Fl r Ar port[,port...] Op Fl N Ar nofile|unlimited Op Fl A Ar as|unlimited Op Fl C Ar core|unlimited Fl n Ar name Ar root
 Create a new cell id, assign it the unique
 .Ar name ,
 and store cell name and root metadata in the kernel cell model.
@@ -94,7 +113,22 @@ The default is
 .Dq high .
 .It Fl r Ar port[,port...]
 Reserve one or more listening ports for this cell.
+.It Fl N Ar nofile|unlimited
+Set
+.Dv RLIMIT_NOFILE
+for supervised processes in this cell.
+.It Fl A Ar as|unlimited
+Set
+.Dv RLIMIT_AS
+for supervised processes in this cell.
+.It Fl C Ar core|unlimited
+Set
+.Dv RLIMIT_CORE
+for supervised processes in this cell.
 .El
+.Pp
+If these rlimit flags are omitted, supervised commands keep the host default
+limit behavior.
 .It Cm supervise Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar cell-id | name Ar command Op Ar args ...
 Start a command in an existing cell selected by
 .Ar cell-id
@@ -107,6 +141,10 @@ The
 command daemonizes itself, so callers do not need to wrap it with
 .Xr nohup 1
 or run it in the shell background.
+When create-time rlimits are configured via
+.Cm create
+.Pq Fl N , Fl A , Fl C ,
+the supervisor applies them to each child before executing the target command.
 If the supervised command exits unexpectedly, the supervisor logs the failure
 and restarts it with an exponential backoff delay (capped at 10 seconds).
 .Pp
@@ -163,11 +201,22 @@ or
 using the root stored in kernel cell metadata and execute
 .Ar command .
 If no command is provided, an interactive shell is started.
-.It Cm list
-List active cell ids, process counts, configured cell names, and roots.
-.It Cm stats Op Fl P Op Fl v Op Fl h
+.It Cm list Op Fl T Op Fl H
+List active cell ids, process counts, configured cell names, ages, roots, and
+supervise rlimits
+.Pq nofile, as, core .
+Age is emitted in seconds since cell creation.
+With
+.Fl T ,
+emit stable tab-separated output with columns:
+.Dq CID NAME REFS PROCS AGE ROOT NOFILE AS CORE .
+With
+.Fl H ,
+omit the TSV header line
+.Pq requires .Fl T .
+.It Cm stats Op Fl P Op Fl v Op Fl h Op Fl T Op Fl H
 Show current cell snapshot metrics from the kernel sampler
-.Pq CPU ticks over 1s and rolling 10s windows, process count, reference count, and virtual memory size .
+.Pq CPU ticks over 1s and rolling 10s windows, process count, reference count, virtual memory size, and cell age in seconds .
 By default, output is a compact human-readable table.
 All exported values are snapshot gauges.
 In particular,
@@ -179,8 +228,25 @@ With
 .Fl v ,
 show an extended table that includes root path and reference count.
 With
+.Fl T ,
+emit stable tab-separated output with columns:
+.Dq CID NAME CPU1S CPU10S PROCS REFS MEMORY AGE ROOT .
+With
+.Fl H ,
+omit the TSV header line
+.Pq requires .Fl T .
+The
+.Fl T
+option is mutually exclusive with
+.Fl P ,
+.Fl v ,
+and
+.Fl h .
+With
 .Fl P ,
 output Prometheus-compatible gauge samples per cell.
+This includes per-cell age as
+.Dq cell_age_seconds .
 With
 .Fl h ,
 prepend an HTTP response header suitable for running
@@ -193,15 +259,16 @@ The
 option requires
 .Fl P .
 .El
-
 .Sh SEE ALSO
 .Xr chroot 2 ,
 .Xr secmodel 9 ,
+.Xr secmodel_cell 9 ,
 .Xr sysctl 8
 .Sh HISTORY
 The
 .Nm
-utility first appeared as a prototype patch for
-.Nx 10.1 .
+utility first appeared in an unofficial patch set for
+.Nx
+11.0 .
 .Sh AUTHORS
 .An Matthias Petermann Aq Mt mp@petermann-digital.de

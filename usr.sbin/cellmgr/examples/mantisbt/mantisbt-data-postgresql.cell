@@ -1,0 +1,15 @@
+CELL_NAME=mantisbt-data-postgresql
+CELL_AUTOSTART=YES
+
+CELL_CREATE_PROFILE="low"
+CELL_CREATE_RESERVED_PORTS="5432"
+
+CELL_SUPERVISE_FACILITY="local2"
+CELL_SUPERVISE_STDOUT_LEVEL="info"
+CELL_SUPERVISE_STDERR_LEVEL="err"
+CELL_SUPERVISE_TAG="cell-mantisbt-data-postgresql"
+CELL_SUPERVISE_CMD="su -m pgsql -c '/usr/pkg/bin/postgres -D /var/postgresql/data'"
+
+CELL_DEPENDS_ON=""
+CELL_HEALTHCHECK_CMD="test -s /var/postgresql/data/PG_VERSION && su -m pgsql -c '/usr/pkg/bin/pg_isready -q -h 127.0.0.1 -p 5432 -d postgres'"
+CELL_VOLUME_MOUNTS="mantisbt-secrets:/var/db/mantisbt-secrets:rw,mantisbt-postgres:/var/postgresql"

@@ -1,0 +1,14 @@
+CELL_NAME=api-gateway-app-a-httpd
+CELL_AUTOSTART=YES
+
+CELL_CREATE_PROFILE="medium"
+CELL_CREATE_RESERVED_PORTS="8080"
+
+CELL_SUPERVISE_FACILITY="local5"
+CELL_SUPERVISE_STDOUT_LEVEL="info"
+CELL_SUPERVISE_STDERR_LEVEL="err"
+CELL_SUPERVISE_TAG="cell-api-gateway-app-a-httpd"
+CELL_SUPERVISE_CMD="/usr/libexec/httpd -I 8080 -X -f -s /var/www/api-gateway-a"
+
+CELL_DEPENDS_ON=""
+CELL_HEALTHCHECK_CMD="test -f /var/www/api-gateway-a/index.html"

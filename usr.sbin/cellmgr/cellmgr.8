@@ -1,468 +1,501 @@
 ." $NetBSD$
-.Dd February 13, 2026
+.Dd March 13, 2026
 .Dt CELLMGR 8
 .Os
 .Sh NAME
 .Nm cellmgr
-.Nd provision and manage multiple cellctl cells from one configuration
+.Nd unified declarative and runtime control plane for cells, overlays, and volumes
 .Sh SYNOPSIS
 .Nm
-.Ar command
-.Op Ar args ...
+.Cm system
+.Cm bootstrap
+.Op Cm --xbase
+.Nm
+.Cm ipc
+.Cm serve
+.Op Cm --stdio
+.Nm
+.Cm cell
+.Cm list
+.Op Cm --view Ar merged|desired|runtime
+.Op Fl o Ar fields
+.Op Fl T
+.Op Fl H
+.Nm
+.Cm cell
+.Cm show
+.Ar name
+.Op Cm --view Ar merged|desired|runtime
+.Op Fl o Ar fields
+.Op Fl T
+.Op Fl H
+.Nm
+.Cm cell
+.Cm fields
+.Op Cm --view Ar merged|desired|runtime
+.Op Fl T
+.Op Fl H
+.Nm
+.Cm cell
+.Cm create
+.Ar name
+.Op Cm --autostart Ar YES|NO
+.Cm --cmd Ar command
+.Op Cm --profile Ar low|medium|high
+.Op Cm --reserved-ports Ar port[,port...]
+.Op Cm --rlimit-nofile Ar n|unlimited
+.Op Cm --rlimit-as Ar bytes|unlimited
+.Op Cm --rlimit-core Ar bytes|unlimited
+.Op Cm --depends-on Ar dep[,dep...]
+.Op Cm --healthcheck Ar command
+.Op Cm --mount Ar volume:/target[:ro|rw]
+.Op Cm --log-facility Ar facility
+.Op Cm --stdout-level Ar level
+.Op Cm --stderr-level Ar level
+.Op Cm --log-tag Ar tag
+.Op Cm --scope Ar desired|both
+.Nm
+.Cm cell
+.Cm set
+.Ar name
+.Op Cm --autostart Ar YES|NO
+.Op Cm --cmd Ar command
+.Op Cm --profile Ar low|medium|high
+.Op Cm --reserved-ports Ar port[,port...]
+.Op Cm --rlimit-nofile Ar n|unlimited
+.Op Cm --rlimit-as Ar bytes|unlimited
+.Op Cm --rlimit-core Ar bytes|unlimited
+.Op Cm --depends-on Ar dep[,dep...]
+.Op Cm --healthcheck Ar command
+.Op Cm --mount Ar volume:/target[:ro|rw]
+.Op Cm --log-facility Ar facility
+.Op Cm --stdout-level Ar level
+.Op Cm --stderr-level Ar level
+.Op Cm --log-tag Ar tag
+.Op Cm --clear-reserved-ports
+.Op Cm --clear-rlimit-nofile
+.Op Cm --clear-rlimit-as
+.Op Cm --clear-rlimit-core
+.Op Cm --clear-depends-on
+.Op Cm --clear-healthcheck
+.Op Cm --clear-mounts
+.Op Cm --clear-log
+.Op Cm --scope Ar desired|both
+.Nm
+.Cm cell
+.Cm remove
+.Ar name|--all|--orphans
+.Op Cm --scope Ar desired|runtime|both
+.Op Cm --yes
+.Op Cm --force
+.Nm
+.Cm cell
+.Cm start|stop|restart
+.Ar name|--all
+.Op Cm --scope Ar runtime|both
+.Nm
+.Cm cell
+.Cm shell
+.Ar name
+.Nm
+.Cm cell
+.Cm backup
+.Cm create
+.Ar name
+.Nm
+.Cm cell
+.Cm backup
+.Cm list
+.Ar name
+.Op Fl T
+.Op Fl H
+.Nm
+.Cm cell
+.Cm backup
+.Cm restore
+.Ar name
+.Op Cm --from Ar archive.tar.gz
+.Op Cm --latest
+.Op Cm --manifest
+.Op Cm --yes
+.Nm
+.Cm cell
+.Cm backup
+.Cm delete
+.Ar name
+.Op Cm --from Ar archive.tar.gz
+.Op Cm --latest
+.Op Cm --yes
+.Nm
+.Cm cell
+.Cm plan
+.Cm run
+.Ar name
+.Op Cm --file Ar plan.apply
+.Op Cm --ephemeral
+.Nm
+.Cm volume
+.Cm list|show|fields
+.Op Ar ...
+.Nm
+.Cm volume
+.Cm create|set
+.Ar name
+.Op Fl m Ar mode
+.Op Cm --scope Ar desired|both
+.Nm
+.Cm volume
+.Cm remove
+.Ar name|--all|--orphans
+.Op Cm --scope Ar desired|runtime|both
+.Op Cm --yes
+.Nm
+.Cm volume
+.Cm backup
+.Cm create
+.Ar name
+.Nm
+.Cm volume
+.Cm backup
+.Cm list
+.Ar name
+.Op Fl T
+.Op Fl H
+.Nm
+.Cm volume
+.Cm backup
+.Cm restore
+.Ar name
+.Op Cm --from Ar archive.tar.gz
+.Op Cm --latest
+.Op Cm --manifest
+.Op Cm --yes
+.Nm
+.Cm volume
+.Cm backup
+.Cm delete
+.Ar name
+.Op Cm --from Ar archive.tar.gz
+.Op Cm --latest
+.Op Cm --yes
+.Nm
+.Cm system
+.Cm reset
+.Op Cm --scope Ar desired|runtime|both
+.Op Cm --cells
+.Op Cm --volumes
+.Op Cm --yes
+.Nm
+.Cm apply
+.Op Cm --all | Ar name ...
+.Op Cm --dry-run
+.Op Cm --reapply
+.Op Cm --restart-changed
+.Op Cm --silent
+.Op Fl v
 .Sh DESCRIPTION
 The
 .Nm
-utility is a shell-script helper around
-.Xr cellctl 8
-for provisioning and operating multiple cells.
-It is designed for setups that use:
-.Bl -bullet -compact
-.It
-a shared, read-only base filesystem extracted from
-.Pa base.tar.xz ,
-.It
-a per-cell writable
-.Pa /.data
-mount for mutable state (with base-layer symlinks from
-.Pa /etc ,
-.Pa /var ,
-.Pa /tmp ,
-.Pa /home ,
-.Pa /root ,
-and
-.Pa /usr/pkg
-into
-.Pa /.data ) ,
-a cell-local
-.Pa /dev ,
-and
-.It
-cell naming and lifecycle management via
-.Xr cellctl 8 .
-.El
+utility manages desired and runtime state for cells and named volumes in one
+CLI surface.
+Desired state is stored in manifests under
+.Pa /etc/cellmgr .
+Runtime state is rendered under
+.Pa /var/cellmgr .
+The
+.Cm apply
+command reconciles desired state into runtime state.
 .Pp
-By default,
-.Nm
-reads configuration from
-.Pa /etc/cellmgr.conf .
-A different configuration file can be selected with the
-.Ev CELLMGR_CONF
-environment variable.
+Within each runtime cell root,
+.Pa /.overlay
+is mounted as the writable layer.
+Common writable paths
+.Pq Pa /etc , Pa /var , Pa /tmp , Pa /home , Pa /root , Pa /usr/pkg
+resolve through that overlay.
 .Pp
-Most commands require superuser privileges.
-.Sh COMMANDS
-The following commands are supported:
-.Bl -tag -width "restart --all"
-.It Cm bootstrap
-Download
-.Pa base.tar.xz
+Storage backups are stored under
+.Pa /var/backups/cellmgr/volumes
 and
-.Pa etc.tar.xz
-from
-.Ev NETBSD_MIRROR
-after ensuring the
-.Li secmodel_cell
-kernel module is loaded,
-and persist
-.Li secmodel_cell
-in
-.Pa /etc/modules.conf
-for future boots.
-Also ensure
-.Li cellmgr=
-exists in
-.Pa /etc/rc.conf
-and initialize it to
-.Dq NO
-if absent.
-If
-.Pa /etc/cellmgr.conf
-does not exist, create it using the running system release normalized to
-.Dq major.minor
-.Pq e.g. Dq 10.1
-so mirror URLs do not include suffixes like
-.Dq _STABLE
+.Pa /var/backups/cellmgr/overlays
+as
+.Pa <name>_YYYYmmddHHMMSS.tar.gz .
+.Pp
+Cell runtime and merged views include an
+.Dq age
+field derived from kernel cell creation time.
+In human-readable output,
+.Dq age
+is rendered using compact units (for example
+.Dq 42s ,
+.Dq 7m12s ,
 or
-.Dq _RC1 .
-Then
-extract
-.Pa base.tar.xz
-into the configured shared base layer directory.
-.It Cm create Op Fl a Op Fl x Ar cmd Op Fl l Ar profile Op Fl r Ar port[,port...] Op Fl f Ar facility Op Fl o Ar stdout-level Op Fl e Ar stderr-level Op Fl t Ar tag Ar name
-Create directories and metadata for one cell:
-.Pa root ,
-.Pa data ,
-and
-.Pa dev .
-If necessary,
-.Pa etc.tar.xz
-is extracted for that cell, but only the
-.Pa ./etc ,
-.Pa ./root ,
-.Pa ./var
-entries are unpacked into
-.Pa data/ .
-For local cell
-.Pa /dev
-setup,
-.Pa ./dev/MAKEDEV
-and optional
-.Pa ./dev/MAKEDEV.local
-are extracted directly from
-.Pa etc.tar.xz
-into the cell's mounted
-.Pa /dev
-tmpfs.
-If host
-.Pa /etc/resolv.conf
-exists,
-it is copied to
-.Pa data/etc/resolv.conf
-at create time.
-A cell-local shell configuration file is written to
-.Pa ${CELL_DATA_DIR}/name/cell.conf .
-When
-.Fl a
-is provided,
-.Ev CELL_AUTOSTART
-is initialized to
-.Dq YES
-in that generated
-.Pa cell.conf .
-When
-.Fl x
-is provided,
-.Ev CELL_SUPERVISE_CMD
-is initialized to the specified command string in the generated
-.Pa cell.conf .
-When
-.Fl l
-is provided,
-the generated
-.Pa cell.conf
-stores the corresponding
-.Xr cellctl 8
-create profile
-.Pq Dq low ,
-.Dq medium ,
-or
-.Dq high .
-When
-.Fl r
-is provided,
-the generated
-.Pa cell.conf
-stores the corresponding
-.Xr cellctl 8
-create-time reserved listening ports
-.Pq comma-separated list forwarded to Cm create Fl r .
-When
-.Fl f ,
-.Fl o ,
-.Fl e ,
-or
-.Fl t
-is provided,
-the generated
-.Pa cell.conf
-stores the corresponding
-.Xr cellctl 8
-supervisor logging settings.
-.It Cm start Ar name
-Mount the composed cell root and start the cell with
-.Xr cellctl 8 , using required per-cell settings from
-.Pa cell.conf .
-.It Cm start Cm --all
-Start all cells found under
-.Ev CELL_DATA_DIR
-with a
-.Pa cell.conf
-and
-.Ev CELL_AUTOSTART=YES .
-If one cell fails to start, processing continues with the next cell.
-.It Cm stop Ar name
-Terminate the corresponding
-.Xr cellctl 8
-supervise process for the cell named
-.Ar name ,
-then destroy the cell by name through
-.Xr cellctl 8
-and unmount its root composition.
-.It Cm stop Cm --all
-Stop and unmount all cells found under
-.Ev CELL_DATA_DIR
-with a
-.Pa cell.conf
-and
-.Ev CELL_AUTOSTART=YES .
-.It Cm restart Ar name
-Run
-.Cm stop
-for cell
-.Ar name
-and then
-.Cm start
-for the same cell, using the optional settings from
-.Pa cell.conf .
-.It Cm restart Cm --all
-Run
-.Cm stop Cm --all
-followed by
-.Cm start Cm --all .
-.It Cm apply Op Cm --ephemeral Ar name Op Ar script | Cm - Op Cm -- Ar arg ...
-Execute a shell script inside cell
-.Ar name
+.Dq 3h05m )
+while TSV output emits raw seconds.
+.Pp
+Optional create-time rlimits for supervise workloads can be configured per cell
 using
-.Xr jexec 8
+.Cm --rlimit-nofile ,
+.Cm --rlimit-as ,
 and
-.Pa /bin/sh .
-If the cell is not running, it is started first.
-When started by
-.Cm apply ,
-only the cell runtime is created;
-the configured
-.Cm cellctl supervise
-process is not launched.
-The script can be provided as a filesystem path, as
-.Cm -
-to read from standard input, or omitted when standard input is not a terminal
-.Pq for heredoc use .
-The script is copied into cell
-.Pa /tmp
-with a unique temporary filename before execution and removed afterwards.
-Arguments after
-.Cm --
-are passed through to the script.
-By default, a cell started for
-.Cm apply
-remains running.
-When
-.Cm --ephemeral
-is specified, a cell that was started by
-.Cm apply
-is stopped again after script execution.
-.It Cm config Ar name
-Open
-.Pa ${CELL_DATA_DIR}/name/cell.conf
-for editing in the standard editor for the current environment.
-.Nm
-uses
-.Ev VISUAL
-when set,
-otherwise
-.Ev EDITOR ,
-and falls back to
-.Cm vi .
-.It Cm list
-List all configured cells as a table with columns
-.Li NAME ,
-.Li ROOT ,
-.Li SUPERVISE_CMD ,
-and
-.Li AUTOSTART .
-.It Cm status
-Show
-.Xr cellctl 8
-status and mount status for all configured cells.
-.El
-.Sh CONFIGURATION
-.Nm
-accepts shell-style variable assignments in
-.Pa /etc/cellmgr.conf
-(or the file referenced by
-.Ev CELLMGR_CONF ) .
+.Cm --rlimit-core
+.Pq or the corresponding manifest variables .
+When unset, supervise processes keep the system default behavior
+.Pq commonly unlimited on host defaults .
 .Pp
-Important variables:
-.Bl -tag -width "CELL_RELEASE_DIR"
-.It Ev RELEASE
-NetBSD release used for set download paths, in
-.Dq NetBSD release directory
-form
-.Pq e.g. Dq 11.0 or Dq 11.0_RC1 ; avoid branch suffixes like Dq _STABLE .
-If unset or empty,
-.Nm
-auto-detects it from
-.Xr uname 1 .
-.It Ev MACHINE_ARCH
-Machine architecture used for set download paths.
-If unset or empty,
-.Nm
-auto-detects it from
-.Xr uname 1 .
-.It Ev NETBSD_MIRROR
-Base URL for set downloads.
-.It Ev CELL_BASE_DIR
-Directory containing extracted shared base layers.
-.It Ev CELL_DATA_DIR
-Directory containing per-cell writable state.
-.It Ev CELL_RELEASE_DIR
-Directory containing downloaded set archives.
-.It Ev CELL_LOCAL_DEV
-When set to
-.Dq YES
-(default), mount a cell-local tmpfs on
-.Pa /dev
-and populate a minimal device set with
-.Xr MAKEDEV 8 .
-.It Ev CELL_DEV_SIZE
-Size argument used for the tmpfs mounted at cell-local
-.Pa /dev
-(default
-.Dq 8m ) .
-.It Ev CELL_DEVICES
-Whitespace-separated list of
-.Xr MAKEDEV 8
-targets used to populate cell-local
-.Pa /dev .
-.It Ev CELL_PTYFS
-When set to
-.Dq YES
-(default), mount
-.Xr ptyfs 5
-at
-.Pa /dev/pts
-inside each cell-local
-.Pa /dev
-to support pseudo terminals.
+Cell and volume names follow
+.Dq [A-Za-z0-9._-] .
+.Pp
+Read commands support unified output flags:
+.Bl -tag -width "--view merged|desired|runtime"
+.It Cm --view Ar merged|desired|runtime
+Select projection scope for
+.Cm list ,
+.Cm show ,
+and
+.Cm fields .
+Default is
+.Dq merged .
+.It Fl o Ar fields
+Select fields as comma-separated tokens in output order.
+.It Fl T
+Emit stable TSV output.
+.It Fl H
+Omit the TSV header line
+.Pq requires Fl T .
 .El
 .Pp
-Each cell also has a cell-local configuration file at
-.Pa ${CELL_DATA_DIR}/name/cell.conf
-that provides:
-.Bl -tag -width "CELL_CREATE_RESERVED_PORTS"
-.It Ev CELL_NAME
-Cell name recorded by
-.Nm
-at create time.
-This must match the directory name used by
-.Nm
-.Pq Pa ${CELL_DATA_DIR}/name/ .
-.It Ev CELL_RELEASE
-Release value recorded by
-.Nm
-at create time.
-This is informational and tracks the host-side base-layer release used when
-the cell was created.
-.It Ev CELL_ARCH
-Architecture value recorded by
-.Nm
-at create time.
-This is informational and tracks the host-side base-layer architecture used
-when the cell was created.
-.It Ev CELL_AUTOSTART
-When set to
-.Dq YES ,
-include that cell in
-.Cm start --all ,
-.Cm stop --all ,
+Mutating commands support
+.Cm --scope
+to control the effect domain:
+.Bl -tag -width "--scope desired|runtime|both"
+.It Cm --scope Ar desired
+Change desired state only.
+.It Cm --scope Ar runtime
+Change runtime state only.
+.It Cm --scope Ar both
+Apply both desired and runtime effects.
+.El
+.Sh COMMANDS
+.Bl -tag -width "cell remove name --scope desired|runtime|both"
+.It Cm system Cm bootstrap Op Cm --xbase
+Prepare system prerequisites, fetch sets, and build shared base layer.
+.It Cm ipc Cm serve Op Cm --stdio
+Start the stdio message endpoint for long-lived clients.
+The command reads framed requests from standard input and writes framed
+responses to standard output.
+This command does not require root by itself, but dispatched subcommands keep
+their existing privilege requirements.
+.It Cm cell Cm list Op Ar output-options
+List cells from the selected
+.Cm --view .
+Default output is a human-readable table.
+.It Cm cell Cm show Ar name Op Ar output-options
+Show one cell row from the selected
+.Cm --view .
+.It Cm cell Cm fields Op Ar output-options
+List supported field names for the selected
+.Cm --view .
+.It Cm cell Cm create Ar name Op Ar cell-options
+Create desired cell manifests.
+With
+.Cm --scope both ,
+run targeted convergence for the created cell.
+At runtime render time, host
+.Pa /etc/resolv.conf
 and
-.Cm restart --all .
-.It Ev CELL_SUPERVISE_CMD
-Required command (with optional arguments) passed to
-.Xr cellctl 8
-.Cm supervise
-after cell creation.
-Only the supervised command's stdout/stderr are forwarded to host syslog.
-Programs that default to internal syslog logging (for example
-.Xr bozohttpd 8
-without
-.Fl s )
-must be configured to emit to stderr if those logs should be captured by
-.Nm .
-.It Ev CELL_CREATE_PROFILE
-Optional value forwarded to
-.Xr cellctl 8
-.Cm create Fl l
-.Pq one of
-.Dq low ,
-.Dq medium ,
-or
-.Dq high .
-.It Ev CELL_CREATE_RESERVED_PORTS
-Optional value forwarded to
-.Xr cellctl 8
-.Cm create Fl r
-.Pq comma-separated TCP/UDP port list .
-.It Ev CELL_SUPERVISE_FACILITY
-Optional value forwarded to
-.Xr cellctl 8
-.Cm supervise Fl f .
-.It Ev CELL_SUPERVISE_STDOUT_LEVEL
-Optional value forwarded to
-.Xr cellctl 8
-.Cm supervise Fl o .
-.It Ev CELL_SUPERVISE_STDERR_LEVEL
-Optional value forwarded to
-.Xr cellctl 8
-.Cm supervise Fl e .
-.It Ev CELL_SUPERVISE_TAG
-Optional value forwarded to
-.Xr cellctl 8
-.Cm supervise Fl t .
+.Pa /etc/localtime
+are copied into the cell
+.Pa /etc
+overlay to seed DNS and timezone defaults.
+.It Cm cell Cm set Ar name Op Ar cell-options
+Update desired cell manifest values.
+With
+.Cm --scope both ,
+run targeted convergence for the updated cell.
+.It Cm cell Cm remove Ar name|--all|--orphans Op Ar remove-options
+Remove desired and/or runtime cell state according to
+.Cm --scope .
+Destructive
+.Cm --all
+and
+.Cm --orphans
+operations require interactive confirmation or
+.Cm --yes .
+.It Cm cell Cm start|stop|restart Ar name|--all Op Cm --scope Ar runtime|both
+Perform runtime lifecycle actions.
+With
+.Cm --scope both
+for
+.Cm start
+and
+.Cm stop ,
+desired autostart is updated to match intent.
+.It Cm cell Cm shell Ar name
+Open an interactive shell in a running cell.
+.It Cm cell Cm backup Cm create Ar name
+Create a compressed backup archive of a cell runtime overlay.
+The cell must be stopped.
+.It Cm cell Cm backup Cm list Ar name Op Fl T Op Fl H
+List backup archives for one cell overlay, newest first.
+.It Cm cell Cm backup Cm restore Ar name Op Cm --from Ar archive.tar.gz Op Cm --latest Op Cm --manifest Op Cm --yes
+Restore runtime overlay content from a backup archive.
+The cell must be stopped.
+With
+.Cm --manifest ,
+restore associated
+.Pa /etc/cellmgr/<name>.cell
+and
+.Pa /etc/cellmgr/<name>.apply
+snapshots when available.
+.It Cm cell Cm backup Cm delete Ar name Op Cm --from Ar archive.tar.gz Op Cm --latest Op Cm --yes
+Delete one backup archive for a cell overlay.
+.It Cm cell Cm plan Cm run Ar name Op Cm --file Ar plan.apply Op Cm --ephemeral
+Run one declarative apply plan for a cell.
+Without
+.Cm --file ,
+the default
+.Pa /etc/cellmgr/<name>.apply
+is used.
+.It Cm volume Cm list|show|fields Op Ar output-options
+Read volume state with the same
+.Cm --view/-o/-T/-H
+contract used by cell read commands.
+.It Cm volume Cm create|set Ar name Op Fl m Ar mode Op Cm --scope Ar desired|both
+Create or update desired volume manifest values.
+With
+.Cm --scope both ,
+materialize runtime volume path from desired state.
+.It Cm volume Cm remove Ar name|--all|--orphans Op Ar remove-options
+Remove desired and/or runtime volume state according to
+.Cm --scope .
+.It Cm volume Cm backup Cm create Ar name
+Create a compressed backup archive of the runtime volume directory.
+.It Cm volume Cm backup Cm list Ar name Op Fl T Op Fl H
+List backup archives for one volume, newest first.
+.It Cm volume Cm backup Cm restore Ar name Op Cm --from Ar archive.tar.gz Op Cm --latest Op Cm --manifest Op Cm --yes
+Restore runtime volume content from a backup archive.
+Without
+.Cm --from ,
+the latest matching backup is selected automatically.
+With
+.Cm --manifest ,
+restore the associated
+.Pa /etc/cellmgr/<name>.volume
+snapshot when available.
+.It Cm volume Cm backup Cm delete Ar name Op Cm --from Ar archive.tar.gz Op Cm --latest Op Cm --yes
+Delete one backup archive for a volume.
+Without
+.Cm --from ,
+the latest matching backup is selected automatically.
+.It Cm system Cm reset Op Cm --scope Ar desired|runtime|both Op Cm --cells Op Cm --volumes Op Cm --yes
+Reset selected resource groups by chaining destructive
+.Cm --all
+operations for cells and/or volumes.
+When neither
+.Cm --cells
+nor
+.Cm --volumes
+is specified, both are reset.
+.It Cm apply Op Cm --all | Ar name ... Op Cm --dry-run Op Cm --reapply Op Cm --restart-changed Op Cm --silent Op Fl v
+Reconcile desired state to runtime state.
+With
+.Cm --dry-run ,
+print the plan only and return exit status 2 when changes would be required.
 .El
-.Sh POLICY AND METRICS
-.Nm
-persists create-time isolation policy values
-.Pq profile and optional reserved-port list
-in each cell's
-.Pa cell.conf
-and forwards them unchanged to
-.Xr cellctl 8
-on start.
-.Pp
-Runtime resource visibility is intentionally observation-only:
-use
-.Cm cellctl stats
-to read kernel snapshot metrics per cell.
-No per-cell resource admission limits are configured by
-.Nm .
-.Sh FILES
-.Bl -tag -width "/usr/share/examples/cellmgr/cellmgr.conf.sample"
-.It Pa /etc/cellmgr.conf
-Default configuration file.
-.It Pa /etc/rc.d/cellmgr
-Service script for boot-time start/stop of autostart-enabled cells.
-.It Pa /usr/share/examples/cellmgr/cellmgr.conf.sample
-Sample configuration file.
-.It Pa /usr/share/examples/cellmgr/README
-Operational notes and quick-start guidance.
-.El
-.Sh EXAMPLES
-Bring a host to operational readiness and deploy one web cell:
+.Sh IPC PROTOCOL
+The
+.Cm ipc serve --stdio
+endpoint uses framed messages on stdin/stdout.
+Each message starts with an ASCII header line:
 .Bd -literal -offset indent
-# cellmgr bootstrap
-# cellmgr create -a -x '/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite' -l medium -r 8080 -f local3 -o info -e err -t cell-web web
-# cellmgr apply --ephemeral web <<'APPLY'
-mkdir -p /var/www/mysite
-echo "<html>Hello NetBSD!</html>" > /var/www/mysite/index.html
-APPLY
-# cellmgr config web
-# cellmgr start --all
+M 1 <TYPE> <ID> <P1> <P2> <P3> <LEN>\n
 .Ed
-.Sh NOTES
-Cell isolation policy is enforced in
-.Xr secmodel_cell 9
-through
-.Xr kauth 9
-listeners.
-Resource data exposed by
-.Cm cellctl stats
-is snapshot telemetry and does not configure admission limits.
-
+followed by exactly
+.Ar LEN
+payload bytes.
+.Pp
+Supported message types are:
+.Bl -tag -width "CALL"
+.It HELLO
+Handshake frame.
+.It CALL
+Execute a CLI request.
+.Ar P1
+is mode (0=capture, 1=interactive tty),
+.Ar P2
+is argv count.
+.Ar P3
+is an environment override flag (0=none, 1=payload starts with key/value lines).
+Payload is newline-delimited text entries.
+When
+.Ar P3
+is 1, the payload starts with
+.Dq env_key
+and
+.Dq env_value
+lines followed by argv entries.
+Arguments and optional environment values must not contain literal newline
+bytes.
+.It RET
+Command response.
+.Ar P1
+is exit status,
+.Ar P2
+and
+.Ar P3
+are stdout/stderr byte counts.
+Payload is stdout bytes followed by stderr bytes.
+.It ERR
+Protocol/server error.
+.Ar P1
+is an error code.
+.It PING , PONG , BYE
+Keepalive and shutdown control frames.
+.El
+.Pp
+Maximum accepted payload size is 64 MiB.
+.Sh EXIT STATUS
+.Bl -tag -width Ds
+.It 0
+Success.
+.It 1
+Failure.
+.It 2
+Only for
+.Cm apply --dry-run :
+changes would be required.
+.El
+.Sh FILES
+.Bl -tag -width /usr/share/examples/cellmgr/cellmgr.conf.sample
+.It Pa /etc/cellmgr.conf
+Global defaults.
+.It Pa /etc/cellmgr
+Desired manifests
+.Pq Pa *.cell , Pa *.apply , Pa *.volume .
+.It Pa /var/cellmgr/cells
+Rendered runtime cell tree.
+.It Pa /var/cellmgr/cells/*/.overlay
+Per-cell writable runtime overlay, mounted in-cell at
+.Pa /.overlay .
+.It Pa /var/cellmgr/cells/*/overlay
+Legacy per-cell overlay path kept for backward compatibility.
+.It Pa /var/cellmgr/volumes
+Runtime volume directories.
+.It Pa /var/backups/cellmgr/volumes
+Volume backup archives.
+.It Pa /var/backups/cellmgr/overlays
+Overlay backup archives.
+.It Pa /usr/share/examples/cellmgr/cellmgr.conf.sample
+Sample configuration.
+.El
 .Sh SEE ALSO
 .Xr cellctl 8 ,
-.Xr mount_null 8 ,
-.Xr secmodel_cell 9 ,
-.Xr rc.d 8
+.Xr secmodel_cell 9
 .Sh HISTORY
 The
 .Nm
-script first appeared as a prototype patch for
-.Nx 10.1 .
-This manual page was expanded when
-.Nm
-was moved to its own
-.Pa usr.sbin/cellmgr
-subdirectory.
+utility first appeared in an unofficial patch set for
+.Nx
+11.0 .
 .Sh AUTHORS
 .An Matthias Petermann Aq Mt mp@petermann-digital.de

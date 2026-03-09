@@ -1,216 +1,333 @@
-NetBSD cells-v2 specification (experimental)
-============================================
+NetBSD cells-v2 specification (unified control plane)
+=====================================================
 
 Status
 ------
-This document specifies the currently implemented, experimental cell stack in
-this tree:
-- secmodel_cell (kernel policy model)
-- cellctl (low-level operational interface)
-- cellmgr (multi-cell provisioning/operations)
-- svcmgr (inside-cell service bundle launcher)
-
-This implementation is referred to as "cells-v2".
-The design focus of cells-v2 is practical kauth-based isolation plus
-snapshot-based per-cell metrics.
+This document reflects the current implementation in this tree:
+- `secmodel_cell` (kernel isolation/policy + snapshot telemetry)
+- `cellctl` (sysctl-facing control/metrics adapter)
+- `cellmgr` (desired + runtime + backup orchestration)
+- `cellui` (interactive TUI over `cellmgr`)
 
 
-1. Conceptual model and goals
+1. System model
+---------------
+Cells-v2 is a layered control plane:
+
+    +------------------------------+
+    | cellui (curses TUI)          |
+    +---------------+--------------+
+                    |
+    +---------------v--------------+
+    | cellmgr                       |
+    | - desired manifests           |
+    | - runtime rendering           |
+    | - reconcile/apply engine      |
+    | - backup/restore              |
+    | - ipc serve (stdio protocol)  |
+    +---------------+--------------+
+                    |
+    +---------------v--------------+
+    | cellctl                       |
+    | - create/destroy/exec         |
+    | - supervise wrapper           |
+    | - list/stats snapshots        |
+    +---------------+--------------+
+                    |
+    +---------------v--------------+
+    | secmodel_cell (kernel)        |
+    | security.models.cell.* sysctl |
+    +------------------------------+
+
+Conceptual domains:
+- Desired state: authoritative manifests (`*.cell`, `*.apply`, `*.volume`)
+- Runtime state: rendered cell trees, mounts, live kernel cell instances
+- Reconciliation: `cellmgr apply` converges runtime to desired
+
+
+2. `cellmgr` command surface
+----------------------------
+Top-level commands:
+- `system` (`bootstrap`, `reset`)
+- `ipc` (`serve --stdio`)
+- `cell` (`list|show|fields|create|set|remove|start|stop|restart|shell|plan|edit|backup`)
+- `volume` (`list|show|fields|create|set|remove|backup`)
+- `apply`
+
+Read contract (`cell` + `volume`):
+- default output: human-readable table
+- `-T`: stable TSV output
+- `-H`: suppress TSV header (`-T` required)
+- `--view merged|desired|runtime`
+- `-o field1,field2,...` projection in caller-defined order
+
+Mutation scope contract:
+- `desired`: manifests only
+- `runtime`: live/rendered state only
+- `both`: desired + runtime effect
+
+Scope restrictions by command family:
+- `cell create|set`: `desired|both`
+- `cell start|stop|restart`: `runtime|both`
+- `cell remove`: `desired|runtime|both`
+- `volume create|set`: `desired|both`
+- `volume remove`: `desired|runtime|both`
+
+
+3. State and storage layout
+---------------------------
+Default layout:
+
+    /etc/cellmgr/
+      <name>.cell      (desired cell manifest)
+      <name>.apply     (declarative apply plan)
+      <name>.volume    (desired volume manifest)
+
+    /var/cellmgr/
+      base/<release>-<arch>/
+      releases/<release>/<arch>/{base,etc[,xbase]}.tar.xz
+      cells/<name>/
+        cell.conf
+        root/
+        .overlay/      (legacy fallback: overlay/)
+        state/
+          manifest.sha256
+          apply.sha256
+          last_reconcile_epoch
+          last_reconcile_result
+      volumes/<name>/
+
+    /var/backups/cellmgr/
+      volumes/<name>_YYYYmmddHHMMSS.tar.gz
+      overlays/<name>_YYYYmmddHHMMSS.tar.gz
+
+Runtime overlay model:
+- shared base is mounted read-only at `<root>`
+- per-cell writable layer is mounted at `<root>/.overlay`
+- base paths `/etc`, `/var`, `/tmp`, `/home`, `/root`, `/usr/pkg` are symlinked
+  into `/.overlay`
+
+
+4. Manifest contracts
+---------------------
+Cell manifest (`<name>.cell`) keys:
+- `CELL_NAME`
+- `CELL_AUTOSTART` (`YES|NO`)
+- `CELL_CREATE_PROFILE` (`low|medium|high`, default in create path: `high`)
+- `CELL_CREATE_RESERVED_PORTS` (comma-separated ports)
+- `CELL_CREATE_RLIMIT_NOFILE` (integer or `unlimited`)
+- `CELL_CREATE_RLIMIT_AS` (integer or `unlimited`)
+- `CELL_CREATE_RLIMIT_CORE` (integer or `unlimited`)
+- `CELL_SUPERVISE_FACILITY`
+- `CELL_SUPERVISE_STDOUT_LEVEL`
+- `CELL_SUPERVISE_STDERR_LEVEL`
+- `CELL_SUPERVISE_TAG`
+- `CELL_SUPERVISE_CMD` (required)
+- `CELL_DEPENDS_ON` (comma-separated cell names)
+- `CELL_HEALTHCHECK_CMD`
+- `CELL_VOLUME_MOUNTS` (`<volume>:<target>[:ro|rw]`, normalized to explicit mode)
+
+Apply plan (`<name>.apply`) directives:
+- `PKG <package>...`
+- `EXEC <command>`
+- `DIR <path> [mode=...] [owner=...] [group=...]`
+- `LINE <path> | <text>`
+- `SYMLINK <target> <linkpath>`
+- `FILE_BEGIN <path> [mode=...] [owner=...] [group=...]` ... `FILE_END`
+- `PATCH_BEGIN <path> [strip=n]` ... `PATCH_END`
+
+Plan parser rules:
+- directives must be uppercase
+- blank lines and `#...` comments are ignored
+- `FILE_BEGIN`/`PATCH_BEGIN` targets must be absolute paths
+
+Volume manifest (`<name>.volume`) keys:
+- `VOLUME_NAME`
+- `VOLUME_MODE` (octal mode, optional)
+
+
+5. Cell read model contract
+---------------------------
+Merged row superset (stable field names):
+- `name`
+- `running`
+- `desired_state`
+- `cid`
+- `refs`
+- `procs`
+- `cpu1s`
+- `cpu10s`
+- `memory`
+- `age`
+- `root`
+- `autostart`
+- `create_profile`
+- `create_reserved_ports`
+- `create_rlimit_nofile`
+- `create_rlimit_as`
+- `create_rlimit_core`
+- `depends_on`
+- `healthcheck`
+- `supervise_cmd`
+- `volume_mounts`
+- `manifest`
+- `rendered`
+- `apply_present`
+
+View restrictions:
+- `desired`: desired-centric subset
+- `runtime`: runtime-centric subset
+- `merged`: full union
+
+Snapshot assembly inputs:
+- desired manifests in `MANIFEST_DIR`
+- rendered runtime `cell.conf` in `CELL_DATA_DIR`
+- `cellctl list -T`
+- `cellctl stats -T`
+
+Schema handling details:
+- `cellctl list -T` header must be either:
+  - `CID NAME REFS PROCS AGE ROOT`, or
+  - `CID NAME REFS PROCS AGE ROOT NOFILE AS CORE`
+- `cellctl stats -T` header must be exactly:
+  - `CID NAME CPU1S CPU10S PROCS REFS MEMORY AGE ROOT`
+- schema mismatch is a hard failure
+
+Formatting rules:
+- TSV emits raw values; boolean fields are `1|0`
+- human table converts booleans to `YES|NO`
+- `age` is raw seconds in TSV, humanized in table output
+- rlimit fields are normalized to decimal integers or `unlimited`
+
+
+6. Volume read model contract
 -----------------------------
-- Lightweight process isolation based on a per-credential cell ID (jid).
-- Host context is cell ID 0.
-- Host root (euid 0 + jid 0) is the privileged control-plane actor.
-- Isolation focus:
-  - process visibility/signal boundaries
-  - system-scope hardening by profile
-  - optional per-cell reserved listening-port ownership
-- Observability focus:
-  - periodic per-cell snapshot metrics exported via cell list/stat interfaces
+Merged row superset:
+- `name`
+- `manifest`
+- `runtime`
+- `mode`
+- `path`
+- `mounted`
+- `refs`
+- `used_by`
+
+View restrictions:
+- `desired`: `name,manifest,mode,refs,used_by`
+- `runtime`: `name,runtime,path,mounted,refs,used_by`
+- `merged`: full union
+
+Value semantics:
+- `refs`: number of cell manifests referencing the volume
+- `used_by`: comma-separated referencing cell names
+- `mounted`: host mount-table probe for `<volume path>`
 
 
-2. High-level architecture
---------------------------
-- secmodel_cell:
-  - owns cell metadata, policy state, and snapshot counters
-  - exposes sysctl control API under security.models.cell.*
-  - enforces isolation policy via kauth listeners
-- cellctl:
-  - creates/destroys/lists cells
-  - enters cells and executes workloads
-  - provides supervised process mode with syslog forwarding
-  - exports snapshot counters as table or Prometheus metrics via stats
-- cellmgr:
-  - prepares base filesystem layout for many cells
-  - persists per-cell configuration and automates start/stop/restart
-  - supports host-driven in-cell script execution via apply
-  - maps persisted profile/port settings 1:1 into cellctl create options
-- svcmgr:
-  - starts multiple tagged services from config inside one cell
-  - multiplexes service stdout/stderr into tagged line output
-  - performs coordinated TERM/KILL shutdown without auto-respawn
+7. Reconciliation contract (`cellmgr apply`)
+--------------------------------------------
+Invocation:
+- `cellmgr apply [--all|<name>...] [--dry-run] [--reapply] [--restart-changed] [--silent|-v]`
+
+High-level pipeline:
+- resolve dependency order from `CELL_DEPENDS_ON`
+- reconcile volumes first
+- reconcile cells in dependency order
+- run optional plan and healthcheck phases
+
+Cell reconcile behavior summary:
+- create/update runtime `cell.conf` when manifest drift exists
+- enforce autostart intent (`start`/`stop`)
+- restart service when supervise config changed
+- policy-only drift (`profile/ports/rlimits`):
+  - warning by default
+  - restart only with `--restart-changed`
+- run `<name>.apply` when apply hash drift is detected or `--reapply` is set
+- when applying against running autostart cells:
+  - quiesce supervised service
+  - run plan
+  - start/restart service
+- when autostart is `NO`, plan apply uses ephemeral start/stop
+- run `CELL_HEALTHCHECK_CMD` after convergence for autostarted cells
+
+Exit status:
+- `0`: converged / success
+- `1`: error
+- `2`: `--dry-run` detected drift
 
 
-3. secmodel_cell kernel specification
--------------------------------------
-3.1 Cell identity and metadata
-- Cell IDs are monotonic uint32 values starting at 1.
-- Cell ID 0 is host context.
-- Each cell tracks:
-  - cell ID
-  - cell name
-  - cell root metadata
-  - profile (low/medium/high)
-  - optional reserved listening-port set
-  - snapshot telemetry (CPU ticks over 1s and rolling 10s windows,
-    process count, references, sampled virtual-memory size)
+8. Backup and restore contract
+------------------------------
+Volume backup commands:
+- `volume backup create|list|restore|delete`
 
-3.2 Privilege model
-- Host root (euid 0, jid 0) can:
-  - create/destroy/list cells
-  - read/write current cell ID control
-  - enter target cell IDs
-- Non-host-root credentials are denied those control operations.
+Cell overlay backup commands:
+- `cell backup create|list|restore|delete`
 
-3.3 Process isolation semantics
-- KAUTH_PROCESS_CANSEE denies cross-cell visibility.
-- KAUTH_PROCESS_SIGNAL denies cross-cell signaling.
-- Host root bypasses these checks.
-
-3.4 System hardening semantics
-- System-scope kauth requests are filtered for celled credentials.
-- Profile behavior:
-  - low: process-isolation semantics only; system hardening mostly deferred
-  - medium: hardening enabled, but SysV IPC administrative requests deferred
-  - high: hardening enabled, including SysV IPC administrative denial
-- Denied families include mount/module/mknod/chroot/reboot/swapctl/accounting,
-  CPU/PSET/time administration, selected kernel sysctl admin operations,
-  and other host-scope controls.
-
-3.5 Network bind reservation semantics
-- secmodel_cell listens on KAUTH_SCOPE_NETWORK bind checks.
-- If a concrete local port is reserved by any cell:
-  - bind is allowed only for credentials in the cell that owns reservation.
-- Unreserved ports are deferred to normal authorization behavior.
-- Port 0 (ephemeral assignment) is not reservation-restricted.
-
-3.6 Snapshot telemetry semantics
-- Snapshot sampling runs periodically in secmodel_cell.
-- Sampling is observation-only and does not deny resource operations.
-- Exported values are best-effort snapshots intended for operational metrics.
-- Exported values are gauge-style snapshots (not monotonic lifecycle counters).
-- CPU telemetry is exported as per-second tick deltas plus a rolling
-  10-second average.
-
-3.7 Credential lifecycle behavior
-- New credentials initialize with cell ID 0.
-- Credential copies retain cell ID.
-
-3.8 Cell lifecycle constraints
-- Destroy is refused while live or zombie processes still reference the cell.
-
-3.9 Sysctl control API (security.models.cell.*)
-- id
-  - read: current process cell ID
-  - write: request cell entry
-- create
-  - structured payload only (struct cell_create)
-  - supports metadata, profile, reserved ports
-- destroy
-  - destroy by ID (only when empty)
-- list
-  - enumerate cell metadata and snapshot counters
-
-3.10 Logging model
-- Module load/unload messages.
-- Create/destroy audit messages.
+Behavior notes:
+- backups are timestamped `.tar.gz` archives
+- restore/delete paths are safety-checked against allowed backup roots
+- restore/delete require confirmation (or `--yes`)
+- volume restore is refused while mounted
+- overlay backup/restore is refused while cell is running or overlay is mounted
+- `--manifest` on restore restores snapshot sidecars when available
 
 
-4. cellctl specification
+9. IPC protocol contract
 ------------------------
-4.1 Scope
-- Thin userland controller over security.models.cell sysctls.
+Endpoint:
+- `cellmgr ipc serve --stdio`
 
-4.2 Core operations
-- create [-l low|medium|high] [-r port[,port...]] -n name <root>
-- destroy <cell-id|name>
-- exec <cell-id|name> [command [args...]]
-- supervise [logging flags] <cell-id|name> <command> [args...]
-- list
-- stats [-P] [-v] [-h]
+Frame format:
+- ASCII header line: `M 1 <TYPE> <ID> <P1> <P2> <P3> <LEN>\n`
+- followed by exactly `LEN` payload bytes
 
-4.3 Profile and reserved-port options
-- -l configures secmodel profile behavior.
-- -r accepts comma-separated lists and can be repeated.
-- Values are validated as 1..65535 and deduplicated per create call.
+Message types:
+- `HELLO` handshake
+- `CALL` execute command (`P1` mode: `0` capture, `1` interactive)
+- `RET` command result (`P1` rc, `P2` stdout bytes, `P3` stderr bytes)
+- `ERR` protocol/server error
+- `PING`/`PONG` keepalive
+- `BYE` shutdown
 
-4.4 Supervision model
-- supervise daemonizes and forwards stdout/stderr to syslog.
-- restart strategy uses exponential backoff with cap.
-
-4.5 Metrics model
-- stats reads the same cell_info snapshot used by list.
-- default mode prints compact human-oriented counters.
-- -v prints extended context (including root/refcount).
-- -P emits Prometheus text exposition; -h prepends HTTP 200 headers.
+Limits:
+- maximum payload: 64 MiB
 
 
-5. cellmgr specification
-------------------------
-5.1 Scope
-- Operational orchestration around cellctl and filesystem layout.
+10. Validation and safety model
+-------------------------------
+Name policy:
+- cell and volume names must match `[A-Za-z0-9._-]`
 
-5.2 Bootstrap/startup behavior
-- bootstrap ensures secmodel_cell module is loaded.
-- bootstrap ensures secmodel_cell is listed in /etc/modules.conf.
-- bootstrap prepares base layers and default config artifacts.
+Volume mount spec policy:
+- format: `<volume>:<abs-target>[:ro|rw]`
+- target must be absolute
+- forbidden targets: `/`, `/dev`, `/dev/*`, `/.overlay`, `/.overlay/*`
+- overlapping targets are rejected
 
-5.3 Per-cell configuration model
-- Persists autostart and supervise command.
-- Persists optional create-time profile/reserved-ports values.
-- Forwards persisted settings unchanged to cellctl create on start.
+Destructive confirmation policy:
+- destructive `--all` / `--orphans` paths require interactive confirmation
+- in non-interactive contexts use `--yes`
 
-5.4 Additional lifecycle operations
-- apply executes shell scripts inside a cell via cellctl exec
-  (optionally with ephemeral start/stop behavior).
-- list and status provide lightweight fleet/runtime visibility helpers.
-
-5.5 Runtime coupling note
-- The management path is intentionally explicit about secmodel_cell dependency.
-- If secmodel_cell is absent, cellctl sysctl operations fail; there is no
-  implicit fallback mode that emulates cell behavior via generic defaults.
+Additional guardrails:
+- `volume remove` is blocked while still referenced by manifests
+- backup delete validates expected archive naming
+- restore targets must remain under approved runtime roots
 
 
-6. svcmgr specification
------------------------
-6.1 Scope
-- Minimal inside-cell service launcher for small multi-process bundles.
+11. `cellui` integration contract
+---------------------------------
+Cell feed command (fixed order, strict parser):
+- `cellmgr cell list --view merged -T -H -o name,cid,refs,procs,root,autostart,create_profile,create_reserved_ports,create_rlimit_nofile,create_rlimit_as,create_rlimit_core,supervise_cmd,cpu1s,cpu10s,memory,age,running,manifest`
 
-6.2 Configuration and execution
-- Reads `/etc/svcmgr.conf` by default.
-- Each configured line is `<tag> <command...>`.
-- Spawns each command under `/bin/sh -c` with independent session/group.
+Storage feed commands:
+- `cellmgr volume list --view merged -T -H -o name,manifest,runtime,mounted,refs,mode,path,used_by`
+- overlay rows derived from `cellmgr cell list --view merged -T -H -o name,manifest,running,root`
 
-6.3 Stream handling and shutdown
-- Polls stdout/stderr pipes for all services and emits `tag + line` records.
-- Flushes line-buffered output immediately.
-- On TERM/INT/QUIT sends SIGTERM to all running service groups, then SIGKILL
-  after grace timeout for holdouts.
-- No built-in service respawn loop; outer cell-level supervisor handles restarts.
+Backup inventory commands:
+- `cellmgr volume backup list <name> -T -H`
+- `cellmgr cell backup list <name> -T -H`
 
-
-7. Operational summary
-----------------------
-- Normal lifecycle:
-  1) cellmgr create (or direct cellctl create)
-  2) cellctl supervise / cellmgr start
-  3) cellctl destroy / cellmgr stop after workloads exit
-- Control-plane operations remain host-root only.
-- Resource observability is snapshot-based and exported through cellctl stats.
-
-
-8. Threat-model note
---------------------
-- This model provides process-level containment and policy hardening but does
-  not provide full virtualization guarantees.
-- For stronger isolation requirements, prefer stronger primitives
-  (virtualization, hardware partitioning, etc.) where appropriate.
+Robustness behavior:
+- command/schema failures are surfaced as refresh errors
+- malformed TSV rows are parsed with fixed-field checks and currently skipped
+- UI prefers persistent IPC; on disconnect it exposes reconnect/quit flow

@@ -1,0 +1,28 @@
+# /etc/cellmgr/example.cell
+
+CELL_NAME=example
+CELL_AUTOSTART=YES
+
+# Optional create-time policy
+CELL_CREATE_PROFILE="high"
+CELL_CREATE_RESERVED_PORTS="8080"
+CELL_CREATE_RLIMIT_NOFILE="4096"
+CELL_CREATE_RLIMIT_AS="1073741824"
+CELL_CREATE_RLIMIT_CORE="0"
+
+# Optional supervise logging
+CELL_SUPERVISE_FACILITY="daemon"
+CELL_SUPERVISE_STDOUT_LEVEL="info"
+CELL_SUPERVISE_STDERR_LEVEL="err"
+CELL_SUPERVISE_TAG="cell-example"
+
+# Required: one service command per cell
+CELL_SUPERVISE_CMD="/usr/libexec/httpd -I 8080 -X -s -f /var/www/example"
+
+# Optional dependency graph and health probe
+CELL_DEPENDS_ON=""
+CELL_HEALTHCHECK_CMD="test -f /var/www/example/index.html"
+
+# Optional volume mounts (<volume>:<target>[:ro|rw])
+# Volumes are defined as /etc/cellmgr/*.volume
+CELL_VOLUME_MOUNTS=""

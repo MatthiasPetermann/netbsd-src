@@ -1,0 +1,20 @@
+PKG unzip
+PKG luanti
+DIR /var/lib/luanti mode=0755
+DIR /var/lib/luanti/games mode=0755
+DIR /var/lib/luanti/world mode=0755
+EXEC if [ ! -f /var/lib/luanti/games/mineclonia/game.conf ]; then rm -rf /tmp/cellmgr-mineclonia-extract && mkdir -p /tmp/cellmgr-mineclonia-extract && ftp -o /tmp/cellmgr-mineclonia.zip https://content.luanti.org/packages/ryvnf/mineclonia/download/ && unzip -q /tmp/cellmgr-mineclonia.zip -d /tmp/cellmgr-mineclonia-extract && game_src= && for d in /tmp/cellmgr-mineclonia-extract/*; do [ -f "$d/game.conf" ] && game_src="$d" && break; done && [ -n "$game_src" ] && rm -rf /var/lib/luanti/games/mineclonia && mv "$game_src" /var/lib/luanti/games/mineclonia && rm -f /tmp/cellmgr-mineclonia.zip && rm -rf /tmp/cellmgr-mineclonia-extract; fi
+
+FILE_BEGIN /var/lib/luanti/world/world.mt mode=0644
+gameid = mineclonia
+backend = sqlite3
+creative_mode = false
+enable_damage = true
+FILE_END
+
+FILE_BEGIN /var/lib/luanti/minetest.conf mode=0644
+server_name = cellmgr luanti example
+server_description = Luanti server in a NetBSD cell
+port = 30000
+max_users = 20
+FILE_END

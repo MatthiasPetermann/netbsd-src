@@ -45,7 +45,27 @@ __KERNEL_RCSID(0, "$NetBSD$");
  * extensions cannot be accidentally accepted with unexpected semantics.
  */
 static int secmodel_cell_validate_create_flags(uint32_t flags) {
-  if ((flags & ~(CELL_CREATE_PROFILE | CELL_CREATE_PORTS)) != 0)
+  if ((flags & ~(CELL_CREATE_PROFILE | CELL_CREATE_PORTS |
+                 CELL_CREATE_RLIMIT_NOFILE | CELL_CREATE_RLIMIT_AS |
+                 CELL_CREATE_RLIMIT_CORE)) != 0)
+    return EINVAL;
+
+  return 0;
+}
+
+/*
+ * Validate optional supervised-process rlimit settings in cell_create.
+ */
+static int
+secmodel_cell_validate_create_rlimits(const struct cell_create *create) {
+  if ((create->cc_flags & CELL_CREATE_RLIMIT_NOFILE) == 0 &&
+      create->cc_rlimit_nofile != 0)
+    return EINVAL;
+  if ((create->cc_flags & CELL_CREATE_RLIMIT_AS) == 0 &&
+      create->cc_rlimit_as != 0)
+    return EINVAL;
+  if ((create->cc_flags & CELL_CREATE_RLIMIT_CORE) == 0 &&
+      create->cc_rlimit_core != 0)
     return EINVAL;
 
   return 0;
@@ -137,6 +157,10 @@ static int secmodel_cell_sysctl_create(SYSCTLFN_ARGS) {
     return error;
 
   error = secmodel_cell_validate_create_ports(&create);
+  if (error != 0)
+    return error;
+
+  error = secmodel_cell_validate_create_rlimits(&create);
   if (error != 0)
     return error;
 
@@ -241,6 +265,8 @@ static int secmodel_cell_sysctl_id(SYSCTLFN_ARGS) {
  * sysctl handler for security.models.cell.list
  *
  * Reading returns an array of cell_info entries with snapshot counters.
+ * Access is allowed from host credentials (cell id 0), including
+ * unprivileged host users.
  */
 static int secmodel_cell_sysctl_list(SYSCTLFN_ARGS) {
   struct cell_entry *entry;
@@ -251,7 +277,7 @@ static int secmodel_cell_sysctl_list(SYSCTLFN_ARGS) {
 
   if (newp != NULL)
     return EPERM;
-  if (!secmodel_cell_is_host_root(l->l_cred))
+  if (!secmodel_cell_is_host_cred(l->l_cred))
     return EPERM;
 
   retry = false;
@@ -292,11 +318,16 @@ again:
       break;
     }
     entries[i].ci_id = entry->ce_id;
+    entries[i].ci_create_flags = entry->ce_create_flags;
     entries[i].ci_refcount = entry->ce_refcount;
     entries[i].ci_proc_current = entry->ce_proc_current;
     entries[i].ci_memory_current = entry->ce_memory_current;
+    entries[i].ci_created_ns = entry->ce_created_ns;
     entries[i].ci_cpu_ticks_1s = entry->ce_cpu_ticks_1s;
     entries[i].ci_cpu_ticks_10s = entry->ce_cpu_ticks_10s;
+    entries[i].ci_rlimit_nofile = entry->ce_rlimit_nofile;
+    entries[i].ci_rlimit_as = entry->ce_rlimit_as;
+    entries[i].ci_rlimit_core = entry->ce_rlimit_core;
     strlcpy(entries[i].ci_name, entry->ce_name, sizeof(entries[i].ci_name));
     strlcpy(entries[i].ci_root, entry->ce_root, sizeof(entries[i].ci_root));
     i++;

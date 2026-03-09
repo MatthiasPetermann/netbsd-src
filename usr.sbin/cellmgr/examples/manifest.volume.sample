@@ -1,0 +1,7 @@
+# /etc/cellmgr/example.volume
+
+VOLUME_NAME=example
+
+# Optional mode applied to /var/cellmgr/volumes/<name>
+# Ownership should be managed inside apply plans.
+VOLUME_MODE="0755"

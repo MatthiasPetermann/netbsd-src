@@ -6585,7 +6585,7 @@
 ./usr/share/man/man8/iwictl.8			man-sysutil-man		.man
 ./usr/share/man/man8/cellctl.8			man-sysutil-man		.man
 ./usr/share/man/man8/cellmgr.8			man-sysutil-man		.man
-./usr/share/man/man8/svcmgr.8			man-sysutil-man		.man
+./usr/share/man/man8/cellui.8			man-sysutil-man		.man
 ./usr/share/man/man8/kadmin.8			man-krb5-man		kerberos,.man
 ./usr/share/man/man8/kadmind.8			man-krb5-man		kerberos,.man
 ./usr/share/man/man8/kcm.8			man-krb5-man		kerberos,.man

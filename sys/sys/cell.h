@@ -44,12 +44,17 @@ typedef uint32_t cellid_t;
 
 #define CELL_CREATE_PROFILE 0x00000001
 #define CELL_CREATE_PORTS 0x00000002
+#define CELL_CREATE_RLIMIT_NOFILE 0x00000004
+#define CELL_CREATE_RLIMIT_AS 0x00000008
+#define CELL_CREATE_RLIMIT_CORE 0x00000010
 
 #define CELL_PORTS_MAX 32
 
 #define CELL_PROFILE_LOW 0
 #define CELL_PROFILE_MEDIUM 1
 #define CELL_PROFILE_HIGH 2
+
+#define CELL_RLIMIT_INFINITY ((uint64_t)~0ULL)
 
 /*
  * Userland-to-kernel payload for creating a cell and optional policy settings.
@@ -60,6 +65,9 @@ struct cell_create {
   uint32_t cc_profile;
   uint16_t cc_nports;
   uint16_t cc_ports[CELL_PORTS_MAX];
+  uint64_t cc_rlimit_nofile;
+  uint64_t cc_rlimit_as;
+  uint64_t cc_rlimit_core;
   char cc_name[CELL_NAME_MAX + 1];
   char cc_root[CELL_ROOT_MAX + 1];
 };
@@ -70,13 +78,19 @@ struct cell_create {
  */
 struct cell_info {
   cellid_t ci_id;
+  uint32_t ci_create_flags;
   uint64_t ci_refcount;
   char ci_name[CELL_NAME_MAX + 1];
   char ci_root[CELL_ROOT_MAX + 1];
+  /* Cell creation timestamp in monotonic nanoseconds since boot. */
+  uint64_t ci_created_ns;
   uint64_t ci_proc_current;
   uint64_t ci_memory_current;
   uint64_t ci_cpu_ticks_1s;
   uint64_t ci_cpu_ticks_10s;
+  uint64_t ci_rlimit_nofile;
+  uint64_t ci_rlimit_as;
+  uint64_t ci_rlimit_core;
 };
 
 #endif /* !_SYS_CELL_H_ */

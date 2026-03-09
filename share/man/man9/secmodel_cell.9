@@ -24,7 +24,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .
-.Dd March 1, 2026
+.Dd March 13, 2026
 .Dt SECMODEL_CELL 9
 .Os
 .Sh NAME
@@ -61,17 +61,35 @@ Callers provide cell metadata and optional settings, including:
 .Bl -tag -width CELL_CREATE_PROFILE
 .It Dv CELL_CREATE_PROFILE
 Select one of the supported policy profiles
-.Po low, medium, high .Pc .
+.Pq low, medium, high .
 .It Dv CELL_CREATE_PORTS
 Reserve one or more listening ports for this cell.
 When at least one cell reserves a port, bind attempts for that port are
 allowed only from members of the cell that reserved it.
+.It Dv CELL_CREATE_RLIMIT_NOFILE
+Store an optional supervise-time
+.Dv RLIMIT_NOFILE
+value for this cell.
+.It Dv CELL_CREATE_RLIMIT_AS
+Store an optional supervise-time
+.Dv RLIMIT_AS
+value for this cell.
+.It Dv CELL_CREATE_RLIMIT_CORE
+Store an optional supervise-time
+.Dv RLIMIT_CORE
+value for this cell.
 .El
 .It Va destroy
 Destroy a cell id that has no remaining process members.
 .It Va list
-Read-only list of active cell ids and reference counts.
-Access is restricted to host root.
+Read-only array of
+.Vt struct cell_info
+entries for active cells
+.Pq id, name, root, references, process count, sampled CPU windows, sampled virtual-memory size, and optional supervise rlimit metadata .
+Access is restricted to host credentials
+.Pq cell id 0 ,
+including unprivileged host users.
+Access from non-host cells is denied, including cell-local root.
 .El
 .Sh SNAPSHOT METRICS DESIGN
 .Nm
@@ -89,7 +107,6 @@ emits concise kernel log entries for high-value lifecycle events:
 module load/unload and successful cell create/destroy operations.
 These messages are intended to help administrators correlate policy and
 management actions during incident analysis without excessive noise.
-
 .Sh SEE ALSO
 .Xr kauth 9 ,
 .Xr secmodel 9 ,
@@ -102,7 +119,8 @@ management actions during incident analysis without excessive noise.
 .Sh HISTORY
 The
 .Nm
-security model first appeared as a prototype patch for
-.Nx 10.1 .
+security model first appeared in an unofficial patch set for
+.Nx
+11.0 .
 .Sh AUTHORS
 .An Matthias Petermann Aq Mt mp@petermann-digital.de

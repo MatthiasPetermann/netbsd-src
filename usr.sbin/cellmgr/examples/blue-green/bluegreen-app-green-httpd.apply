@@ -1,0 +1,39 @@
+DIR /var/www/bluegreen-green mode=0755 owner=root group=wheel
+
+FILE_BEGIN /var/www/bluegreen-green/index.html mode=0644
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>green release</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background: linear-gradient(160deg, #ebfff2, #f5fff8);
+      color: #16311f;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: min(640px, 92vw);
+      background: #ffffff;
+      border: 1px solid #cfead8;
+      border-left: 8px solid #2a9b5f;
+      border-radius: 12px;
+      padding: 1.2rem 1.3rem;
+      box-shadow: 0 10px 26px rgba(35, 115, 72, 0.1);
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>Green release candidate</h1>
+    <p>This is the candidate green version on port <strong>8081</strong>.</p>
+    <p>Use <code>/green/</code> via the edge proxy to validate before cutover.</p>
+  </section>
+</body>
+</html>
+FILE_END

@@ -48,6 +48,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
 #include <sys/systm.h>
+#include <sys/timevar.h>
 
 #include <netinet/in.h>
 
@@ -89,6 +90,16 @@ struct cell_list_head cell_list = LIST_HEAD_INITIALIZER(cell_list);
 kmutex_t cell_lock;
 static cellid_t cell_next_id = 1;
 static struct callout cell_cpu_account_ch;
+
+static uint64_t secmodel_cell_uptime_now_ns(void) {
+  struct timespec ts;
+
+  getnanouptime(&ts);
+  if (ts.tv_sec < 0)
+    return 0;
+
+  return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
 
 /*
  * Locking contract (important for deadlock avoidance):
@@ -350,13 +361,21 @@ int secmodel_cell_create(const struct cell_create *create,
 
   entry = kmem_zalloc(sizeof(*entry), KM_SLEEP);
   entry->ce_id = id;
+  entry->ce_created_ns = secmodel_cell_uptime_now_ns();
   if (create != NULL) {
+    entry->ce_create_flags = create->cc_flags;
     strlcpy(entry->ce_name, create->cc_name, sizeof(entry->ce_name));
     strlcpy(entry->ce_root, create->cc_root, sizeof(entry->ce_root));
     if ((create->cc_flags & CELL_CREATE_PORTS) != 0) {
       entry->ce_nports = create->cc_nports;
       memcpy(entry->ce_ports, create->cc_ports, sizeof(create->cc_ports));
     }
+    if ((create->cc_flags & CELL_CREATE_RLIMIT_NOFILE) != 0)
+      entry->ce_rlimit_nofile = create->cc_rlimit_nofile;
+    if ((create->cc_flags & CELL_CREATE_RLIMIT_AS) != 0)
+      entry->ce_rlimit_as = create->cc_rlimit_as;
+    if ((create->cc_flags & CELL_CREATE_RLIMIT_CORE) != 0)
+      entry->ce_rlimit_core = create->cc_rlimit_core;
   }
   if (config != NULL) {
     entry->ce_profile = config->cc_profile;

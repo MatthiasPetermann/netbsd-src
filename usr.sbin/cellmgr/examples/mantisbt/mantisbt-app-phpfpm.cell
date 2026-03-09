@@ -1,0 +1,15 @@
+CELL_NAME=mantisbt-app-phpfpm
+CELL_AUTOSTART=YES
+
+CELL_CREATE_PROFILE="medium"
+CELL_CREATE_RESERVED_PORTS="9000"
+
+CELL_SUPERVISE_FACILITY="local3"
+CELL_SUPERVISE_STDOUT_LEVEL="info"
+CELL_SUPERVISE_STDERR_LEVEL="err"
+CELL_SUPERVISE_TAG="cell-mantisbt-app-phpfpm"
+CELL_SUPERVISE_CMD="/usr/pkg/sbin/php-fpm83 --nodaemonize --fpm-config /usr/pkg/etc/php-fpm-cellmgr.conf"
+
+CELL_DEPENDS_ON="mantisbt-data-postgresql"
+CELL_HEALTHCHECK_CMD="test -f /usr/pkg/etc/php-fpm-cellmgr.conf && test -f /var/www/mantisbt/index.php"
+CELL_VOLUME_MOUNTS="mantisbt-webroot:/var/www/mantisbt:rw"

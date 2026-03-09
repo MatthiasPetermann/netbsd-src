@@ -1,0 +1,2 @@
+VOLUME_NAME=mantisbt-postgres
+VOLUME_MODE="0755"
