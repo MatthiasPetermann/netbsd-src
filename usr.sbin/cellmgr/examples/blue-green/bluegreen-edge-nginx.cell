@@ -1,0 +1,14 @@
+CELL_NAME=bluegreen-edge-nginx
+CELL_AUTOSTART=YES
+
+CELL_CREATE_PROFILE="high"
+CELL_CREATE_RESERVED_PORTS="80"
+
+CELL_SUPERVISE_FACILITY="local6"
+CELL_SUPERVISE_STDOUT_LEVEL="info"
+CELL_SUPERVISE_STDERR_LEVEL="err"
+CELL_SUPERVISE_TAG="cell-bluegreen-edge-nginx"
+CELL_SUPERVISE_CMD="su -m nginx -c /usr/pkg/sbin/nginx"
+
+CELL_DEPENDS_ON="bluegreen-app-blue-httpd,bluegreen-app-green-httpd"
+CELL_HEALTHCHECK_CMD="test -f /usr/pkg/etc/nginx/nginx.conf"

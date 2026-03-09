@@ -1,0 +1,28 @@
+PKG php83 php83-fpm
+DIR /var/www/php-api mode=0755 owner=fpm group=www
+
+FILE_BEGIN /var/www/php-api/index.php mode=0644 owner=fpm group=www
+<?php
+header('Content-Type: application/json');
+echo json_encode([
+    'service' => 'php-api-app-phpfpm',
+    'status' => 'ok',
+]);
+FILE_END
+
+FILE_BEGIN /usr/pkg/etc/php-fpm-cellmgr.conf mode=0644
+[global]
+daemonize = no
+error_log = /dev/stderr
+
+[www]
+user = fpm
+group = www
+listen = 0.0.0.0:9000
+pm = dynamic
+pm.max_children = 10
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+chdir = /
+FILE_END

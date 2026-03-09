@@ -1307,6 +1307,13 @@
 ./usr/libexec/atf-killpg			base-obsolete		obsolete
 ./usr/libexec/atrun				base-cron-bin
 ./usr/libexec/bozohttpd				base-netutil-bin
+./usr/libexec/cellmgr				base-sysutil-bin
+./usr/libexec/cellmgr/cell.sh			base-sysutil-bin
+./usr/libexec/cellmgr/dispatch.sh			base-sysutil-bin
+./usr/libexec/cellmgr/ipc.sh			base-sysutil-bin
+./usr/libexec/cellmgr/legacy.sh			base-sysutil-bin
+./usr/libexec/cellmgr/system.sh			base-sysutil-bin
+./usr/libexec/cellmgr/volume.sh			base-sysutil-bin
 ./usr/libexec/ching				base-games-usr
 ./usr/libexec/comsat				base-mail-bin
 ./usr/libexec/cpp0				base-obsolete		obsolete
@@ -1583,7 +1590,7 @@
 ./usr/sbin/iwictl				base-sysutil-bin
 ./usr/sbin/cellctl				base-sysutil-bin
 ./usr/sbin/cellmgr				base-sysutil-bin
-./usr/sbin/svcmgr				base-sysutil-bin
+./usr/sbin/cellui				base-sysutil-bin
 ./usr/sbin/kadmin				base-krb5-bin		kerberos
 ./usr/sbin/kcm					base-krb5-bin		kerberos
 ./usr/sbin/kdc					base-krb5-bin		kerberos
@@ -2547,9 +2554,48 @@
 ./usr/share/examples/isdn			base-obsolete	obsolete
 ./usr/share/examples/cellmgr			base-sysutil-examples
 ./usr/share/examples/cellmgr/README		base-sysutil-examples	share
+./usr/share/examples/cellmgr/api-gateway		base-sysutil-examples
+./usr/share/examples/cellmgr/api-gateway/api-gateway-app-a-httpd.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/api-gateway/api-gateway-app-a-httpd.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/api-gateway/api-gateway-app-b-httpd.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/api-gateway/api-gateway-app-b-httpd.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/api-gateway/api-gateway-app-c-httpd.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/api-gateway/api-gateway-app-c-httpd.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/api-gateway/api-gateway-edge-nginx.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/api-gateway/api-gateway-edge-nginx.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/blue-green		base-sysutil-examples
+./usr/share/examples/cellmgr/blue-green/bluegreen-app-blue-httpd.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/blue-green/bluegreen-app-blue-httpd.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/blue-green/bluegreen-app-green-httpd.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/blue-green/bluegreen-app-green-httpd.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/blue-green/bluegreen-edge-nginx.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/blue-green/bluegreen-edge-nginx.cell	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/cellmgr.conf.sample	base-sysutil-examples	share
-./usr/share/examples/svcmgr			base-sysutil-examples
-./usr/share/examples/svcmgr/svcmgr.conf.sample	base-sysutil-examples	share
+./usr/share/examples/cellmgr/httpd			base-sysutil-examples
+./usr/share/examples/cellmgr/httpd/mysite-edge-httpd.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/httpd/mysite-edge-httpd.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/luanti			base-sysutil-examples
+./usr/share/examples/cellmgr/luanti/luanti-app-server.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/luanti/luanti-app-server.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/luanti/luanti-worlddata.volume	base-sysutil-examples	share
+./usr/share/examples/cellmgr/manifest.apply.sample	base-sysutil-examples	share
+./usr/share/examples/cellmgr/manifest.cell.sample	base-sysutil-examples	share
+./usr/share/examples/cellmgr/manifest.volume.sample	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt		base-sysutil-examples
+./usr/share/examples/cellmgr/mantisbt/mantisbt-app-phpfpm.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt/mantisbt-app-phpfpm.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt/mantisbt-data-postgresql.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt/mantisbt-data-postgresql.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt/mantisbt-edge-nginx.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt/mantisbt-edge-nginx.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt/mantisbt-secrets.volume	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt/mantisbt-webroot.volume	base-sysutil-examples	share
+./usr/share/examples/cellmgr/php-api		base-sysutil-examples
+./usr/share/examples/cellmgr/php-api/php-api-app-phpfpm.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/php-api/php-api-app-phpfpm.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/php-api/php-api-edge-nginx.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/php-api/php-api-edge-nginx.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/php-api/php-api-webroot.volume	base-sysutil-examples	share
 ./usr/share/examples/kerberos			base-krb5-examples
 ./usr/share/examples/lua			base-sys-examples
 ./usr/share/examples/lua/README			base-sys-examples	share

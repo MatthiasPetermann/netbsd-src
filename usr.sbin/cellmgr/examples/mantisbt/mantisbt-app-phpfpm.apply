@@ -1,0 +1,67 @@
+# MantisBT 2.28.0 app runtime with web installer flow
+PKG php83 php83-fpm php83-pgsql php83-mbstring curl
+DIR /var/www/mantisbt mode=0755 owner=fpm group=www
+DIR /var/db/mantisbt mode=0750 owner=fpm group=www
+DIR /var/db/mantisbt/files mode=0750 owner=fpm group=www
+FILE_BEGIN /etc/cellmgr-mantisbt-app-configure.sh mode=0750 owner=root group=wheel
+#!/bin/sh
+set -eu
+
+mantis_version=2.28.0
+mantis_url="https://sourceforge.net/projects/mantisbt/files/mantis-stable/${mantis_version}/mantisbt-${mantis_version}.tar.gz/download"
+mantis_sha256=af530221007d62a8880fcf9491bbc1e0736d678b2d6d14acf89627d3cfe3528c
+tarball="/tmp/mantisbt-release-${mantis_version}.tar.gz"
+app_root=/var/www/mantisbt
+
+install -d -m 0755 -o fpm -g www "${app_root}"
+
+if [ ! -f "${app_root}/core/constant_inc.php" ] || ! grep -q "MANTIS_VERSION.*${mantis_version}" "${app_root}/core/constant_inc.php"; then
+  rm -f "${tarball}"
+  ftp -o "${tarball}" "${mantis_url}"
+
+  downloaded_sha256=$(sha256 -q "${tarball}")
+  if [ "${downloaded_sha256}" != "${mantis_sha256}" ]; then
+    echo "unexpected SHA256 for ${tarball}" >&2
+    exit 1
+  fi
+
+  rm -rf "${app_root}"/* "${app_root}"/.[!.]* "${app_root}"/..?*
+  tar -xzf "${tarball}" --strip-components=1 -C "${app_root}"
+  rm -f "${tarball}"
+fi
+
+if [ ! -f "${app_root}/vendor/autoload.php" ]; then
+  echo "missing ${app_root}/vendor/autoload.php in release archive" >&2
+  exit 1
+fi
+
+install -d -m 0755 -o fpm -g www "${app_root}/config"
+chown -R fpm:www "${app_root}" /var/db/mantisbt
+
+if [ -f "${app_root}/config/config_inc.php" ]; then
+  chmod 0640 "${app_root}/config/config_inc.php"
+fi
+FILE_END
+FILE_BEGIN /usr/pkg/etc/php-fpm-cellmgr.conf mode=0644
+[global]
+daemonize = no
+error_log = /dev/stderr
+
+[www]
+user = fpm
+group = www
+listen = 0.0.0.0:9000
+pm = dynamic
+pm.max_children = 10
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+clear_env = yes
+catch_workers_output = yes
+php_admin_value[log_errors] = on
+php_admin_value[display_errors] = off
+php_admin_value[session.cookie_httponly] = 1
+php_admin_value[date.timezone] = UTC
+chdir = /
+FILE_END
+EXEC /bin/sh /etc/cellmgr-mantisbt-app-configure.sh

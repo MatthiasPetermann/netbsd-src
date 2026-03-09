@@ -81,6 +81,7 @@
 ./etc/hosts.equiv				etc-netutil-etc
 ./etc/hosts.lpd					etc-lpr-etc
 ./etc/inetd.conf				etc-netutil-etc
+./etc/cellmgr					etc-sys-etc
 ./etc/cellmgr.conf				etc-sys-etc
 ./etc/iscsi/auths				etc-iscsi-etc		iscsi
 ./etc/iscsi/targets				etc-iscsi-etc		iscsi

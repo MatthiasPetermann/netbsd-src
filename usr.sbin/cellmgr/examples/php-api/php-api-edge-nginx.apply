@@ -1,0 +1,36 @@
+PKG nginx
+FILE_BEGIN /usr/pkg/etc/nginx/nginx.conf mode=0644
+worker_processes 1;
+daemon off;
+events { worker_connections 1024; }
+error_log /dev/stderr notice;
+pid /tmp/nginx.pid;
+http {
+  include /usr/pkg/etc/nginx/mime.types;
+  default_type application/octet-stream;
+  access_log /dev/stdout combined;
+  sendfile on;
+
+  server {
+    listen 80;
+    server_name _;
+    root /var/www/php-api;
+    index index.php;
+
+    location = / {
+      return 302 /api/;
+    }
+
+    location /api/ {
+      try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+      include /usr/pkg/etc/nginx/fastcgi_params;
+      fastcgi_param SCRIPT_FILENAME /var/www/php-api$fastcgi_script_name;
+      fastcgi_param PATH_INFO $fastcgi_path_info;
+      fastcgi_pass localhost:9000;
+    }
+  }
+}
+FILE_END

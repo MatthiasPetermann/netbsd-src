@@ -1,0 +1,14 @@
+CELL_NAME=mysite-edge-httpd
+CELL_AUTOSTART=YES
+
+CELL_CREATE_PROFILE="medium"
+CELL_CREATE_RESERVED_PORTS="8080"
+
+CELL_SUPERVISE_FACILITY="local1"
+CELL_SUPERVISE_STDOUT_LEVEL="info"
+CELL_SUPERVISE_STDERR_LEVEL="err"
+CELL_SUPERVISE_TAG="cell-mysite-edge-httpd"
+CELL_SUPERVISE_CMD="/usr/libexec/httpd -I 8080 -X -f -s /var/www/mysite-edge-httpd"
+
+CELL_DEPENDS_ON=""
+CELL_HEALTHCHECK_CMD="test -f /var/www/mysite-edge-httpd/index.html"

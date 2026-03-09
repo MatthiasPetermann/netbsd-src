@@ -35,12 +35,14 @@ __RCSID("$NetBSD$");
 #endif /* not lint */
 
 #include <sys/cell.h>
+#include <sys/resource.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
 #include <err.h>
 #include <errno.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <paths.h>
@@ -62,17 +64,27 @@ static void usage(void) __dead;
 static void cell_exec(cellid_t, const char *, char *[]);
 static void cell_run_monitor_once(cellid_t, const char *, int, int, pid_t, int,
                                   int, int *);
-static void cell_supervise_loop(cellid_t, const char *, const char *,
-                                const char *, char *[], int, int, int);
-static void cell_spawn_detached(cellid_t, const char *, const char *,
-                                const char *, char *[], int, int, int);
+static void cell_supervise_loop(const struct cell_info *, const char *, char *[],
+                                int, int, int);
+static void cell_spawn_detached(const struct cell_info *, const char *, char *[],
+                                int, int, int);
 static int parse_log_facility(const char *);
 static int parse_log_level(const char *);
 static int parse_log_level_arg(const char *);
+static void validate_cell_name_or_die(const char *);
 static uint32_t parse_profile(const char *);
 static void parse_port_list(struct cell_create *, const char *);
+static bool parse_rlimit_value(const char *, uint64_t *);
+static void parse_create_rlimit(struct cell_create *, uint32_t, uint64_t *,
+                                const char *, const char *);
 static void sanitize_field(const char *, char *, size_t);
-static void cell_stats(bool, bool, bool);
+static void format_rlimit_field(const struct cell_info *, uint32_t, uint64_t,
+                                char *, size_t);
+static void cell_list(bool, bool);
+static void cell_stats(bool, bool, bool, bool, bool);
+static void apply_supervise_rlimits_or_die(const struct cell_info *);
+static uint64_t monotonic_now_ns(void);
+static uint64_t cell_age_seconds(const struct cell_info *, uint64_t);
 static void prom_escape_label(const char *, char *, size_t);
 static bool cell_lookup_by_name(const char *, struct cell_info *);
 static bool cell_lookup_by_id(cellid_t, struct cell_info *);
@@ -91,6 +103,145 @@ static volatile sig_atomic_t monitor_shutdown_requested;
 static void monitor_signal_handler(int signo) {
   (void)signo;
   monitor_shutdown_requested = 1;
+}
+
+static size_t cell_name_column_width(const struct cell_info *entries,
+                                     size_t count) {
+  size_t i;
+  size_t width;
+
+  width = strlen("NAME");
+  for (i = 0; i < count; i++) {
+    const char *name;
+    size_t n;
+
+    name = entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-";
+    n = strlen(name);
+    if (n > width)
+      width = n;
+  }
+
+  return width;
+}
+
+static size_t cell_root_column_width(const struct cell_info *entries,
+                                     size_t count) {
+  size_t i;
+  size_t width;
+
+  width = strlen("ROOT");
+  for (i = 0; i < count; i++) {
+    const char *root;
+    size_t n;
+
+    root = entries[i].ci_root[0] != '\0' ? entries[i].ci_root : "-";
+    n = strlen(root);
+    if (n > width)
+      width = n;
+  }
+
+  return width;
+}
+
+static void format_rlimit_field(const struct cell_info *entry, uint32_t flag,
+                                uint64_t value, char *dst, size_t dsz) {
+  if (entry == NULL || dst == NULL || dsz == 0)
+    return;
+
+  if ((entry->ci_create_flags & flag) == 0 || value == CELL_RLIMIT_INFINITY) {
+    strlcpy(dst, "unlimited", dsz);
+    return;
+  }
+
+  (void)snprintf(dst, dsz, "%" PRIu64, value);
+}
+
+static bool parse_rlimit_value(const char *arg, uint64_t *valuep) {
+  unsigned long long v;
+  char *endp;
+
+  if (arg == NULL || valuep == NULL)
+    return false;
+
+  if (strcmp(arg, "unlimited") == 0) {
+    *valuep = CELL_RLIMIT_INFINITY;
+    return true;
+  }
+
+  errno = 0;
+  v = strtoull(arg, &endp, 10);
+  if (errno != 0 || *arg == '\0' || *endp != '\0')
+    return false;
+
+  *valuep = (uint64_t)v;
+  return true;
+}
+
+static void parse_create_rlimit(struct cell_create *create, uint32_t flag,
+                                uint64_t *fieldp, const char *arg,
+                                const char *name) {
+  uint64_t value;
+
+  if (!parse_rlimit_value(arg, &value))
+    errx(1, "invalid rlimit %s: %s", name, arg);
+
+  *fieldp = value;
+  create->cc_flags |= flag;
+}
+
+static rlim_t rlimit_value_to_native(uint64_t value, const char *name) {
+  if (value == CELL_RLIMIT_INFINITY)
+    return RLIM_INFINITY;
+
+  if (value > (uint64_t)RLIM_INFINITY)
+    errx(1, "rlimit %s out of range: %" PRIu64, name, value);
+
+  return (rlim_t)value;
+}
+
+static void apply_supervise_rlimits_or_die(const struct cell_info *entry) {
+  struct rlimit lim;
+
+  if (entry == NULL)
+    return;
+
+  if ((entry->ci_create_flags & CELL_CREATE_RLIMIT_NOFILE) != 0) {
+    lim.rlim_cur = lim.rlim_max =
+        rlimit_value_to_native(entry->ci_rlimit_nofile, "nofile");
+    if (setrlimit(RLIMIT_NOFILE, &lim) == -1)
+      err(1, "setrlimit RLIMIT_NOFILE");
+  }
+  if ((entry->ci_create_flags & CELL_CREATE_RLIMIT_AS) != 0) {
+    lim.rlim_cur = lim.rlim_max =
+        rlimit_value_to_native(entry->ci_rlimit_as, "as");
+    if (setrlimit(RLIMIT_AS, &lim) == -1)
+      err(1, "setrlimit RLIMIT_AS");
+  }
+  if ((entry->ci_create_flags & CELL_CREATE_RLIMIT_CORE) != 0) {
+    lim.rlim_cur = lim.rlim_max =
+        rlimit_value_to_native(entry->ci_rlimit_core, "core");
+    if (setrlimit(RLIMIT_CORE, &lim) == -1)
+      err(1, "setrlimit RLIMIT_CORE");
+  }
+}
+
+static uint64_t monotonic_now_ns(void) {
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1 || ts.tv_sec < 0)
+    return 0;
+
+  return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+static uint64_t cell_age_seconds(const struct cell_info *entry,
+                                 uint64_t now_ns) {
+  if (entry == NULL || now_ns == 0 || entry->ci_created_ns == 0)
+    return 0;
+  if (now_ns <= entry->ci_created_ns)
+    return 0;
+
+  return (now_ns - entry->ci_created_ns) / 1000000000ULL;
 }
 
 static struct cell_info *cell_fetch_list(size_t *countp) {
@@ -155,29 +306,100 @@ static void cell_enter(cellid_t id) {
     err(1, "enter cell %" PRIu32, id);
 }
 
-static void cell_list(void) {
+static void cell_list(bool tsv, bool no_header) {
   struct cell_info *entries;
+  uint64_t now_ns;
+  size_t name_w;
   size_t count, i;
 
   entries = cell_fetch_list(&count);
   if (count == 0) {
-    printf("no cells\n");
+    if (tsv) {
+      if (!no_header)
+        printf("CID\tNAME\tREFS\tPROCS\tAGE\tROOT\tNOFILE\tAS\tCORE\n");
+    } else {
+      printf("no cells\n");
+    }
     return;
   }
 
-  printf("%-8s %-8s %-8s %-16s %s\n", "ID", "REFS", "PROCS", "NAME", "ROOT");
+  now_ns = monotonic_now_ns();
+
+  if (tsv) {
+    if (!no_header)
+      printf("CID\tNAME\tREFS\tPROCS\tAGE\tROOT\tNOFILE\tAS\tCORE\n");
+    for (i = 0; i < count; i++) {
+      char name[(CELL_NAME_MAX + 1) * 2 + 1];
+      char root[(CELL_ROOT_MAX + 1) * 2 + 1];
+      char rlimit_nofile[32];
+      char rlimit_as[32];
+      char rlimit_core[32];
+      uint64_t age_s;
+
+      sanitize_field(entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-",
+                     name, sizeof(name));
+      sanitize_field(entries[i].ci_root[0] != '\0' ? entries[i].ci_root : "-",
+                     root, sizeof(root));
+      format_rlimit_field(&entries[i], CELL_CREATE_RLIMIT_NOFILE,
+                          entries[i].ci_rlimit_nofile, rlimit_nofile,
+                          sizeof(rlimit_nofile));
+      format_rlimit_field(&entries[i], CELL_CREATE_RLIMIT_AS,
+                          entries[i].ci_rlimit_as, rlimit_as,
+                          sizeof(rlimit_as));
+      format_rlimit_field(&entries[i], CELL_CREATE_RLIMIT_CORE,
+                          entries[i].ci_rlimit_core, rlimit_core,
+                          sizeof(rlimit_core));
+      age_s = cell_age_seconds(&entries[i], now_ns);
+      printf("%" PRIu32 "\t%s\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64
+             "\t%s\t%s\t%s\t%s\n",
+             entries[i].ci_id, name, entries[i].ci_refcount,
+             entries[i].ci_proc_current, age_s, root, rlimit_nofile,
+             rlimit_as, rlimit_core);
+    }
+    free(entries);
+    return;
+  }
+
+  name_w = cell_name_column_width(entries, count);
+
+  printf("%-8s %-*s %-8s %-8s %-8s %-10s %-10s %-10s %s\n", "ID",
+         (int)name_w, "NAME", "REFS", "PROCS", "AGE", "NOFILE", "AS",
+         "CORE", "ROOT");
   for (i = 0; i < count; i++) {
-    printf("%-8" PRIu32 " %-8" PRIu64 " %-8" PRIu64 " %-16s %s\n",
-           entries[i].ci_id, entries[i].ci_refcount, entries[i].ci_proc_current,
+    char rlimit_nofile[32];
+    char rlimit_as[32];
+    char rlimit_core[32];
+    uint64_t age_s;
+
+    format_rlimit_field(&entries[i], CELL_CREATE_RLIMIT_NOFILE,
+                        entries[i].ci_rlimit_nofile, rlimit_nofile,
+                        sizeof(rlimit_nofile));
+    format_rlimit_field(&entries[i], CELL_CREATE_RLIMIT_AS,
+                        entries[i].ci_rlimit_as, rlimit_as,
+                        sizeof(rlimit_as));
+    format_rlimit_field(&entries[i], CELL_CREATE_RLIMIT_CORE,
+                        entries[i].ci_rlimit_core, rlimit_core,
+                        sizeof(rlimit_core));
+    age_s = cell_age_seconds(&entries[i], now_ns);
+    printf("%-8" PRIu32 " %-*s %-8" PRIu64 " %-8" PRIu64 " %-8" PRIu64
+           " %-10s %-10s %-10s %s\n",
+           entries[i].ci_id,
+           (int)name_w,
            entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-",
+           entries[i].ci_refcount, entries[i].ci_proc_current, age_s,
+           rlimit_nofile, rlimit_as, rlimit_core,
            entries[i].ci_root[0] != '\0' ? entries[i].ci_root : "-");
   }
 
   free(entries);
 }
 
-static void cell_stats(bool prometheus, bool verbose, bool http_header) {
+static void cell_stats(bool prometheus, bool verbose, bool http_header,
+                       bool tsv, bool no_header) {
   struct cell_info *entries;
+  uint64_t now_ns;
+  size_t name_w;
+  size_t root_w;
   size_t count, i;
 
   entries = cell_fetch_list(&count);
@@ -186,35 +408,77 @@ static void cell_stats(bool prometheus, bool verbose, bool http_header) {
     printf("Content-Type: text/plain\r\n\r\n");
   }
   if (count == 0) {
-    if (!prometheus)
+    if (tsv) {
+      if (!no_header)
+        printf("CID\tNAME\tCPU1S\tCPU10S\tPROCS\tREFS\tMEMORY\tAGE\tROOT\n");
+    } else if (!prometheus)
       printf("no cells\n");
     return;
   }
 
+  now_ns = monotonic_now_ns();
+
+  if (tsv) {
+    if (!no_header)
+      printf("CID\tNAME\tCPU1S\tCPU10S\tPROCS\tREFS\tMEMORY\tAGE\tROOT\n");
+    for (i = 0; i < count; i++) {
+      char name[(CELL_NAME_MAX + 1) * 2 + 1];
+      char root[(CELL_ROOT_MAX + 1) * 2 + 1];
+      uint64_t age_s;
+
+      sanitize_field(entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-",
+                     name, sizeof(name));
+      sanitize_field(entries[i].ci_root[0] != '\0' ? entries[i].ci_root : "-",
+                     root, sizeof(root));
+      age_s = cell_age_seconds(&entries[i], now_ns);
+      printf("%" PRIu32 "\t%s\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64
+             "\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64 "\t%s\n",
+             entries[i].ci_id, name, entries[i].ci_cpu_ticks_1s,
+             entries[i].ci_cpu_ticks_10s, entries[i].ci_proc_current,
+             entries[i].ci_refcount, entries[i].ci_memory_current, age_s, root);
+    }
+    free(entries);
+    return;
+  }
+
   if (!prometheus) {
+    name_w = cell_name_column_width(entries, count);
+
     if (!verbose) {
-      printf("%-8s %-16s %-10s %-10s %-8s %-12s\n", "ID", "NAME", "CPU1S",
-             "CPU10S", "PROC", "MEMORY");
+      printf("%-8s %-*s %-10s %-10s %-8s %-8s %-12s\n", "ID", (int)name_w,
+             "NAME", "CPU1S", "CPU10S", "PROC", "AGE", "MEMORY");
       for (i = 0; i < count; i++) {
-        printf("%-8" PRIu32 " %-16s %-10" PRIu64 " %-10" PRIu64 " %-8" PRIu64
-               " %-12" PRIu64 "\n",
+        uint64_t age_s;
+
+        age_s = cell_age_seconds(&entries[i], now_ns);
+        printf("%-8" PRIu32 " %-*s %-10" PRIu64 " %-10" PRIu64 " %-8" PRIu64
+               " %-8" PRIu64 " %-12" PRIu64 "\n",
                entries[i].ci_id,
+               (int)name_w,
                entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-",
                entries[i].ci_cpu_ticks_1s, entries[i].ci_cpu_ticks_10s,
-               entries[i].ci_proc_current, entries[i].ci_memory_current);
+               entries[i].ci_proc_current, age_s, entries[i].ci_memory_current);
       }
     } else {
-      printf("%-8s %-16s %-24s %-10s %-10s %-8s %-8s %-12s\n", "ID", "NAME",
-             "ROOT", "CPU1S", "CPU10S", "PROC", "REFS", "MEMORY");
+      root_w = cell_root_column_width(entries, count);
+      printf("%-8s %-*s %-*s %-10s %-10s %-8s %-8s %-8s %-12s\n", "ID",
+             (int)name_w, "NAME", (int)root_w, "ROOT", "CPU1S", "CPU10S",
+             "PROC", "REFS", "AGE", "MEMORY");
       for (i = 0; i < count; i++) {
-        printf("%-8" PRIu32 " %-16s %-24s %-10" PRIu64 " %-10" PRIu64
-               " %-8" PRIu64 " %-8" PRIu64 " %-12" PRIu64 "\n",
+        uint64_t age_s;
+
+        age_s = cell_age_seconds(&entries[i], now_ns);
+        printf("%-8" PRIu32 " %-*s %-*s %-10" PRIu64 " %-10" PRIu64
+               " %-8" PRIu64 " %-8" PRIu64 " %-8" PRIu64 " %-12" PRIu64
+               "\n",
                entries[i].ci_id,
+               (int)name_w,
                entries[i].ci_name[0] != '\0' ? entries[i].ci_name : "-",
+               (int)root_w,
                entries[i].ci_root[0] != '\0' ? entries[i].ci_root : "-",
                entries[i].ci_cpu_ticks_1s, entries[i].ci_cpu_ticks_10s,
                entries[i].ci_proc_current, entries[i].ci_refcount,
-               entries[i].ci_memory_current);
+               age_s, entries[i].ci_memory_current);
       }
     }
     free(entries);
@@ -226,13 +490,16 @@ static void cell_stats(bool prometheus, bool verbose, bool http_header) {
   printf("# TYPE cell_processes_current gauge\n");
   printf("# TYPE cell_references_current gauge\n");
   printf("# TYPE cell_memory_vmsize_bytes gauge\n");
+  printf("# TYPE cell_age_seconds gauge\n");
 
   for (i = 0; i < count; i++) {
     char name[(CELL_NAME_MAX + 1) * 2 + 1];
     char root[(CELL_ROOT_MAX + 1) * 2 + 1];
+    uint64_t age_s;
 
     prom_escape_label(entries[i].ci_name, name, sizeof(name));
     prom_escape_label(entries[i].ci_root, root, sizeof(root));
+    age_s = cell_age_seconds(&entries[i], now_ns);
 
     printf("cell_cpu_ticks_1s{cid=\"%" PRIu32
            "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
@@ -249,6 +516,9 @@ static void cell_stats(bool prometheus, bool verbose, bool http_header) {
     printf("cell_memory_vmsize_bytes{cid=\"%" PRIu32
            "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
            entries[i].ci_id, name, root, entries[i].ci_memory_current);
+    printf("cell_age_seconds{cid=\"%" PRIu32
+           "\",name=\"%s\",root=\"%s\"} %" PRIu64 "\n",
+           entries[i].ci_id, name, root, age_s);
   }
 
   free(entries);
@@ -537,11 +807,21 @@ static void cell_run_monitor_once(cellid_t id, const char *name, int outfd,
     warn("waitpid %jd", (intmax_t)child);
 }
 
-static void cell_supervise_loop(cellid_t id, const char *root, const char *name,
+static void cell_supervise_loop(const struct cell_info *entry,
                                 const char *logtag, char *cmd[], int facility,
                                 int stdout_priority, int stderr_priority) {
   struct sigaction sa;
   int next_backoff_sec;
+  cellid_t id;
+  const char *name;
+  const char *root;
+
+  if (entry == NULL)
+    errx(1, "internal error: missing cell entry");
+
+  id = entry->ci_id;
+  name = entry->ci_name;
+  root = entry->ci_root;
 
   setproctitle("cellctl supervise cell=%s cid=%" PRIu32, name, id);
   openlog(logtag, LOG_PID | LOG_NDELAY, facility);
@@ -600,6 +880,7 @@ static void cell_supervise_loop(cellid_t id, const char *root, const char *name,
         close(devnull);
       close(outpipe[1]);
       close(errpipe[1]);
+      apply_supervise_rlimits_or_die(entry);
       cell_exec(id, root, cmd);
     }
 
@@ -672,11 +953,18 @@ static void cell_supervise_loop(cellid_t id, const char *root, const char *name,
   _exit(0);
 }
 
-static void cell_spawn_detached(cellid_t id, const char *root, const char *name,
+static void cell_spawn_detached(const struct cell_info *entry,
                                 const char *logtag, char *cmd[], int facility,
                                 int stdout_priority, int stderr_priority) {
+  struct cell_info entry_copy;
   int devnull;
   pid_t mgr;
+  cellid_t id;
+
+  if (entry == NULL)
+    errx(1, "internal error: missing cell entry");
+  entry_copy = *entry;
+  id = entry_copy.ci_id;
 
   /*
    * Supervise mode daemonizes itself so callers (for example rc(8) helpers)
@@ -703,7 +991,7 @@ static void cell_spawn_detached(cellid_t id, const char *root, const char *name,
       err(1, "dup2");
     if (devnull > STDERR_FILENO)
       close(devnull);
-    cell_supervise_loop(id, root, name, logtag, cmd, facility, stdout_priority,
+    cell_supervise_loop(&entry_copy, logtag, cmd, facility, stdout_priority,
                         stderr_priority);
   }
   printf("cell %" PRIu32 "\n", id);
@@ -837,6 +1125,22 @@ static int getnum(const char *str, uintmax_t *num) {
   return 0;
 }
 
+static void validate_cell_name_or_die(const char *name) {
+  size_t i;
+
+  if (name == NULL || name[0] == '\0')
+    errx(1, "invalid cell name '%s' (allowed: A-Za-z0-9._-)",
+         name == NULL ? "" : name);
+
+  for (i = 0; name[i] != '\0'; i++) {
+    unsigned char c;
+
+    c = (unsigned char)name[i];
+    if (!(isalnum(c) || c == '.' || c == '_' || c == '-'))
+      errx(1, "invalid cell name '%s' (allowed: A-Za-z0-9._-)", name);
+  }
+}
+
 static cellid_t resolve_cell_target(const char *arg, struct cell_info *ji) {
   uintmax_t num;
 
@@ -846,6 +1150,8 @@ static cellid_t resolve_cell_target(const char *arg, struct cell_info *ji) {
       errx(1, "cell %" PRIu32 " not found", (cellid_t)num);
     return (cellid_t)num;
   }
+
+  validate_cell_name_or_die(arg);
 
   if (cell_lookup_by_name(arg, ji))
     return ji->ci_id;
@@ -870,7 +1176,7 @@ int main(int argc, char *argv[]) {
     name = NULL;
     create.cc_profile = CELL_PROFILE_HIGH;
     optind = 2;
-    while ((ch = getopt(argc, argv, "n:l:r:")) != -1) {
+    while ((ch = getopt(argc, argv, "n:l:r:N:A:C:")) != -1) {
       switch (ch) {
       case 'n':
         name = optarg;
@@ -882,6 +1188,18 @@ int main(int argc, char *argv[]) {
       case 'r':
         parse_port_list(&create, optarg);
         break;
+      case 'N':
+        parse_create_rlimit(&create, CELL_CREATE_RLIMIT_NOFILE,
+                            &create.cc_rlimit_nofile, optarg, "nofile");
+        break;
+      case 'A':
+        parse_create_rlimit(&create, CELL_CREATE_RLIMIT_AS,
+                            &create.cc_rlimit_as, optarg, "as");
+        break;
+      case 'C':
+        parse_create_rlimit(&create, CELL_CREATE_RLIMIT_CORE,
+                            &create.cc_rlimit_core, optarg, "core");
+        break;
       default:
         usage();
       }
@@ -891,6 +1209,7 @@ int main(int argc, char *argv[]) {
       usage();
     if (strlen(name) > CELL_NAME_MAX)
       errx(1, "name too long");
+    validate_cell_name_or_die(name);
 
     if (cell_lookup_by_name(name, &ji))
       errx(1, "name already exists: %s", name);
@@ -943,7 +1262,7 @@ int main(int argc, char *argv[]) {
       errx(1, "supervise requires command [args...]");
     cmd = &argv[optind];
 
-    cell_spawn_detached(id, ji.ci_root, ji.ci_name, logtag, cmd, facility,
+    cell_spawn_detached(&ji, logtag, cmd, facility,
                         facility | stdout_level, facility | stderr_level);
     return 0;
   }
@@ -968,22 +1287,44 @@ int main(int argc, char *argv[]) {
   }
 
   if (strcmp(argv[1], "list") == 0) {
-    if (argc != 2)
-      usage();
+    bool tsv, no_header;
+    int ch;
 
-    cell_list();
+    tsv = false;
+    no_header = false;
+    optind = 2;
+    while ((ch = getopt(argc, argv, "TH")) != -1) {
+      switch (ch) {
+      case 'T':
+        tsv = true;
+        break;
+      case 'H':
+        no_header = true;
+        break;
+      default:
+        usage();
+      }
+    }
+    if (optind != argc)
+      usage();
+    if (no_header && !tsv)
+      errx(1, "-H requires -T");
+
+    cell_list(tsv, no_header);
     return 0;
   }
 
   if (strcmp(argv[1], "stats") == 0) {
-    bool prometheus, verbose, http_header;
+    bool prometheus, verbose, http_header, tsv, no_header;
     int ch;
 
     prometheus = false;
     verbose = false;
     http_header = false;
+    tsv = false;
+    no_header = false;
     optind = 2;
-    while ((ch = getopt(argc, argv, "Pvh")) != -1) {
+    while ((ch = getopt(argc, argv, "PvhTH")) != -1) {
       switch (ch) {
       case 'P':
         prometheus = true;
@@ -994,6 +1335,12 @@ int main(int argc, char *argv[]) {
       case 'h':
         http_header = true;
         break;
+      case 'T':
+        tsv = true;
+        break;
+      case 'H':
+        no_header = true;
+        break;
       default:
         usage();
       }
@@ -1002,8 +1349,16 @@ int main(int argc, char *argv[]) {
       usage();
     if (http_header && !prometheus)
       errx(1, "-h requires -P");
+    if (no_header && !tsv)
+      errx(1, "-H requires -T");
+    if (tsv && prometheus)
+      errx(1, "-T is not valid with -P");
+    if (tsv && verbose)
+      errx(1, "-T is not valid with -v");
+    if (tsv && http_header)
+      errx(1, "-T is not valid with -h");
 
-    cell_stats(prometheus, verbose, http_header);
+    cell_stats(prometheus, verbose, http_header, tsv, no_header);
     return 0;
   }
 
@@ -1014,13 +1369,14 @@ int main(int argc, char *argv[]) {
 static void usage(void) {
   fprintf(stderr,
           "usage: %s create [-l low|medium|high] [-r port[,port...]] "
-          "-n name <root>\n"
+          "[-N nofile|unlimited] [-A as|unlimited] "
+          "[-C core|unlimited] -n name <root>\n"
           "       %s supervise [-f facility] [-o stdout-level] "
           "[-e stderr-level] [-t tag] <cell-id|name> <command [args...]>\n"
           "       %s exec <cell-id|name> [command [args...]]\n"
           "       %s destroy <cell-id|name>\n"
-          "       %s list\n"
-          "       %s stats [-P] [-v] [-h]\n",
+          "       %s list [-T] [-H]\n"
+          "       %s stats [-P] [-v] [-h] [-T] [-H]\n",
           getprogname(), getprogname(), getprogname(), getprogname(),
           getprogname(), getprogname());
   exit(EXIT_FAILURE);

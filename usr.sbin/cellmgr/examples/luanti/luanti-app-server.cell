@@ -1,0 +1,18 @@
+CELL_NAME=luanti-app-server
+CELL_AUTOSTART=YES
+
+CELL_CREATE_PROFILE="medium"
+CELL_CREATE_RESERVED_PORTS="30000"
+CELL_CREATE_RLIMIT_NOFILE="8192"
+CELL_CREATE_RLIMIT_AS="2147483648"
+CELL_CREATE_RLIMIT_CORE="0"
+
+CELL_SUPERVISE_FACILITY="local4"
+CELL_SUPERVISE_STDOUT_LEVEL="info"
+CELL_SUPERVISE_STDERR_LEVEL="err"
+CELL_SUPERVISE_TAG="cell-luanti-app-server"
+CELL_SUPERVISE_CMD="env MINETEST_USER_PATH=/var/lib/luanti LUANTI_USER_PATH=/var/lib/luanti /usr/pkg/bin/luantiserver --world /var/lib/luanti/world --gameid mineclonia --port 30000"
+
+CELL_DEPENDS_ON=""
+CELL_HEALTHCHECK_CMD="test -f /var/lib/luanti/world/world.mt"
+CELL_VOLUME_MOUNTS="luanti-worlddata:/var/lib/luanti:rw"

@@ -43,7 +43,7 @@
  * credentials. Host root (cell id 0) bypasses these checks.
  */
 #define SECMODEL_CELL_ID "org.netbsd.secmodel.cell"
-#define SECMODEL_CELL_NAME "NetBSD Cell"
+#define SECMODEL_CELL_NAME "Modern NetBSD: Cells"
 
 int secmodel_cell_init(void);
 void secmodel_cell_start(void);

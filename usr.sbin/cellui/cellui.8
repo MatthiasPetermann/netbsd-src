@@ -1,0 +1,173 @@
+." $NetBSD$
+.Dd March 13, 2026
+.Dt CELLUI 8
+.Os
+.Sh NAME
+.Nm cellui
+.Nd interactive terminal UI for managing cellmgr cells and storage backups
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+utility provides an interactive
+.Xr curses 3
+interface for operating cells managed by
+.Xr cellmgr 8 .
+It shows configured and running cells in a table (including cell age),
+displays per-cell details (including create policy profile, reserved ports,
+and supervise rlimits), and allows common lifecycle actions from the keyboard.
+.Pp
+Two modes are available:
+.Dq cell management
+and
+.Dq storage management .
+Press
+.Cm TAB
+to switch between modes.
+Storage mode lists volumes and per-cell overlays, displays backups for the
+selected storage target, and lets you create or restore backups interactively.
+.Pp
+By default,
+.Nm
+refreshes its view every 4 seconds.
+On startup,
+.Nm
+tries to establish a persistent control channel using
+.Cm "cellmgr ipc serve --stdio" .
+If that endpoint is unavailable,
+.Nm
+reports refresh and command errors until
+.Xr cellmgr 8
+with
+.Cm ipc serve --stdio
+is available.
+If an existing IPC session is lost while running,
+.Nm
+shows a
+.Dq disconnected
+dialog. Press
+.Cm Enter
+to reconnect, or any other key to exit.
+.Pp
+Cell status data is loaded from
+.Cm "cellmgr cell list --view merged -T -H -o ..." .
+Storage status data is loaded from
+.Cm "cellmgr volume list --view merged -T -H -o ..." .
+Overlay status data is loaded from
+.Cm "cellmgr cell list --view merged -T -H -o ..." .
+Backup inventory is loaded from
+.Cm "cellmgr volume backup list <name> -T -H"
+and
+.Cm "cellmgr cell backup list <name> -T -H" .
+If runtime TSV output is malformed or schema-incompatible,
+.Nm
+surfaces this as a refresh error instead of silently skipping rows.
+.Pp
+Cells without a declarative manifest are marked with
+.Dq !
+in the table and as
+.Dq missing (ORPHAN)
+in the detail panel.
+For those cells,
+.Cm e
+is refused because
+.Cm "cell edit"
+requires an existing manifest file.
+.Pp
+The selected theme is persisted per user in
+.Pa ~/.celluirc
+and loaded on startup when available.
+The file format is
+.Dq theme=<name> .
+If no theme is set in
+.Pa ~/.celluirc ,
+the default theme is
+.Dq sysinst .
+.Sh KEY BINDINGS
+The following keys are available:
+.Bl -tag -width "enter"
+.It Cm TAB
+Switch between cell mode and storage mode.
+.It Cm q , Ctrl-C
+Quit.
+.It Cm m
+Rotate color theme.
+.It Cm j , Cm k , KEY_UP , KEY_DOWN
+Move selection down or up.
+.It KEY_PPAGE , KEY_NPAGE
+Move one page up or down.
+.El
+.Pp
+Cell mode:
+.Bl -tag -width "enter"
+.It Cm j , Cm k , KEY_UP , KEY_DOWN
+Move selection down or up.
+.It KEY_PPAGE , KEY_NPAGE
+Move one page up or down.
+.It Cm r
+Refresh immediately.
+.It Cm f
+Cycle filter mode:
+.Dq all ,
+.Dq running ,
+or
+.Dq stopped .
+.It Cm enter
+Open an interactive shell inside the selected cell using
+.Cm "cellmgr cell shell" .
+This is only available for running cells.
+.It Cm s , Cm x , Cm t
+Start, stop, or restart the selected cell using
+.Cm "cellmgr cell start" ,
+.Cm "cellmgr cell stop" ,
+and
+.Cm "cellmgr cell restart" .
+.It Cm a , Cm z , Cm y
+Start all, stop all, or restart all configured cells using
+.Cm "--all" .
+.It Cm A
+Run
+.Cm "cellmgr apply --all"
+to apply declarative manifests to runtime state.
+.It Cm e
+Open the selected cell configuration via
+.Cm "cellmgr cell edit" .
+This is only available when a manifest exists.
+.El
+.Pp
+Storage mode:
+.Bl -tag -width "enter"
+.It Cm R
+Refresh immediately.
+.It Cm [ , Cm ] , KEY_LEFT , KEY_RIGHT
+Select previous or next backup of the currently selected storage target.
+.It Cm b
+Create a backup for the selected target using
+.Cm "cellmgr volume backup create"
+or
+.Cm "cellmgr cell backup create" .
+.It Cm r
+Prepare restore of the selected backup.
+.It Cm M
+Prepare restore of the selected backup and the associated manifest snapshot.
+.It Cm d
+Prepare deletion of the selected backup.
+Press
+.Cm enter
+to confirm restore or deletion.
+Any other key cancels.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh SEE ALSO
+.Xr cellmgr 8 ,
+.Xr curses 3
+.Sh HISTORY
+The
+.Nm
+utility first appeared in an unofficial patch set for
+.Nx
+11.0 .
+.Sh AUTHORS
+.An Matthias Petermann Aq Mt mp@petermann-digital.de

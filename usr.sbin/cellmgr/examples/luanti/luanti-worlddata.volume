@@ -1,0 +1,2 @@
+VOLUME_NAME=luanti-worlddata
+VOLUME_MODE="0755"

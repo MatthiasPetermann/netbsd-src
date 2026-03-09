@@ -28,6 +28,7 @@
 ./etc/atf
 ./etc/autofs
 ./etc/bluetooth
+./etc/cellmgr
 ./etc/cgd			mode=0700
 ./etc/defaults
 ./etc/fonts
@@ -518,7 +519,6 @@
 ./usr/share/examples/rpcapd
 ./usr/share/examples/rtadvd
 ./usr/share/examples/slip
-./usr/share/examples/svcmgr
 ./usr/share/examples/syslogd
 ./usr/share/examples/tmux
 ./usr/share/examples/wpa_supplicant

@@ -30,9 +30,9 @@
 # Build and manage cellctl cells with a shared read-only base layer.
 #
 # Layout:
-#   /var/cellmgr/releases/<release>/<arch>/{base,etc}.tar.xz
+#   /var/cellmgr/releases/<release>/<arch>/{base,etc[,xbase]}.tar.xz
 #   /var/cellmgr/base/<release>-<arch>/
-#   /var/cellmgr/cells/<name>/{root,data}
+#   /var/cellmgr/cells/<name>/{root,.overlay}
 #
 # Config:
 #   /etc/cellmgr.conf
@@ -80,6 +80,38 @@ detect_release() {
 	printf '%s.%s\n' "${major}" "${minor}"
 }
 
+normalize_release_major_minor() {
+	input=$1
+	rel=$(printf '%s' "${input}" | sed -e 's/[^A-Za-z0-9._-].*$//')
+	rel=${rel%%_*}
+
+	major=${rel%%.*}
+	if [ -z "${major}" ] || [ "${major}" = "${rel}" ]; then
+		echo "failed to normalize release (${input})" >&2
+		exit 1
+	fi
+
+	rest=${rel#*.}
+	minor=${rest%%.*}
+	if [ -z "${minor}" ]; then
+		echo "failed to normalize release minor (${input})" >&2
+		exit 1
+	fi
+
+	printf '%s.%s\n' "${major}" "${minor}"
+}
+
+normalize_pkg_arch() {
+	case "${1:-}" in
+	amd64)
+		printf 'x86_64\n'
+		;;
+	*)
+		printf '%s\n' "${1:-}"
+		;;
+	esac
+}
+
 DETECTED_RELEASE=$(detect_release)
 DETECTED_MACHINE_ARCH=$(uname -m)
 
@@ -88,7 +120,14 @@ MACHINE_ARCH=${DETECTED_MACHINE_ARCH}
 NETBSD_MIRROR=
 CELL_BASE_DIR=/var/cellmgr/base
 CELL_DATA_DIR=/var/cellmgr/cells
+CELL_VOLUME_DIR=/var/cellmgr/volumes
+CELL_BACKUP_DIR=/var/backups/cellmgr
 CELL_RELEASE_DIR=/var/cellmgr/releases
+CELLMGR_MANIFEST_DIR=/etc/cellmgr
+PKG_MIRROR=http://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD
+PKG_ARCH=${DETECTED_MACHINE_ARCH}
+PKG_RELEASE=
+PKG_PATH=
 
 # Per-cell local /dev setup.
 CELL_LOCAL_DEV=YES
@@ -109,6 +148,35 @@ if [ -z "${MACHINE_ARCH:-}" ]; then
 	MACHINE_ARCH=${DETECTED_MACHINE_ARCH}
 fi
 
+if [ -z "${CELLMGR_MANIFEST_DIR:-}" ]; then
+	CELLMGR_MANIFEST_DIR=/etc/cellmgr
+fi
+
+if [ -z "${CELL_VOLUME_DIR:-}" ]; then
+	CELL_VOLUME_DIR=/var/cellmgr/volumes
+fi
+
+if [ -z "${CELL_BACKUP_DIR:-}" ]; then
+	CELL_BACKUP_DIR=/var/backups/cellmgr
+fi
+
+if [ -z "${PKG_MIRROR:-}" ]; then
+	PKG_MIRROR=http://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD
+fi
+
+if [ -z "${PKG_ARCH:-}" ]; then
+	PKG_ARCH=${MACHINE_ARCH}
+fi
+PKG_ARCH=$(normalize_pkg_arch "${PKG_ARCH}")
+
+if [ -z "${PKG_RELEASE:-}" ]; then
+	PKG_RELEASE=$(normalize_release_major_minor "${RELEASE}")
+fi
+
+if [ -z "${PKG_PATH:-}" ]; then
+	PKG_PATH="${PKG_MIRROR%/}/${PKG_ARCH}/${PKG_RELEASE}/All"
+fi
+
 write_default_conf() {
 	if [ -r "${CONF_FILE}" ]; then
 		return
@@ -127,7 +195,17 @@ NETBSD_MIRROR=""
 
 CELL_BASE_DIR=${CELL_BASE_DIR}
 CELL_DATA_DIR=${CELL_DATA_DIR}
+CELL_VOLUME_DIR=${CELL_VOLUME_DIR}
+CELL_BACKUP_DIR=${CELL_BACKUP_DIR}
 CELL_RELEASE_DIR=${CELL_RELEASE_DIR}
+CELLMGR_MANIFEST_DIR=${CELLMGR_MANIFEST_DIR}
+
+# Package source used by declarative APPLY directives (PKG).
+# PKG_RELEASE is normalized to major.minor without suffixes.
+PKG_MIRROR=${PKG_MIRROR}
+PKG_ARCH=${PKG_ARCH}
+PKG_RELEASE=${PKG_RELEASE}
+PKG_PATH=${PKG_PATH}
 
 # Per-cell local /dev setup (tmpfs + MAKEDEV)
 CELL_LOCAL_DEV=${CELL_LOCAL_DEV}
@@ -148,32 +226,97 @@ BASE_LAYER="${CELL_BASE_DIR}/${RELEASE}-${MACHINE_ARCH}"
 SET_DIR="${CELL_RELEASE_DIR}/${RELEASE}/${MACHINE_ARCH}"
 BASE_SET="${SET_DIR}/base.tar.xz"
 ETC_SET="${SET_DIR}/etc.tar.xz"
+XBASE_SET="${SET_DIR}/xbase.tar.xz"
+MANIFEST_DIR="${CELLMGR_MANIFEST_DIR}"
+RECONCILE_VERBOSE=NO
+RECONCILE_SILENT=NO
+RECONCILE_LAST_SECTION=
+RECONCILE_TARGET_NAMES=
+CELLMGR_ASSUME_YES=NO
 
 usage() {
 	cat <<USAGE
-Usage: $0 <command> [args]
+Usage:
+  $0 system <bootstrap|reset> ...
+  $0 ipc serve [--stdio]
+  $0 cell <list|show|fields|create|set|remove|start|stop|restart|shell|plan|edit|backup> ...
+  $0 volume <list|show|fields|create|set|remove|backup> ...
+  $0 apply [--all|<name>...] [--dry-run] [--reapply] [--restart-changed] [--silent|-v]
+  $0 help
 
-Commands:
-  bootstrap                   Download sets and build shared base layer
-  create [-a] [-x cmd] [-l profile] [-r port[,port...]]
-         [-f facility] [-o stdout-level] [-e stderr-level] [-t tag]
-         <name>
-                               Create cell instance directories and
-                               persist cell.conf
-  start <name>                Mount cell root and supervise cell via cellctl
-  start --all                 Start all configured cells
-  stop <name>                 Stop one cell by terminating its
-                               cellctl supervisor
-  stop --all                  Stop all configured cells
-  restart <name>              Stop and start one cell
-  restart --all               Stop and start all configured cells
-  apply [--ephemeral] <name> [script|-] [-- arg ...]
-                              Execute shell script inside cell (path or stdin)
-  config <name>               Open cell.conf for cell in standard editor
-  status                      Show cellctl list and mount status
-  list                        List configured cells as table
+IPC:
+  ipc serve [--stdio]
+      Start the message-based stdio control endpoint.
 
-Each cell stores its own config at: ${CELL_DATA_DIR}/<name>/cell.conf
+Read output options:
+  --view <merged|desired|runtime>   Select projection view (default: merged)
+  -o <fields>                       Comma-separated field list
+  -T                                Emit TSV
+  -H                                Omit TSV header (requires -T)
+
+Cell commands:
+  cell list [--view ...] [-o fields] [-T] [-H]
+  cell show <name> [--view ...] [-o fields] [-T] [-H]
+  cell fields [--view ...] [-T] [-H]
+  cell create <name> [--autostart YES|NO] --cmd <command>
+      [--profile low|medium|high] [--reserved-ports ports]
+      [--rlimit-nofile n|unlimited] [--rlimit-as bytes|unlimited]
+      [--rlimit-core bytes|unlimited]
+      [--depends-on deps] [--healthcheck cmd] [--mount spec]
+      [--log-facility fac] [--stdout-level lvl] [--stderr-level lvl]
+      [--log-tag tag] [--scope desired|both]
+  cell set <name> [same options as create] [--clear-reserved-ports]
+      [--clear-rlimit-nofile] [--clear-rlimit-as] [--clear-rlimit-core]
+      [--clear-depends-on] [--clear-healthcheck] [--clear-mounts]
+      [--clear-log] [--scope desired|both]
+  cell remove <name|--all|--orphans> [--scope desired|runtime|both] [--yes] [--force]
+  cell start <name|--all> [--scope runtime|both]
+  cell stop <name|--all> [--scope runtime|both]
+  cell restart <name|--all> [--scope runtime|both]
+  cell shell <name>
+  cell plan run <name> [--file path] [--ephemeral]
+  cell edit <name>
+  cell backup create <name>
+  cell backup list <name> [-T] [-H]
+  cell backup restore <name> [--from archive.tar.gz|--latest] [--manifest] [--yes]
+  cell backup delete <name> [--from archive.tar.gz|--latest] [--yes]
+
+Volume commands:
+  volume list [--view ...] [-o fields] [-T] [-H]
+  volume show <name> [--view ...] [-o fields] [-T] [-H]
+  volume fields [--view ...] [-T] [-H]
+  volume create <name> [-m mode] [--scope desired|both]
+  volume set <name> [-m mode] [--scope desired|both]
+  volume remove <name|--all|--orphans> [--scope desired|runtime|both] [--yes]
+  volume backup create <name>
+  volume backup list <name> [-T] [-H]
+  volume backup restore <name> [--from archive.tar.gz|--latest] [--manifest] [--yes]
+  volume backup delete <name> [--from archive.tar.gz|--latest] [--yes]
+
+System:
+  system bootstrap [--xbase]
+      Download release sets, ensure secmodel_cell, and build shared base layer.
+  system reset [--scope desired|runtime|both] [--cells] [--volumes] [--yes]
+      Reset selected resource sets using destructive --all operations.
+
+Convergence:
+  apply [--all|<name>...] [--dry-run] [--reapply] [--restart-changed] [--silent|-v]
+      Apply desired state by reconciling runtime state.
+      Exit 2 for --dry-run when changes would be required.
+
+Notes:
+  - Default output is human-readable tables.
+  - With -T, output is stable TSV and includes a header unless -H is set.
+  - Destructive --all/--orphans operations require --yes when non-interactive.
+
+Paths:
+  Cell manifests:      ${MANIFEST_DIR}/<name>.cell
+  Apply plans:         ${MANIFEST_DIR}/<name>.apply
+  Volume manifests:    ${MANIFEST_DIR}/<name>.volume
+  Volume backups:      ${CELL_BACKUP_DIR}/volumes/<name>_YYYYmmddHHMMSS.tar.gz
+  Overlay backups:     ${CELL_BACKUP_DIR}/overlays/<name>_YYYYmmddHHMMSS.tar.gz
+  Rendered runtime:    ${CELL_DATA_DIR}/<name>/cell.conf
+  Runtime overlay:     ${CELL_DATA_DIR}/<name>/.overlay (mounted as /.overlay)
 USAGE
 }
 
@@ -185,6 +328,26 @@ need_root() {
 		echo "must be root" >&2
 		exit 1
 	fi
+}
+
+confirm_data_loss() {
+	action=$1
+	if [ "${CELLMGR_ASSUME_YES}" = "YES" ]; then
+		return 0
+	fi
+	if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+		echo "${action} requires interactive confirmation (no controlling tty)" >&2
+		return 1
+	fi
+	printf 'WARNING: %s\n' "${action}" > /dev/tty
+	printf 'This operation may cause irreversible data loss.\n' > /dev/tty
+	printf 'Type "yes" to continue: ' > /dev/tty
+	IFS= read -r confirm_reply < /dev/tty || return 1
+	if [ "${confirm_reply}" != "yes" ]; then
+		printf 'Aborted.\n' > /dev/tty
+		return 1
+	fi
+	return 0
 }
 
 # Validate external toolchain early so command failures happen before partial
@@ -199,20 +362,1573 @@ require_tools() {
 }
 
 ensure_rc_conf_entry() {
+	tmp=
 	if [ ! -f /etc/rc.conf ]; then
 		: > /etc/rc.conf
 	fi
 
 	if grep -Eq '^[[:space:]]*cellmgr=' /etc/rc.conf; then
+		tmp=$(mktemp /tmp/cellmgr-rcconf.XXXXXX)
+		awk '
+			$0 ~ /^[[:space:]]*cellmgr=/ { print "cellmgr=YES"; next }
+			{ print }
+		' /etc/rc.conf > "${tmp}"
+		mv "${tmp}" /etc/rc.conf
+		echo 'Set cellmgr=YES in /etc/rc.conf'
 		return
 	fi
 
-	echo 'cellmgr=NO' >> /etc/rc.conf
-	echo 'Initialized cellmgr=NO in /etc/rc.conf'
+	echo 'cellmgr=YES' >> /etc/rc.conf
+	echo 'Initialized cellmgr=YES in /etc/rc.conf'
 }
 
 escape_dq() {
 	printf '%s' "$1" | sed -e 's/[\\$"`]/\\&/g'
+}
+
+normalize_yesno() {
+	case "${1:-}" in
+	YES|NO)
+		printf '%s\n' "$1"
+		;;
+	"" )
+		printf 'NO\n'
+		;;
+	*)
+		echo "invalid YES/NO value: $1" >&2
+		exit 1
+		;;
+	esac
+}
+
+normalize_dep_list() {
+	printf '%s' "${1:-}" | tr ',' ' '
+}
+
+normalize_volume_mount_list() {
+	printf '%s' "${1:-}" | tr ',' ' '
+}
+
+manifest_cell_paths() {
+	manifest_cell_name=$1
+	MANIFEST_CELL_CONF="${MANIFEST_DIR}/${manifest_cell_name}.cell"
+	MANIFEST_APPLY_FILE="${MANIFEST_DIR}/${manifest_cell_name}.apply"
+}
+
+volume_manifest_paths() {
+	volume_name=$1
+	VOLUME_CONF="${MANIFEST_DIR}/${volume_name}.volume"
+	VOLUME_PATH="${CELL_VOLUME_DIR}/${volume_name}"
+}
+
+volume_manifest_exists() {
+	volume_name=$1
+	volume_manifest_paths "${volume_name}"
+	[ -r "${VOLUME_CONF}" ]
+}
+
+manifest_cell_exists() {
+	manifest_cell_name=$1
+	manifest_cell_paths "${manifest_cell_name}"
+	[ -r "${MANIFEST_CELL_CONF}" ]
+}
+
+assert_valid_cell_name() {
+	cell_name_arg=$1
+	if [ -z "${cell_name_arg}" ]; then
+		echo "cell name cannot be empty" >&2
+		exit 1
+	fi
+	case "${cell_name_arg}" in
+	*[!A-Za-z0-9._-]*)
+		echo "invalid cell name '${cell_name_arg}' (allowed: A-Za-z0-9._-)" >&2
+		exit 1
+		;;
+	esac
+}
+
+assert_valid_volume_name() {
+	volume_name_arg=$1
+	if [ -z "${volume_name_arg}" ]; then
+		echo "volume name cannot be empty" >&2
+		exit 1
+	fi
+	case "${volume_name_arg}" in
+	*[!A-Za-z0-9._-]*)
+		echo "invalid volume name '${volume_name_arg}' (allowed: A-Za-z0-9._-)" >&2
+		exit 1
+		;;
+	esac
+}
+
+ensure_volume_manifest_layout() {
+	layout_mode=${1:-read}
+	if [ "${layout_mode}" = "write" ]; then
+		mkdir -p "${MANIFEST_DIR}" "${CELL_VOLUME_DIR}"
+		return 0
+	fi
+	[ -d "${MANIFEST_DIR}" ]
+}
+
+backup_timestamp() {
+	date +%Y%m%d%H%M%S
+}
+
+backup_subdir_name_for_kind() {
+	case "${1:-}" in
+	volume)
+		printf 'volumes\n'
+		;;
+	overlay)
+		printf 'overlays\n'
+		;;
+	*)
+		echo "invalid backup kind: ${1:-}" >&2
+		return 1
+		;;
+	esac
+}
+
+backup_dir_for_kind() {
+	kind=$1
+	subdir=$(backup_subdir_name_for_kind "${kind}") || return 1
+	printf '%s/%s\n' "${CELL_BACKUP_DIR}" "${subdir}"
+}
+
+backup_search_dirs_for_kind() {
+	kind=$1
+	primary=$(backup_dir_for_kind "${kind}") || return 1
+	printf '%s\n' "${primary}"
+	if [ "${kind}" = "volume" ]; then
+		# Backward compatibility for pre-subdir volume archives.
+		printf '%s\n' "${CELL_BACKUP_DIR}"
+	fi
+}
+
+ensure_backup_layout() {
+	kind=$1
+	layout_mode=${2:-read}
+	backup_dir=$(backup_dir_for_kind "${kind}") || return 1
+	if [ "${layout_mode}" = "write" ]; then
+		mkdir -p "${backup_dir}"
+		return 0
+	fi
+	[ -d "${backup_dir}" ]
+}
+
+resolve_latest_backup_archive() {
+	kind=$1
+	name=$2
+	latest=
+	latest_ts=
+
+	for backup_dir in $(backup_search_dirs_for_kind "${kind}"); do
+		[ -d "${backup_dir}" ] || continue
+		for candidate in "${backup_dir}/${name}_"*.tar.gz; do
+			[ -f "${candidate}" ] || continue
+			base=${candidate##*/}
+			case "${base}" in
+			"${name}_"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz)
+				timestamp=${base#"${name}_"}
+				timestamp=${timestamp%.tar.gz}
+				if [ -z "${latest}" ] || [ "${timestamp}" \> "${latest_ts}" ]; then
+					latest=${candidate}
+					latest_ts=${timestamp}
+				fi
+				;;
+			esac
+		done
+	done
+
+	if [ -z "${latest}" ]; then
+		echo "no backups found for ${kind} ${name}" >&2
+		return 1
+	fi
+
+	printf '%s\n' "${latest}"
+}
+
+resolve_backup_archive() {
+	kind=$1
+	name=$2
+	archive_arg=${3:-}
+	latest_flag=${4:-NO}
+
+	if [ "${latest_flag}" = "YES" ] || [ -z "${archive_arg}" ]; then
+		resolve_latest_backup_archive "${kind}" "${name}"
+		return $?
+	fi
+
+	if [ -f "${archive_arg}" ] && [ -r "${archive_arg}" ]; then
+		printf '%s\n' "${archive_arg}"
+		return 0
+	fi
+
+	for backup_dir in $(backup_search_dirs_for_kind "${kind}"); do
+		if [ -f "${backup_dir}/${archive_arg}" ] &&
+		    [ -r "${backup_dir}/${archive_arg}" ]; then
+			printf '%s\n' "${backup_dir}/${archive_arg}"
+			return 0
+		fi
+	done
+
+	echo "backup archive not found or unreadable: ${archive_arg}" >&2
+	return 1
+}
+
+resolve_latest_volume_backup_archive() {
+	resolve_latest_backup_archive volume "$1"
+}
+
+resolve_volume_backup_archive() {
+	resolve_backup_archive volume "$1" "${2:-}" "${3:-NO}"
+}
+
+overlay_manifest_path() {
+	name=$1
+	printf '%s/%s.cell\n' "${MANIFEST_DIR}" "${name}"
+}
+
+overlay_apply_path() {
+	name=$1
+	printf '%s/%s.apply\n' "${MANIFEST_DIR}" "${name}"
+}
+
+volume_manifest_path() {
+	name=$1
+	printf '%s/%s.volume\n' "${MANIFEST_DIR}" "${name}"
+}
+
+backup_manifest_snapshot_path() {
+	archive_path=$1
+	snapshot_suffix=${2:-manifest}
+	printf '%s.%s\n' "${archive_path%.tar.gz}" "${snapshot_suffix}"
+}
+
+backup_legacy_manifest_snapshot_path() {
+	archive_path=$1
+	backup_manifest_snapshot_path "${archive_path}" manifest
+}
+
+write_backup_manifest_snapshot() {
+	manifest_src=$1
+	archive_path=$2
+	snapshot_suffix=${3:-manifest}
+	snapshot=$(backup_manifest_snapshot_path "${archive_path}" "${snapshot_suffix}")
+
+	rm -f "${snapshot}"
+	if [ -f "${manifest_src}" ] && [ -r "${manifest_src}" ]; then
+		cp -p "${manifest_src}" "${snapshot}"
+	fi
+}
+
+restore_backup_manifest_snapshot() {
+	snapshot_expected_from_archive=$1
+	manifest_dst=$2
+	snapshot_suffix=${3:-manifest}
+	allow_legacy=${4:-NO}
+	snapshot=$(backup_manifest_snapshot_path "${snapshot_expected_from_archive}" "${snapshot_suffix}")
+
+	if [ ! -f "${snapshot}" ] || [ ! -r "${snapshot}" ]; then
+		if [ "${allow_legacy}" = "YES" ]; then
+			legacy_snapshot=$(backup_legacy_manifest_snapshot_path "${snapshot_expected_from_archive}")
+			if [ -f "${legacy_snapshot}" ] && [ -r "${legacy_snapshot}" ]; then
+				snapshot=${legacy_snapshot}
+			else
+				echo "requested --manifest restore but snapshot is missing: ${snapshot}" >&2
+				return 1
+			fi
+		else
+			echo "requested --manifest restore but snapshot is missing: ${snapshot}" >&2
+			return 1
+		fi
+	fi
+
+	ensure_manifest_layout write
+	cp -p "${snapshot}" "${manifest_dst}"
+	return 0
+}
+
+restore_backup_manifest_snapshot_optional() {
+	snapshot_expected_from_archive=$1
+	manifest_dst=$2
+	snapshot_suffix=$3
+	snapshot=$(backup_manifest_snapshot_path "${snapshot_expected_from_archive}" "${snapshot_suffix}")
+
+	if [ ! -f "${snapshot}" ] || [ ! -r "${snapshot}" ]; then
+		return 0
+	fi
+
+	ensure_manifest_layout write
+	cp -p "${snapshot}" "${manifest_dst}"
+	return 0
+}
+
+clear_directory_contents() {
+	dir_path=$1
+	case "${dir_path}" in
+	""|/)
+		echo "refusing to clear unsafe directory path: ${dir_path}" >&2
+		return 1
+		;;
+	esac
+
+	for entry in "${dir_path}"/.[!.]* "${dir_path}"/..?* "${dir_path}"/*; do
+		[ -e "${entry}" ] || [ -L "${entry}" ] || continue
+		rm -rf "${entry}"
+	done
+
+	return 0
+}
+
+validate_volume_mode() {
+	volume_mode_value=$1
+	[ -n "${volume_mode_value}" ] || return 0
+	case "${volume_mode_value}" in
+	[0-7][0-7][0-7][0-7])
+		return 0
+		;;
+	*)
+		echo "invalid volume mode '${volume_mode_value}' (expected 4-digit octal, e.g. 0755)" >&2
+		return 1
+		;;
+	esac
+}
+
+parse_volume_mount_spec() {
+	spec=$1
+	spec_ctx=$2
+
+	set -f
+	old_ifs=${IFS}
+	IFS=:
+	set -- ${spec}
+	IFS=${old_ifs}
+	set +f
+
+	if [ $# -eq 2 ]; then
+		MOUNT_VOLUME=$1
+		MOUNT_TARGET=$2
+		MOUNT_MODE=rw
+	elif [ $# -eq 3 ]; then
+		MOUNT_VOLUME=$1
+		MOUNT_TARGET=$2
+		MOUNT_MODE=$3
+	else
+		echo "${spec_ctx}: invalid CELL_VOLUME_MOUNTS entry: ${spec}" >&2
+		return 1
+	fi
+
+	assert_valid_volume_name "${MOUNT_VOLUME}"
+	case "${MOUNT_TARGET}" in
+	/*)
+		;;
+	*)
+		echo "${spec_ctx}: mount target must be absolute: ${MOUNT_TARGET}" >&2
+		return 1
+		;;
+	esac
+	case "${MOUNT_TARGET}" in
+	/|/dev|/dev/*|/.overlay|/.overlay/*)
+		echo "${spec_ctx}: mount target is not allowed: ${MOUNT_TARGET}" >&2
+		return 1
+		;;
+	esac
+	case "${MOUNT_MODE}" in
+	ro|rw)
+		;;
+	*)
+		echo "${spec_ctx}: mount mode must be ro or rw: ${MOUNT_MODE}" >&2
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+path_is_same_or_child() {
+	child=$1
+	parent=$2
+	if [ "${child}" = "${parent}" ]; then
+		return 0
+	fi
+	case "${child}" in
+	"${parent}"/*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+validate_cell_volume_mounts() {
+	mount_list=$1
+	origin=$2
+	require_volume_manifest=${3:-NO}
+
+	CELL_VOLUME_MOUNTS_NORMALIZED=
+	seen_targets=
+
+	for spec in $(normalize_volume_mount_list "${mount_list}"); do
+		parse_volume_mount_spec "${spec}" "${origin}" || return 1
+
+		if [ "${require_volume_manifest}" = "YES" ]; then
+			if ! volume_manifest_exists "${MOUNT_VOLUME}"; then
+				echo "${origin}: referenced volume not found: ${MOUNT_VOLUME}" >&2
+				return 1
+			fi
+		fi
+
+		for existing_target in ${seen_targets}; do
+			if path_is_same_or_child "${MOUNT_TARGET}" "${existing_target}" ||
+			   path_is_same_or_child "${existing_target}" "${MOUNT_TARGET}"; then
+				echo "${origin}: overlapping mount targets are not allowed: ${MOUNT_TARGET} and ${existing_target}" >&2
+				return 1
+			fi
+		done
+		seen_targets="${seen_targets} ${MOUNT_TARGET}"
+
+		if [ -n "${CELL_VOLUME_MOUNTS_NORMALIZED}" ]; then
+			CELL_VOLUME_MOUNTS_NORMALIZED="${CELL_VOLUME_MOUNTS_NORMALIZED},"
+		fi
+		CELL_VOLUME_MOUNTS_NORMALIZED="${CELL_VOLUME_MOUNTS_NORMALIZED}${MOUNT_VOLUME}:${MOUNT_TARGET}:${MOUNT_MODE}"
+	done
+
+	return 0
+}
+
+ensure_manifest_layout() {
+	layout_mode=${1:-read}
+	if [ "${layout_mode}" = "write" ]; then
+		mkdir -p "${MANIFEST_DIR}"
+		return 0
+	fi
+	[ -d "${MANIFEST_DIR}" ]
+}
+
+load_volume_manifest_conf() {
+	volume_name=$1
+	volume_manifest_paths "${volume_name}"
+	if [ ! -r "${VOLUME_CONF}" ]; then
+		echo "missing volume manifest ${VOLUME_CONF}" >&2
+		exit 1
+	fi
+
+	VOLUME_NAME=
+	VOLUME_MODE=
+	# shellcheck disable=SC1090
+	. "${VOLUME_CONF}"
+
+	if [ -z "${VOLUME_NAME:-}" ]; then
+		VOLUME_NAME=${volume_name}
+	fi
+	if [ "${VOLUME_NAME}" != "${volume_name}" ]; then
+		echo "volume manifest mismatch: expected VOLUME_NAME=${volume_name}, got ${VOLUME_NAME}" >&2
+		exit 1
+	fi
+	assert_valid_volume_name "${VOLUME_NAME}"
+	validate_volume_mode "${VOLUME_MODE:-}" || exit 1
+}
+
+ensure_volume_runtime_from_manifest() {
+	volume_name=$1
+	load_volume_manifest_conf "${volume_name}"
+	volume_manifest_paths "${volume_name}"
+
+	mkdir -p "${CELL_VOLUME_DIR}" "${VOLUME_PATH}"
+	if [ -n "${VOLUME_MODE:-}" ]; then
+		chmod "${VOLUME_MODE}" "${VOLUME_PATH}"
+	fi
+}
+
+reconcile_volumes() {
+	dry_run=$1
+	changed=0
+
+	if ! ensure_volume_manifest_layout; then
+		return 0
+	fi
+
+	for volume_conf in "${MANIFEST_DIR}"/*.volume; do
+		[ -f "${volume_conf}" ] || continue
+		name=${volume_conf##*/}
+		name=${name%.volume}
+		assert_valid_volume_name "${name}"
+		load_volume_manifest_conf "${name}"
+		volume_manifest_paths "${name}"
+
+		if [ ! -d "${VOLUME_PATH}" ]; then
+			emit_reconcile_section_action "volumes" "VOLUME" \
+			    "create ${name} (${VOLUME_PATH})"
+			changed=1
+		fi
+		if [ "${dry_run}" = "NO" ]; then
+			ensure_volume_runtime_from_manifest "${name}"
+		fi
+	done
+
+	if [ "${changed}" -ne 0 ]; then
+		return 2
+	fi
+	return 0
+}
+
+create_manifest_volume() {
+	need_root
+	name=$1
+	volume_mode_arg=${2:-}
+
+	assert_valid_volume_name "${name}"
+	validate_volume_mode "${volume_mode_arg}" || exit 1
+
+	ensure_volume_manifest_layout write
+	volume_manifest_paths "${name}"
+	if [ -e "${VOLUME_CONF}" ]; then
+		echo "volume manifest already exists: ${VOLUME_CONF}" >&2
+		exit 1
+	fi
+
+	escaped_mode=$(escape_dq "${volume_mode_arg}")
+
+	cat > "${VOLUME_CONF}" <<CONF
+# declarative volume manifest for cellmgr
+VOLUME_NAME=${name}
+VOLUME_MODE="${escaped_mode}"
+CONF
+
+	echo "Created manifest volume ${name}"
+}
+
+set_manifest_volume() {
+	need_root
+	name=$1
+	volume_mode_arg=${2:-}
+
+	assert_valid_volume_name "${name}"
+	validate_volume_mode "${volume_mode_arg}" || exit 1
+	ensure_volume_manifest_layout write
+	volume_manifest_paths "${name}"
+	if [ ! -f "${VOLUME_CONF}" ]; then
+		echo "manifest volume not found: ${name}" >&2
+		exit 1
+	fi
+
+	escaped_mode=$(escape_dq "${volume_mode_arg}")
+	cat > "${VOLUME_CONF}" <<CONF
+# declarative volume manifest for cellmgr
+VOLUME_NAME=${name}
+VOLUME_MODE="${escaped_mode}"
+CONF
+	echo "Updated manifest volume ${name}"
+}
+
+volume_ref_count() {
+	volume_name=$1
+	count=0
+
+	if ensure_manifest_layout; then
+		for cell_conf in "${MANIFEST_DIR}"/*.cell; do
+			[ -f "${cell_conf}" ] || continue
+			CELL_VOLUME_MOUNTS=
+			# shellcheck disable=SC1090
+			. "${cell_conf}"
+
+			for spec in $(normalize_volume_mount_list "${CELL_VOLUME_MOUNTS:-}"); do
+				if ! parse_volume_mount_spec "${spec}" "volume_ref_count"; then
+					continue
+				fi
+				if [ "${MOUNT_VOLUME}" = "${volume_name}" ]; then
+					count=$((count + 1))
+					break
+				fi
+			done
+		done
+	fi
+
+	printf '%s\n' "${count}"
+}
+
+remove_manifest_volume() {
+	need_root
+	name=$1
+	assert_valid_volume_name "${name}"
+	volume_manifest_paths "${name}"
+
+	if [ ! -f "${VOLUME_CONF}" ]; then
+		echo "manifest volume not found: ${name}" >&2
+		exit 1
+	fi
+
+	refs=$(volume_ref_count "${name}")
+	if [ "${refs}" -gt 0 ]; then
+		echo "cannot remove volume ${name}: still referenced by ${refs} cell manifest(s)" >&2
+		exit 1
+	fi
+
+	rm -f "${VOLUME_CONF}"
+	echo "Removed manifest volume ${name}"
+}
+
+remove_manifest_volumes_all() {
+	need_root
+	names=
+	if ensure_volume_manifest_layout; then
+		for volume_conf in "${MANIFEST_DIR}"/*.volume; do
+			[ -f "${volume_conf}" ] || continue
+			name=${volume_conf##*/}
+			name=${name%.volume}
+			names="${names} ${name}"
+		done
+	fi
+	set -- ${names}
+	if [ $# -eq 0 ]; then
+		echo "No manifest volumes found to remove"
+		return
+	fi
+	if ! confirm_data_loss "Removing all manifest volume definitions from ${MANIFEST_DIR}"; then
+		exit 1
+	fi
+	removed=0
+	for name in "$@"; do
+		remove_manifest_volume "${name}"
+		removed=$((removed + 1))
+	done
+	echo "Removed ${removed} manifest volumes"
+}
+
+runtime_volume_mounted() {
+	volume_path=$1
+	mount | awk -v p="${volume_path} on " 'index($0,p){found=1} END{exit !found}'
+}
+
+prune_runtime_volume() {
+	need_root
+	name=$1
+	assert_valid_volume_name "${name}"
+	volume_manifest_paths "${name}"
+
+	if [ ! -d "${VOLUME_PATH}" ]; then
+		echo "runtime volume not found: ${name}" >&2
+		exit 1
+	fi
+
+	if runtime_volume_mounted "${VOLUME_PATH}"; then
+		echo "cannot remove runtime volume ${name}: currently mounted" >&2
+		exit 1
+	fi
+
+	rm -rf "${VOLUME_PATH}"
+	echo "Removed runtime volume ${name}"
+}
+
+prune_runtime_volumes() {
+	need_root
+	mode=${1:-all}
+
+	case "${mode}" in
+	all|orphans)
+		;;
+	*)
+		echo "invalid runtime volume prune mode: ${mode}" >&2
+		exit 1
+		;;
+	esac
+
+	names=
+	if [ -d "${CELL_VOLUME_DIR}" ]; then
+		for volume_path in "${CELL_VOLUME_DIR}"/*; do
+			[ -d "${volume_path}" ] || continue
+			name=${volume_path##*/}
+			case "${name}" in
+			*[!A-Za-z0-9._-]*)
+				echo "Skipping invalid runtime volume directory ${volume_path}" >&2
+				continue
+				;;
+			esac
+			if [ "${mode}" = "orphans" ]; then
+				volume_manifest_paths "${name}"
+				if [ -f "${VOLUME_CONF}" ]; then
+					continue
+				fi
+			fi
+			names="${names} ${name}"
+		done
+	fi
+
+	set -- ${names}
+	if [ $# -eq 0 ]; then
+		if [ "${mode}" = "orphans" ]; then
+			echo "No orphan runtime volumes found to prune"
+		else
+			echo "No runtime volumes found to prune"
+		fi
+		return
+	fi
+
+	if [ "${mode}" = "orphans" ]; then
+		if ! confirm_data_loss "Pruning orphan runtime volumes under ${CELL_VOLUME_DIR}"; then
+			exit 1
+		fi
+	else
+		if ! confirm_data_loss "Pruning all runtime volumes under ${CELL_VOLUME_DIR}"; then
+			exit 1
+		fi
+	fi
+
+	pruned=0
+	for name in "$@"; do
+		prune_runtime_volume "${name}"
+		pruned=$((pruned + 1))
+	done
+
+	if [ "${mode}" = "orphans" ]; then
+		echo "Pruned ${pruned} orphan runtime volumes"
+		return
+	fi
+	echo "Pruned ${pruned} runtime volumes"
+}
+
+backup_volume() {
+	need_root
+	name=$1
+	assert_valid_volume_name "${name}"
+	volume_manifest_paths "${name}"
+
+	if [ ! -d "${VOLUME_PATH}" ]; then
+		echo "runtime volume not found: ${name}" >&2
+		exit 1
+	fi
+
+	ensure_backup_layout volume write
+	backup_dir=$(backup_dir_for_kind volume)
+	timestamp=$(backup_timestamp)
+	archive_path="${backup_dir}/${name}_${timestamp}.tar.gz"
+	if [ -e "${archive_path}" ]; then
+		echo "backup archive already exists: ${archive_path}" >&2
+		exit 1
+	fi
+
+	if ! tar -czpf "${archive_path}" -C "${VOLUME_PATH}" .; then
+		rm -f "${archive_path}" >/dev/null 2>&1 || true
+		echo "failed to create backup archive: ${archive_path}" >&2
+		exit 1
+	fi
+	write_backup_manifest_snapshot "$(volume_manifest_path "${name}")" "${archive_path}" volume
+
+	echo "Created volume backup ${archive_path}"
+}
+
+list_volume_backups() {
+	name=$1
+	tsv=${2:-NO}
+	header=${3:-YES}
+	assert_valid_volume_name "${name}"
+
+	raw_tmp=$(mktemp /tmp/cellmgr-volume-backups.XXXXXX)
+	sorted_tmp=$(mktemp /tmp/cellmgr-volume-backups-sorted.XXXXXX)
+	: > "${raw_tmp}"
+
+	for backup_dir in $(backup_search_dirs_for_kind volume); do
+		[ -d "${backup_dir}" ] || continue
+		for candidate in "${backup_dir}/${name}_"*.tar.gz; do
+			[ -f "${candidate}" ] || continue
+			base=${candidate##*/}
+			case "${base}" in
+			"${name}_"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz)
+				timestamp=${base#"${name}_"}
+				timestamp=${timestamp%.tar.gz}
+				size=$(wc -c < "${candidate}" | tr -d '[:space:]')
+				printf '%s\t%s\t%s\t%s\n' "${name}" "${timestamp}" "${size}" "${candidate}" >> "${raw_tmp}"
+				;;
+			esac
+		done
+	done
+
+	LC_ALL=C sort -r -k2,2 "${raw_tmp}" > "${sorted_tmp}"
+
+	if [ "${tsv}" = "YES" ]; then
+		if [ "${header}" = "YES" ]; then
+			printf 'volume\ttimestamp\tsize\tarchive\n'
+		fi
+		cat "${sorted_tmp}"
+	else
+		printf '%-24s %-14s %-12s %s\n' 'VOLUME' 'TIMESTAMP' 'SIZE' 'ARCHIVE'
+		awk -F '\t' '{ printf "%-24s %-14s %-12s %s\n", $1, $2, $3, $4 }' "${sorted_tmp}"
+	fi
+
+	rm -f "${raw_tmp}" "${sorted_tmp}"
+}
+
+restore_volume() {
+	need_root
+	name=$1
+	archive_arg=${2:-}
+	latest_flag=${3:-NO}
+	restore_manifest=${4:-NO}
+
+	assert_valid_volume_name "${name}"
+	if [ "${latest_flag}" = "YES" ] && [ -n "${archive_arg}" ]; then
+		echo "volume restore: --latest cannot be combined with explicit archive path" >&2
+		exit 1
+	fi
+
+	archive_path=$(resolve_volume_backup_archive "${name}" "${archive_arg}" "${latest_flag}") || exit 1
+	volume_manifest_paths "${name}"
+
+	if [ -d "${VOLUME_PATH}" ] && runtime_volume_mounted "${VOLUME_PATH}"; then
+		echo "cannot restore runtime volume ${name}: currently mounted" >&2
+		exit 1
+	fi
+
+	if [ ! -d "${VOLUME_PATH}" ]; then
+		if volume_manifest_exists "${name}"; then
+			ensure_volume_runtime_from_manifest "${name}"
+		else
+			mkdir -p "${CELL_VOLUME_DIR}" "${VOLUME_PATH}"
+		fi
+	fi
+
+	if [ "${VOLUME_PATH}" = "${CELL_VOLUME_DIR}" ] ||
+	    ! path_is_same_or_child "${VOLUME_PATH}" "${CELL_VOLUME_DIR}"; then
+		echo "refusing to restore into unsafe volume path: ${VOLUME_PATH}" >&2
+		exit 1
+	fi
+
+	if ! confirm_data_loss "Restoring volume ${name} from ${archive_path} into ${VOLUME_PATH}"; then
+		exit 1
+	fi
+
+	restore_tmp=$(mktemp -d /tmp/cellmgr-volume-restore.XXXXXX)
+	if ! tar -xzpf "${archive_path}" -C "${restore_tmp}"; then
+		rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
+		echo "failed to extract backup archive: ${archive_path}" >&2
+		exit 1
+	fi
+
+	if ! clear_directory_contents "${VOLUME_PATH}"; then
+		rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
+		exit 1
+	fi
+	if ! cp -Rp "${restore_tmp}/." "${VOLUME_PATH}"; then
+		rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
+		echo "failed to restore backup contents into ${VOLUME_PATH}" >&2
+		exit 1
+	fi
+	rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
+
+	if [ "${restore_manifest}" = "YES" ]; then
+		if ! restore_backup_manifest_snapshot "${archive_path}" "$(volume_manifest_path "${name}")" volume YES; then
+			exit 1
+		fi
+	fi
+
+	echo "Restored volume ${name} from ${archive_path}"
+}
+
+delete_volume_backup() {
+	need_root
+	name=$1
+	archive_arg=${2:-}
+	latest_flag=${3:-NO}
+
+	assert_valid_volume_name "${name}"
+	if [ "${latest_flag}" = "YES" ] && [ -n "${archive_arg}" ]; then
+		echo "volume backup delete: --latest cannot be combined with explicit archive path" >&2
+		exit 1
+	fi
+
+	archive_path=$(resolve_volume_backup_archive "${name}" "${archive_arg}" "${latest_flag}") || exit 1
+	archive_base=${archive_path##*/}
+	case "${archive_base}" in
+	"${name}_"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz)
+		;;
+	*)
+		echo "refusing to delete archive that does not match volume backup naming: ${archive_path}" >&2
+		exit 1
+		;;
+	esac
+
+	archive_allowed=NO
+	for backup_dir in $(backup_search_dirs_for_kind volume); do
+		if [ "${archive_path}" != "${backup_dir}" ] &&
+		    path_is_same_or_child "${archive_path}" "${backup_dir}"; then
+			archive_allowed=YES
+			break
+		fi
+	done
+	if [ "${archive_allowed}" != "YES" ]; then
+		echo "refusing to delete backup outside allowed volume backup dirs: ${archive_path}" >&2
+		exit 1
+	fi
+
+	if ! confirm_data_loss "Deleting volume backup ${archive_path}"; then
+		exit 1
+	fi
+
+	if ! rm -f -- "${archive_path}"; then
+		echo "failed to delete backup archive: ${archive_path}" >&2
+		exit 1
+	fi
+	rm -f -- "$(backup_manifest_snapshot_path "${archive_path}" volume)" >/dev/null 2>&1 || true
+	rm -f -- "$(backup_legacy_manifest_snapshot_path "${archive_path}")" >/dev/null 2>&1 || true
+
+	echo "Deleted volume backup ${archive_path}"
+}
+
+runtime_overlay_mounted() {
+	overlay_name=$1
+	cell_paths "${overlay_name}"
+	if [ ! -d "${ROOT_DIR}" ]; then
+		return 1
+	fi
+	mount | awk -v p="on ${ROOT_DIR}/.overlay " 'index($0,p){found=1} END{exit !found}'
+}
+
+cell_running_or_overlay_mounted() {
+	overlay_name=$1
+	if command -v cellctl >/dev/null 2>&1; then
+		if cell_exists "${overlay_name}"; then
+			return 0
+		fi
+	fi
+	runtime_overlay_mounted "${overlay_name}"
+}
+
+backup_overlay() {
+	need_root
+	name=$1
+	assert_valid_cell_name "${name}"
+	cell_paths "${name}"
+
+	if [ ! -d "${DATA_DIR}" ]; then
+		echo "runtime overlay not found: ${name}" >&2
+		exit 1
+	fi
+
+	if cell_running_or_overlay_mounted "${name}"; then
+		echo "cannot backup overlay ${name}: cell is running or overlay is mounted" >&2
+		exit 1
+	fi
+
+	ensure_backup_layout overlay write
+	backup_dir=$(backup_dir_for_kind overlay)
+	timestamp=$(backup_timestamp)
+	archive_path="${backup_dir}/${name}_${timestamp}.tar.gz"
+	if [ -e "${archive_path}" ]; then
+		echo "backup archive already exists: ${archive_path}" >&2
+		exit 1
+	fi
+
+	if ! tar -czpf "${archive_path}" -C "${DATA_DIR}" .; then
+		rm -f "${archive_path}" >/dev/null 2>&1 || true
+		echo "failed to create backup archive: ${archive_path}" >&2
+		exit 1
+	fi
+	write_backup_manifest_snapshot "$(overlay_manifest_path "${name}")" "${archive_path}" cell
+	write_backup_manifest_snapshot "$(overlay_apply_path "${name}")" "${archive_path}" apply
+
+	echo "Created overlay backup ${archive_path}"
+}
+
+list_overlay_backups() {
+	name=$1
+	tsv=${2:-NO}
+	header=${3:-YES}
+	assert_valid_cell_name "${name}"
+
+	raw_tmp=$(mktemp /tmp/cellmgr-overlay-backups.XXXXXX)
+	sorted_tmp=$(mktemp /tmp/cellmgr-overlay-backups-sorted.XXXXXX)
+	: > "${raw_tmp}"
+
+	for backup_dir in $(backup_search_dirs_for_kind overlay); do
+		[ -d "${backup_dir}" ] || continue
+		for candidate in "${backup_dir}/${name}_"*.tar.gz; do
+			[ -f "${candidate}" ] || continue
+			base=${candidate##*/}
+			case "${base}" in
+			"${name}_"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz)
+				timestamp=${base#"${name}_"}
+				timestamp=${timestamp%.tar.gz}
+				size=$(wc -c < "${candidate}" | tr -d '[:space:]')
+				printf '%s\t%s\t%s\t%s\n' "${name}" "${timestamp}" "${size}" "${candidate}" >> "${raw_tmp}"
+				;;
+			esac
+		done
+	done
+
+	LC_ALL=C sort -r -k2,2 "${raw_tmp}" > "${sorted_tmp}"
+
+	if [ "${tsv}" = "YES" ]; then
+		if [ "${header}" = "YES" ]; then
+			printf 'cell\ttimestamp\tsize\tarchive\n'
+		fi
+		cat "${sorted_tmp}"
+	else
+		printf '%-24s %-14s %-12s %s\n' 'CELL' 'TIMESTAMP' 'SIZE' 'ARCHIVE'
+		awk -F '\t' '{ printf "%-24s %-14s %-12s %s\n", $1, $2, $3, $4 }' "${sorted_tmp}"
+	fi
+
+	rm -f "${raw_tmp}" "${sorted_tmp}"
+}
+
+restore_overlay() {
+	need_root
+	name=$1
+	archive_arg=${2:-}
+	latest_flag=${3:-NO}
+	restore_manifest=${4:-NO}
+
+	assert_valid_cell_name "${name}"
+	if [ "${latest_flag}" = "YES" ] && [ -n "${archive_arg}" ]; then
+		echo "cell backup restore: --latest cannot be combined with explicit archive path" >&2
+		exit 1
+	fi
+
+	archive_path=$(resolve_backup_archive overlay "${name}" "${archive_arg}" "${latest_flag}") || exit 1
+	cell_paths "${name}"
+
+	if cell_running_or_overlay_mounted "${name}"; then
+		echo "cannot restore overlay ${name}: cell is running or overlay is mounted" >&2
+		exit 1
+	fi
+
+	if [ ! -d "${DATA_DIR}" ]; then
+		mkdir -p "${CELL_DIR}" "${DATA_DIR}"
+	fi
+
+	if [ "${DATA_DIR}" = "${CELL_DATA_DIR}" ] ||
+	    ! path_is_same_or_child "${DATA_DIR}" "${CELL_DATA_DIR}"; then
+		echo "refusing to restore into unsafe overlay path: ${DATA_DIR}" >&2
+		exit 1
+	fi
+
+	if ! confirm_data_loss "Restoring overlay ${name} from ${archive_path} into ${DATA_DIR}"; then
+		exit 1
+	fi
+
+	restore_tmp=$(mktemp -d /tmp/cellmgr-overlay-restore.XXXXXX)
+	if ! tar -xzpf "${archive_path}" -C "${restore_tmp}"; then
+		rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
+		echo "failed to extract backup archive: ${archive_path}" >&2
+		exit 1
+	fi
+
+	if ! clear_directory_contents "${DATA_DIR}"; then
+		rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
+		exit 1
+	fi
+	if ! cp -Rp "${restore_tmp}/." "${DATA_DIR}"; then
+		rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
+		echo "failed to restore backup contents into ${DATA_DIR}" >&2
+		exit 1
+	fi
+	rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
+
+	if [ "${restore_manifest}" = "YES" ]; then
+		if ! restore_backup_manifest_snapshot "${archive_path}" "$(overlay_manifest_path "${name}")" cell YES; then
+			exit 1
+		fi
+		if ! restore_backup_manifest_snapshot_optional "${archive_path}" "$(overlay_apply_path "${name}")" apply; then
+			exit 1
+		fi
+	fi
+
+	echo "Restored overlay ${name} from ${archive_path}"
+}
+
+delete_overlay_backup() {
+	need_root
+	name=$1
+	archive_arg=${2:-}
+	latest_flag=${3:-NO}
+
+	assert_valid_cell_name "${name}"
+	if [ "${latest_flag}" = "YES" ] && [ -n "${archive_arg}" ]; then
+		echo "cell backup delete: --latest cannot be combined with explicit archive path" >&2
+		exit 1
+	fi
+
+	archive_path=$(resolve_backup_archive overlay "${name}" "${archive_arg}" "${latest_flag}") || exit 1
+	archive_base=${archive_path##*/}
+	case "${archive_base}" in
+	"${name}_"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz)
+		;;
+	*)
+		echo "refusing to delete archive that does not match overlay backup naming: ${archive_path}" >&2
+		exit 1
+		;;
+	esac
+
+	backup_dir=$(backup_dir_for_kind overlay)
+	if [ "${archive_path}" = "${backup_dir}" ] ||
+	    ! path_is_same_or_child "${archive_path}" "${backup_dir}"; then
+		echo "refusing to delete backup outside ${backup_dir}: ${archive_path}" >&2
+		exit 1
+	fi
+
+	if ! confirm_data_loss "Deleting overlay backup ${archive_path}"; then
+		exit 1
+	fi
+
+	if ! rm -f -- "${archive_path}"; then
+		echo "failed to delete backup archive: ${archive_path}" >&2
+		exit 1
+	fi
+	rm -f -- "$(backup_manifest_snapshot_path "${archive_path}" cell)" >/dev/null 2>&1 || true
+	rm -f -- "$(backup_manifest_snapshot_path "${archive_path}" apply)" >/dev/null 2>&1 || true
+	rm -f -- "$(backup_legacy_manifest_snapshot_path "${archive_path}")" >/dev/null 2>&1 || true
+
+	echo "Deleted overlay backup ${archive_path}"
+}
+
+list_volumes() {
+	printf '%-24s %-10s %-10s %-6s\n' 'NAME' 'MANIFEST' 'RUNTIME' 'REFS'
+	names=
+
+	if ensure_volume_manifest_layout; then
+		for volume_conf in "${MANIFEST_DIR}"/*.volume; do
+			[ -f "${volume_conf}" ] || continue
+			name=${volume_conf##*/}
+			name=${name%.volume}
+			names="${names} ${name}"
+		done
+	fi
+
+	if [ -d "${CELL_VOLUME_DIR}" ]; then
+		for volume_path in "${CELL_VOLUME_DIR}"/*; do
+			[ -d "${volume_path}" ] || continue
+			name=${volume_path##*/}
+			if ! word_list_contains "${name}" "${names}"; then
+				names="${names} ${name}"
+			fi
+		done
+	fi
+
+	for name in ${names}; do
+		volume_manifest_paths "${name}"
+		if [ -f "${VOLUME_CONF}" ]; then
+			manifest=YES
+		else
+			manifest=NO
+		fi
+		if [ -d "${VOLUME_PATH}" ]; then
+			runtime=YES
+		else
+			runtime=NO
+		fi
+		refs=$(volume_ref_count "${name}")
+		printf '%-24s %-10s %-10s %-6s\n' "${name}" "${manifest}" "${runtime}" "${refs}"
+	done
+}
+
+load_manifest_cell_conf() {
+	manifest_cell_name=$1
+	manifest_cell_paths "${manifest_cell_name}"
+	if [ ! -r "${MANIFEST_CELL_CONF}" ]; then
+		echo "missing manifest ${MANIFEST_CELL_CONF}" >&2
+		exit 1
+	fi
+
+	CELL_NAME=
+	CELL_SUPERVISE_CMD=
+	CELL_CREATE_PROFILE=
+	CELL_CREATE_RESERVED_PORTS=
+	CELL_CREATE_RLIMIT_NOFILE=
+	CELL_CREATE_RLIMIT_AS=
+	CELL_CREATE_RLIMIT_CORE=
+	CELL_SUPERVISE_FACILITY=
+	CELL_SUPERVISE_STDOUT_LEVEL=
+	CELL_SUPERVISE_STDERR_LEVEL=
+	CELL_SUPERVISE_TAG=
+	CELL_AUTOSTART=NO
+	CELL_DEPENDS_ON=
+	CELL_HEALTHCHECK_CMD=
+	CELL_VOLUME_MOUNTS=
+	# shellcheck disable=SC1090
+	. "${MANIFEST_CELL_CONF}"
+
+	if [ -z "${CELL_NAME:-}" ]; then
+		CELL_NAME=${manifest_cell_name}
+	fi
+	if [ "${CELL_NAME}" != "${manifest_cell_name}" ]; then
+		echo "manifest mismatch: expected CELL_NAME=${manifest_cell_name}, got ${CELL_NAME}" >&2
+		exit 1
+	fi
+	manifest_name=${CELL_NAME}
+
+	CELL_AUTOSTART=$(normalize_yesno "${CELL_AUTOSTART:-NO}")
+
+	if [ -z "${CELL_SUPERVISE_CMD:-}" ]; then
+		echo "manifest ${MANIFEST_CELL_CONF}: CELL_SUPERVISE_CMD is required" >&2
+		exit 1
+	fi
+	for dep in $(normalize_dep_list "${CELL_DEPENDS_ON:-}"); do
+		assert_valid_cell_name "${dep}"
+		if [ "${dep}" = "${manifest_name}" ]; then
+			echo "manifest ${MANIFEST_CELL_CONF}: self dependency is not allowed" >&2
+			exit 1
+		fi
+	done
+	if ! validate_cell_volume_mounts "${CELL_VOLUME_MOUNTS:-}" "manifest ${MANIFEST_CELL_CONF}" YES; then
+		exit 1
+	fi
+	CELL_VOLUME_MOUNTS=${CELL_VOLUME_MOUNTS_NORMALIZED}
+}
+
+create_manifest_cell() {
+	need_root
+	name=$1
+	autostart=$2
+	supervise_cmd=$3
+	create_profile=$4
+	create_reserved_ports=$5
+	create_rlimit_nofile=$6
+	create_rlimit_as=$7
+	create_rlimit_core=$8
+	supervise_facility=$9
+	supervise_stdout_level=${10:-}
+	supervise_stderr_level=${11:-}
+	supervise_tag=${12:-}
+	depends_on=${13:-}
+	healthcheck_cmd=${14:-}
+	volume_mounts=${15:-}
+
+	assert_valid_cell_name "${name}"
+	if [ -z "${supervise_cmd}" ]; then
+		supervise_cmd=/bin/true
+	fi
+
+	for dep in $(normalize_dep_list "${depends_on}"); do
+		assert_valid_cell_name "${dep}"
+		if [ "${dep}" = "${name}" ]; then
+			echo "cell ${name} cannot depend on itself" >&2
+			exit 1
+		fi
+	done
+	if ! validate_cell_volume_mounts "${volume_mounts}" "create ${name}" NO; then
+		exit 1
+	fi
+	volume_mounts=${CELL_VOLUME_MOUNTS_NORMALIZED}
+
+	ensure_manifest_layout write
+	manifest_cell_paths "${name}"
+	if [ -e "${MANIFEST_CELL_CONF}" ]; then
+		echo "manifest already exists: ${MANIFEST_CELL_CONF}" >&2
+		exit 1
+	fi
+	write_manifest_cell_conf_file "${name}" "${autostart}" "${supervise_cmd}" \
+	    "${create_profile}" "${create_reserved_ports}" \
+	    "${create_rlimit_nofile}" "${create_rlimit_as}" "${create_rlimit_core}" \
+	    "${supervise_facility}" "${supervise_stdout_level}" \
+	    "${supervise_stderr_level}" "${supervise_tag}" \
+	    "${depends_on}" "${healthcheck_cmd}" "${volume_mounts}"
+
+	if [ -f "${MANIFEST_APPLY_FILE}" ]; then
+		echo "apply plan already exists: ${MANIFEST_APPLY_FILE}" >&2
+		exit 1
+	fi
+
+	cat > "${MANIFEST_APPLY_FILE}" <<'CONF'
+# declarative apply plan for cellmgr apply
+#
+# supported directives:
+#   PKG <package>
+#   DIR <path> [mode=0755] [owner=user] [group=group]
+#   LINE <path> | <text>
+#   SYMLINK <target> <linkpath>
+#   EXEC <command>
+#   FILE_BEGIN <path> [mode=0644] [owner=user] [group=group]
+#   ... block lines ...
+#   FILE_END
+#   PATCH_BEGIN <path> [strip=0]
+#   ... unified diff snippet ...
+#   PATCH_END
+
+# PKG postgresql16-server
+# DIR /var/postgresql/data mode=0700 owner=pgsql group=pgsql
+# EXEC if [ ! -s /var/postgresql/data/PG_VERSION ]; then su -m pgsql -c '/usr/pkg/bin/initdb -D /var/postgresql/data'; fi
+CONF
+	echo "Created manifest ${MANIFEST_CELL_CONF}"
+}
+
+write_manifest_cell_conf_file() {
+	name=$1
+	autostart=$2
+	supervise_cmd=$3
+	create_profile=$4
+	create_reserved_ports=$5
+	create_rlimit_nofile=$6
+	create_rlimit_as=$7
+	create_rlimit_core=$8
+	supervise_facility=$9
+	supervise_stdout_level=${10:-}
+	supervise_stderr_level=${11:-}
+	supervise_tag=${12:-}
+	depends_on=${13:-}
+	healthcheck_cmd=${14:-}
+	volume_mounts=${15:-}
+
+	escaped_create_profile=$(escape_dq "${create_profile}")
+	escaped_create_reserved_ports=$(escape_dq "${create_reserved_ports}")
+	escaped_create_rlimit_nofile=$(escape_dq "${create_rlimit_nofile}")
+	escaped_create_rlimit_as=$(escape_dq "${create_rlimit_as}")
+	escaped_create_rlimit_core=$(escape_dq "${create_rlimit_core}")
+	escaped_supervise_cmd=$(escape_dq "${supervise_cmd}")
+	escaped_supervise_facility=$(escape_dq "${supervise_facility}")
+	escaped_supervise_stdout_level=$(escape_dq "${supervise_stdout_level}")
+	escaped_supervise_stderr_level=$(escape_dq "${supervise_stderr_level}")
+	escaped_supervise_tag=$(escape_dq "${supervise_tag}")
+	escaped_depends_on=$(escape_dq "${depends_on}")
+	escaped_healthcheck_cmd=$(escape_dq "${healthcheck_cmd}")
+	escaped_volume_mounts=$(escape_dq "${volume_mounts}")
+
+	cat > "${MANIFEST_CELL_CONF}" <<CONF
+# declarative manifest for cellmgr apply
+CELL_NAME=${name}
+CELL_AUTOSTART=${autostart}
+CELL_CREATE_PROFILE="${escaped_create_profile}"
+CELL_CREATE_RESERVED_PORTS="${escaped_create_reserved_ports}"
+CELL_CREATE_RLIMIT_NOFILE="${escaped_create_rlimit_nofile}"
+CELL_CREATE_RLIMIT_AS="${escaped_create_rlimit_as}"
+CELL_CREATE_RLIMIT_CORE="${escaped_create_rlimit_core}"
+CELL_SUPERVISE_FACILITY="${escaped_supervise_facility}"
+CELL_SUPERVISE_STDOUT_LEVEL="${escaped_supervise_stdout_level}"
+CELL_SUPERVISE_STDERR_LEVEL="${escaped_supervise_stderr_level}"
+CELL_SUPERVISE_TAG="${escaped_supervise_tag}"
+CELL_SUPERVISE_CMD="${escaped_supervise_cmd}"
+CELL_DEPENDS_ON="${escaped_depends_on}"
+CELL_HEALTHCHECK_CMD="${escaped_healthcheck_cmd}"
+CELL_VOLUME_MOUNTS="${escaped_volume_mounts}"
+CONF
+}
+
+set_manifest_cell() {
+	need_root
+	name=$1
+	autostart=$2
+	supervise_cmd=$3
+	create_profile=$4
+	create_reserved_ports=$5
+	create_rlimit_nofile=$6
+	create_rlimit_as=$7
+	create_rlimit_core=$8
+	supervise_facility=$9
+	supervise_stdout_level=${10:-}
+	supervise_stderr_level=${11:-}
+	supervise_tag=${12:-}
+	depends_on=${13:-}
+	healthcheck_cmd=${14:-}
+	volume_mounts=${15:-}
+
+	assert_valid_cell_name "${name}"
+	manifest_cell_paths "${name}"
+	if [ ! -r "${MANIFEST_CELL_CONF}" ]; then
+		echo "manifest cell not found: ${name}" >&2
+		exit 1
+	fi
+	if [ -z "${supervise_cmd}" ]; then
+		echo "cell set: --cmd cannot be empty" >&2
+		exit 1
+	fi
+	for dep in $(normalize_dep_list "${depends_on}"); do
+		assert_valid_cell_name "${dep}"
+		if [ "${dep}" = "${name}" ]; then
+			echo "cell ${name} cannot depend on itself" >&2
+			exit 1
+		fi
+	done
+	if ! validate_cell_volume_mounts "${volume_mounts}" "set ${name}" NO; then
+		exit 1
+	fi
+	volume_mounts=${CELL_VOLUME_MOUNTS_NORMALIZED}
+
+	write_manifest_cell_conf_file "${name}" "${autostart}" "${supervise_cmd}" \
+	    "${create_profile}" "${create_reserved_ports}" \
+	    "${create_rlimit_nofile}" "${create_rlimit_as}" "${create_rlimit_core}" \
+	    "${supervise_facility}" "${supervise_stdout_level}" \
+	    "${supervise_stderr_level}" "${supervise_tag}" \
+	    "${depends_on}" "${healthcheck_cmd}" "${volume_mounts}"
+	echo "Updated manifest ${MANIFEST_CELL_CONF}"
+}
+
+remove_manifest_cell() {
+	need_root
+	name=$1
+	assert_valid_cell_name "${name}"
+
+	manifest_cell_paths "${name}"
+	if [ ! -f "${MANIFEST_CELL_CONF}" ] && [ ! -f "${MANIFEST_APPLY_FILE}" ]; then
+		echo "manifest cell not found: ${name}" >&2
+		exit 1
+	fi
+
+	rm -f "${MANIFEST_CELL_CONF}" "${MANIFEST_APPLY_FILE}"
+	echo "Removed manifest cell ${name}"
+}
+
+remove_manifest_all() {
+	need_root
+
+	names=
+	for cell_conf in "${MANIFEST_DIR}"/*.cell; do
+		[ -f "${cell_conf}" ] || continue
+		name=${cell_conf##*/}
+		name=${name%.cell}
+		names="${names} ${name}"
+	done
+
+	for apply_file in "${MANIFEST_DIR}"/*.apply; do
+		[ -f "${apply_file}" ] || continue
+		name=${apply_file##*/}
+		name=${name%.apply}
+		if ! word_list_contains "${name}" "${names}"; then
+			names="${names} ${name}"
+		fi
+	done
+
+	set -- ${names}
+	if [ $# -eq 0 ]; then
+		echo "No manifests found to remove"
+		return
+	fi
+	if ! confirm_data_loss "Removing all manifest cell definitions from ${MANIFEST_DIR}"; then
+		exit 1
+	fi
+
+	removed=0
+	for name in "$@"; do
+		remove_manifest_cell "${name}"
+		removed=$((removed + 1))
+	done
+	echo "Removed ${removed} cell manifests"
+}
+
+prune_runtime_cell() {
+	need_root
+	name=$1
+	assert_valid_cell_name "${name}"
+	cell_paths "${name}"
+
+	if [ ! -d "${CELL_DIR}" ]; then
+		echo "runtime cell not found: ${name}" >&2
+		exit 1
+	fi
+
+	if command -v cellctl >/dev/null 2>&1; then
+		if cell_exists "${name}"; then
+			cid=$(cell_cid_by_name "${name}" || true)
+			if [ -n "${cid}" ]; then
+				stop_cell_processes "${name}" "${cid}"
+				cellctl destroy "${cid}"
+			fi
+		fi
+	fi
+
+	if [ -r "${CELL_CONF}" ]; then
+		load_cell_conf "${name}"
+	else
+		CELL_VOLUME_MOUNTS=
+	fi
+
+	if [ -d "${ROOT_DIR}" ]; then
+		umount_cell_root || true
+	fi
+
+	rm -rf "${CELL_DIR}"
+	echo "Pruned runtime cell ${name}"
+}
+
+prune_runtime_all() {
+	need_root
+	mode=${1:-all}
+
+	case "${mode}" in
+	all|orphans)
+		;;
+	*)
+		echo "invalid prune mode: ${mode}" >&2
+		exit 1
+		;;
+	esac
+
+	names=
+	if [ -d "${CELL_DATA_DIR}" ]; then
+		for cell_dir in "${CELL_DATA_DIR}"/*; do
+			[ -d "${cell_dir}" ] || continue
+			name=${cell_dir##*/}
+			case "${name}" in
+			*[!A-Za-z0-9._-]*)
+				echo "Skipping invalid runtime cell directory ${cell_dir}" >&2
+				continue
+				;;
+			esac
+			if [ "${mode}" = "orphans" ]; then
+				manifest_cell_paths "${name}"
+				if [ -f "${MANIFEST_CELL_CONF}" ]; then
+					continue
+				fi
+			fi
+			names="${names} ${name}"
+		done
+	fi
+
+	set -- ${names}
+	if [ $# -eq 0 ]; then
+		if [ "${mode}" = "orphans" ]; then
+			echo "No orphan runtime cells found to prune"
+		else
+			echo "No runtime cells found to prune"
+		fi
+		return
+	fi
+	if [ "${mode}" = "orphans" ]; then
+		if ! confirm_data_loss "Pruning orphan runtime cells under ${CELL_DATA_DIR}"; then
+			exit 1
+		fi
+	else
+		if ! confirm_data_loss "Pruning all runtime cells under ${CELL_DATA_DIR}"; then
+			exit 1
+		fi
+	fi
+
+	pruned=0
+	for name in "$@"; do
+		prune_runtime_cell "${name}"
+		pruned=$((pruned + 1))
+	done
+
+	if [ "${mode}" = "orphans" ]; then
+		echo "Pruned ${pruned} orphan runtime cells"
+		return
+	fi
+	echo "Pruned ${pruned} runtime cells"
+}
+
+file_hash() {
+	path=$1
+	if command -v sha256 >/dev/null 2>&1; then
+		sha256 -q "${path}"
+		return
+	fi
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "${path}" | awk '{print $1}'
+		return
+	fi
+	cksum "${path}" | awk '{print $1 "-" $2}'
+}
+
+state_read() {
+	state_file=$1
+	if [ -r "${state_file}" ]; then
+		cat "${state_file}"
+	fi
+	return 0
+}
+
+state_write() {
+	state_file=$1
+	value=$2
+	mkdir -p "$(dirname "${state_file}")"
+	printf '%s\n' "${value}" > "${state_file}"
 }
 
 cell_monitor_pid() {
@@ -238,6 +1954,8 @@ stop_cell_processes() {
 }
 
 fetch_sets() {
+	include_xbase=${1:-NO}
+
 	need_root
 	require_tools
 	mkdir -p "${SET_DIR}"
@@ -247,9 +1965,15 @@ fetch_sets() {
 	if command -v ftp >/dev/null 2>&1; then
 		ftp -V -o "${BASE_SET}" "${fetch_url}/base.tar.xz"
 		ftp -V -o "${ETC_SET}" "${fetch_url}/etc.tar.xz"
+		if [ "${include_xbase}" = "YES" ]; then
+			ftp -V -o "${XBASE_SET}" "${fetch_url}/xbase.tar.xz"
+		fi
 	elif command -v curl >/dev/null 2>&1; then
 		curl -fL -o "${BASE_SET}" "${fetch_url}/base.tar.xz"
 		curl -fL -o "${ETC_SET}" "${fetch_url}/etc.tar.xz"
+		if [ "${include_xbase}" = "YES" ]; then
+			curl -fL -o "${XBASE_SET}" "${fetch_url}/xbase.tar.xz"
+		fi
 	else
 		echo "need ftp(1) or curl to fetch sets" >&2
 		exit 1
@@ -283,38 +2007,50 @@ ensure_secmodel_cell() {
 }
 
 ensure_base_writable_links() {
-	# Writable cell paths live below /.data (mounted per-cell).  Keep these
-	# links in the shared read-only base so every cell sees the same layout.
+# Writable cell paths live below /.overlay (mounted per-cell). Keep these
+# links in the shared read-only base so every cell sees the same layout.
 	if [ ! -d "${BASE_LAYER}" ]; then
 		echo "missing ${BASE_LAYER}; run bootstrap first" >&2
 		exit 1
 	fi
 
-	mkdir -p "${BASE_LAYER}/.data" "${BASE_LAYER}/usr"
+	mkdir -p "${BASE_LAYER}/.overlay" "${BASE_LAYER}/usr"
+	rm -rf "${BASE_LAYER}/.data"
 	rm -rf "${BASE_LAYER}/etc" "${BASE_LAYER}/var" "${BASE_LAYER}/tmp" \
 		"${BASE_LAYER}/home" "${BASE_LAYER}/root" "${BASE_LAYER}/usr/pkg" \
 		"${BASE_LAYER}/.cshrc" "${BASE_LAYER}/.profile"
-	ln -s ".data/etc" "${BASE_LAYER}/etc"
-	ln -s ".data/var" "${BASE_LAYER}/var"
-	ln -s ".data/tmp" "${BASE_LAYER}/tmp"
-	ln -s ".data/home" "${BASE_LAYER}/home"
-	ln -s ".data/root" "${BASE_LAYER}/root"
-	ln -s ".data/.cshrc" "${BASE_LAYER}/.cshrc"
-	ln -s ".data/.profile" "${BASE_LAYER}/.profile"
-	ln -s "../.data/usr/pkg" "${BASE_LAYER}/usr/pkg"
+	ln -s ".overlay/etc" "${BASE_LAYER}/etc"
+	ln -s ".overlay/var" "${BASE_LAYER}/var"
+	ln -s ".overlay/tmp" "${BASE_LAYER}/tmp"
+	ln -s ".overlay/home" "${BASE_LAYER}/home"
+	ln -s ".overlay/root" "${BASE_LAYER}/root"
+	ln -s ".overlay/.cshrc" "${BASE_LAYER}/.cshrc"
+	ln -s ".overlay/.profile" "${BASE_LAYER}/.profile"
+	ln -s "../.overlay/usr/pkg" "${BASE_LAYER}/usr/pkg"
 }
 
 
 build_base() {
+	include_xbase=${1:-NO}
+
 	need_root
 	require_tools
 	[ -f "${BASE_SET}" ] || {
 		echo "missing ${BASE_SET}; run bootstrap first" >&2
 		exit 1
 	}
+	if [ "${include_xbase}" = "YES" ]; then
+		[ -f "${XBASE_SET}" ] || {
+			echo "missing ${XBASE_SET}; run bootstrap -x first" >&2
+			exit 1
+		}
+	fi
 
 	mkdir -p "${BASE_LAYER}"
 	tar -xzp -f "${BASE_SET}" -C "${BASE_LAYER}"
+	if [ "${include_xbase}" = "YES" ]; then
+		tar -xzp -f "${XBASE_SET}" -C "${BASE_LAYER}"
+	fi
 	ensure_base_writable_links
 	echo "Prepared base layer at ${BASE_LAYER}"
 }
@@ -324,13 +2060,17 @@ cell_paths() {
 	name=$1
 	CELL_DIR="${CELL_DATA_DIR}/${name}"
 	ROOT_DIR="${CELL_DIR}/root"
-	DATA_DIR="${CELL_DIR}/data"
+	DATA_DIR="${CELL_DIR}/.overlay"
+	if [ -d "${CELL_DIR}/overlay" ] && [ ! -e "${DATA_DIR}" ]; then
+		DATA_DIR="${CELL_DIR}/overlay"
+	fi
 	DATA_ETC_DIR="${DATA_DIR}/etc"
 	DATA_VAR_DIR="${DATA_DIR}/var"
 	DATA_TMP_DIR="${DATA_DIR}/tmp"
 	DATA_HOME_DIR="${DATA_DIR}/home"
 	DATA_ROOT_DIR="${DATA_DIR}/root"
 	DATA_PKG_DIR="${DATA_DIR}/usr/pkg"
+	STATE_DIR="${CELL_DIR}/state"
 	CELL_CONF="${CELL_DIR}/cell.conf"
 }
 
@@ -338,7 +2078,7 @@ load_cell_conf() {
 	name=$1
 	cell_paths "${name}"
 	if [ ! -r "${CELL_CONF}" ]; then
-		echo "missing ${CELL_CONF}; run create ${name} first" >&2
+		echo "missing ${CELL_CONF}; run apply first" >&2
 		exit 1
 	fi
 
@@ -346,11 +2086,17 @@ load_cell_conf() {
 	CELL_SUPERVISE_CMD=
 	CELL_CREATE_PROFILE=
 	CELL_CREATE_RESERVED_PORTS=
+	CELL_CREATE_RLIMIT_NOFILE=
+	CELL_CREATE_RLIMIT_AS=
+	CELL_CREATE_RLIMIT_CORE=
 	CELL_SUPERVISE_FACILITY=
 	CELL_SUPERVISE_STDOUT_LEVEL=
 	CELL_SUPERVISE_STDERR_LEVEL=
 	CELL_SUPERVISE_TAG=
 	CELL_AUTOSTART=NO
+	CELL_DEPENDS_ON=
+	CELL_HEALTHCHECK_CMD=
+	CELL_VOLUME_MOUNTS=
 	# shellcheck disable=SC1090
 	. "${CELL_CONF}"
 
@@ -361,12 +2107,10 @@ load_cell_conf() {
 		echo "cell.conf mismatch: expected CELL_NAME=${name}, got ${CELL_NAME}" >&2
 		exit 1
 	fi
-}
-
-cell_autostart_enabled() {
-	name=$1
-	load_cell_conf "${name}"
-	[ "${CELL_AUTOSTART:-NO}" = "YES" ]
+	if ! validate_cell_volume_mounts "${CELL_VOLUME_MOUNTS:-}" "cell.conf ${CELL_CONF}" NO; then
+		exit 1
+	fi
+	CELL_VOLUME_MOUNTS=${CELL_VOLUME_MOUNTS_NORMALIZED}
 }
 
 # Build per-cell /dev view backed by tmpfs (+ optional ptyfs).  This keeps
@@ -422,15 +2166,100 @@ setup_etc() {
 			./.cshrc ./.profile ./etc ./root ./var
 	fi
 
-
-	# Keep cell DNS resolver config aligned with the host at create time.
-	# This provides working name resolution out-of-the-box for typical setups.
+	# Keep cell DNS and timezone defaults aligned with the host at create time.
+	# This provides working name resolution and expected local time.
 	if [ -f /etc/resolv.conf ]; then
 		cp /etc/resolv.conf "${DATA_ETC_DIR}/resolv.conf"
+	fi
+	if [ -e /etc/localtime ] || [ -L /etc/localtime ]; then
+		cp -P /etc/localtime "${DATA_ETC_DIR}/localtime" 2>/dev/null ||
+		    cp /etc/localtime "${DATA_ETC_DIR}/localtime"
 	fi
 
 	grep -q '^hostname=' "${DATA_ETC_DIR}/rc.conf" 2>/dev/null ||
 		echo "hostname=${name}" >> "${DATA_ETC_DIR}/rc.conf"
+}
+
+mount_cell_volumes() {
+	mount_specs=${CELL_VOLUME_MOUNTS:-}
+	[ -n "${mount_specs}" ] || return 0
+	mounted_targets=
+
+	for spec in $(normalize_volume_mount_list "${mount_specs}"); do
+		parse_volume_mount_spec "${spec}" "CELL_VOLUME_MOUNTS" || return 1
+		if ! volume_manifest_exists "${MOUNT_VOLUME}"; then
+			echo "missing referenced volume manifest: ${MOUNT_VOLUME}" >&2
+			return 1
+		fi
+		if ! ensure_volume_runtime_from_manifest "${MOUNT_VOLUME}"; then
+			for rollback_target in ${mounted_targets}; do
+				rmpt="${ROOT_DIR}${rollback_target}"
+				umount "${rmpt}" >/dev/null 2>&1 || true
+			done
+			return 1
+		fi
+		volume_manifest_paths "${MOUNT_VOLUME}"
+
+		target_mount_point="${ROOT_DIR}${MOUNT_TARGET}"
+		mkdir -p "${target_mount_point}"
+		if mount | awk -v p="on ${target_mount_point} " 'index($0,p){found=1} END{exit !found}'; then
+			if ! mount | awk -v p="${VOLUME_PATH} on ${target_mount_point} " 'index($0,p){found=1} END{exit !found}'; then
+				echo "volume target already mounted with different source: ${target_mount_point}" >&2
+				return 1
+			fi
+			continue
+		fi
+		if [ "${MOUNT_MODE}" = "ro" ]; then
+			if ! mount -t null -o ro "${VOLUME_PATH}" "${target_mount_point}"; then
+				for rollback_target in ${mounted_targets}; do
+					rmpt="${ROOT_DIR}${rollback_target}"
+					umount "${rmpt}" >/dev/null 2>&1 || true
+				done
+				return 1
+			fi
+		else
+			if ! mount -t null "${VOLUME_PATH}" "${target_mount_point}"; then
+				for rollback_target in ${mounted_targets}; do
+					rmpt="${ROOT_DIR}${rollback_target}"
+					umount "${rmpt}" >/dev/null 2>&1 || true
+				done
+				return 1
+			fi
+		fi
+		mounted_targets="${MOUNT_TARGET} ${mounted_targets}"
+	done
+}
+
+umount_cell_volumes() {
+	while :; do
+		mp=$(mount | awk -v root="${ROOT_DIR}/" '
+			{
+				if (index($0, " on " root) == 0)
+					next
+				line = $0
+				on_pos = index(line, " on ")
+				if (on_pos == 0)
+					next
+				rest = substr(line, on_pos + 4)
+				type_pos = index(rest, " type ")
+				if (type_pos == 0)
+					next
+				mp = substr(rest, 1, type_pos - 1)
+				if (mp == root "dev" || mp == root "dev/pts" || mp == root ".overlay")
+					next
+				if (length(mp) > best_len) {
+					best = mp
+					best_len = length(mp)
+				}
+			}
+			END {
+				if (best_len > 0)
+					print best
+			}
+		')
+		[ -n "${mp}" ] || break
+		umount "${mp}"
+	done
 }
 
 # Compose the final cell root by overlaying writable per-cell directories on
@@ -444,12 +2273,16 @@ mount_cell_root() {
 	fi
 
 	mount -t null -o ro "${BASE_LAYER}" "${ROOT_DIR}"
-	mount -t null "${DATA_DIR}" "${ROOT_DIR}/.data"
+	mount -t null "${DATA_DIR}" "${ROOT_DIR}/.overlay"
 	setup_local_dev
+	mount_cell_volumes
 }
 
 umount_cell_root() {
-	for d in dev/pts dev .data ""; do
+	if ! umount_cell_volumes; then
+		return 1
+	fi
+	for d in dev/pts dev .overlay ""; do
 		mp="${ROOT_DIR}${d:+/$d}"
 		if mount | awk -v p="on ${mp} " 'index($0,p){found=1} END{exit !found}'; then
 			umount "${mp}"
@@ -457,37 +2290,39 @@ umount_cell_root() {
 	done
 }
 
-# Create persistent on-disk cell structure and write cell.conf consumed by
-# start/stop operations.
-create_cell() {
-	need_root
-	require_tools
+write_runtime_cell_conf() {
 	name=$1
 	autostart=${2:-NO}
-	supervise_cmd=${3:-/bin/sleep 60}
+	supervise_cmd=${3:-/bin/true}
 	create_profile=${4:-}
 	create_reserved_ports=${5:-}
-	supervise_facility=${6:-}
-	supervise_stdout_level=${7:-}
-	supervise_stderr_level=${8:-}
-	supervise_tag=${9:-}
+	create_rlimit_nofile=${6:-}
+	create_rlimit_as=${7:-}
+	create_rlimit_core=${8:-}
+	supervise_facility=${9:-}
+	supervise_stdout_level=${10:-}
+	supervise_stderr_level=${11:-}
+	supervise_tag=${12:-}
+	depends_on=${13:-}
+	healthcheck_cmd=${14:-}
+	volume_mounts=${15:-}
+
 	escaped_create_profile=$(escape_dq "${create_profile}")
 	escaped_create_reserved_ports=$(escape_dq "${create_reserved_ports}")
+	escaped_create_rlimit_nofile=$(escape_dq "${create_rlimit_nofile}")
+	escaped_create_rlimit_as=$(escape_dq "${create_rlimit_as}")
+	escaped_create_rlimit_core=$(escape_dq "${create_rlimit_core}")
 	escaped_supervise_cmd=$(escape_dq "${supervise_cmd}")
 	escaped_supervise_facility=$(escape_dq "${supervise_facility}")
 	escaped_supervise_stdout_level=$(escape_dq "${supervise_stdout_level}")
 	escaped_supervise_stderr_level=$(escape_dq "${supervise_stderr_level}")
 	escaped_supervise_tag=$(escape_dq "${supervise_tag}")
-
-	cell_paths "${name}"
-	mkdir -p "${ROOT_DIR}" "${DATA_VAR_DIR}" "${DATA_TMP_DIR}" \
-		"${DATA_HOME_DIR}" "${DATA_ROOT_DIR}" "${DATA_PKG_DIR}" \
-		"${DATA_VAR_DIR}/run" "${DATA_VAR_DIR}/log"
-	chmod 1777 "${DATA_TMP_DIR}"
-	setup_etc
+	escaped_depends_on=$(escape_dq "${depends_on}")
+	escaped_healthcheck_cmd=$(escape_dq "${healthcheck_cmd}")
+	escaped_volume_mounts=$(escape_dq "${volume_mounts}")
 
 	cat > "${CELL_CONF}" <<CONF
-# autogenerated by cellmgr
+# autogenerated by cellmgr apply
 CELL_NAME=${name}
 CELL_RELEASE=${RELEASE}
 CELL_ARCH=${MACHINE_ARCH}
@@ -495,21 +2330,65 @@ CELL_AUTOSTART=${autostart}
 # Optional cellctl create(8) policy controls:
 CELL_CREATE_PROFILE="${escaped_create_profile}"
 CELL_CREATE_RESERVED_PORTS="${escaped_create_reserved_ports}"
+CELL_CREATE_RLIMIT_NOFILE="${escaped_create_rlimit_nofile}"
+CELL_CREATE_RLIMIT_AS="${escaped_create_rlimit_as}"
+CELL_CREATE_RLIMIT_CORE="${escaped_create_rlimit_core}"
 # Optional cellctl supervise(8) logging controls:
 CELL_SUPERVISE_FACILITY="${escaped_supervise_facility}"
 CELL_SUPERVISE_STDOUT_LEVEL="${escaped_supervise_stdout_level}"
 CELL_SUPERVISE_STDERR_LEVEL="${escaped_supervise_stderr_level}"
 CELL_SUPERVISE_TAG="${escaped_supervise_tag}"
-# Required command (with optional args) to supervise in this cell:
+# One supervised service command per cell:
 CELL_SUPERVISE_CMD="${escaped_supervise_cmd}"
+# Declarative orchestration metadata:
+CELL_DEPENDS_ON="${escaped_depends_on}"
+CELL_HEALTHCHECK_CMD="${escaped_healthcheck_cmd}"
+# Declarative volume mounts (<volume>:<target>:<ro|rw>):
+CELL_VOLUME_MOUNTS="${escaped_volume_mounts}"
 CONF
+}
 
-	echo "Created cell ${name}"
+# Create persistent on-disk cell structure and write rendered runtime cell.conf.
+create_cell() {
+	need_root
+	require_tools
+	name=$1
+	autostart=${2:-NO}
+	supervise_cmd=${3:-/bin/true}
+	create_profile=${4:-}
+	create_reserved_ports=${5:-}
+	create_rlimit_nofile=${6:-}
+	create_rlimit_as=${7:-}
+	create_rlimit_core=${8:-}
+	supervise_facility=${9:-}
+	supervise_stdout_level=${10:-}
+	supervise_stderr_level=${11:-}
+	supervise_tag=${12:-}
+	depends_on=${13:-}
+	healthcheck_cmd=${14:-}
+	volume_mounts=${15:-}
+
+	cell_paths "${name}"
+	mkdir -p "${ROOT_DIR}" "${DATA_VAR_DIR}" "${DATA_TMP_DIR}" \
+		"${DATA_HOME_DIR}" "${DATA_ROOT_DIR}" "${DATA_PKG_DIR}" \
+		"${DATA_VAR_DIR}/run" "${DATA_VAR_DIR}/log" "${STATE_DIR}"
+	chmod 1777 "${DATA_TMP_DIR}"
+	setup_etc
+	write_runtime_cell_conf "${name}" "${autostart}" "${supervise_cmd}" \
+	    "${create_profile}" "${create_reserved_ports}" \
+	    "${create_rlimit_nofile}" "${create_rlimit_as}" "${create_rlimit_core}" \
+	    "${supervise_facility}" "${supervise_stdout_level}" \
+	    "${supervise_stderr_level}" "${supervise_tag}" \
+	    "${depends_on}" "${healthcheck_cmd}" \
+	    "${volume_mounts}"
+
+	echo "Rendered runtime cell ${name}"
 }
 
 cell_exists() {
 	name=$1
-	cellctl list | awk -v n="${name}" '$4==n{found=1} END{exit !found}'
+	cellctl list -T -H 2>/dev/null |
+	    awk -F '\t' -v n="${name}" '$2==n{found=1} END{exit !found}'
 }
 
 # Start sequence: load config, mount root overlays, allocate kernel cell ID
@@ -530,11 +2409,18 @@ start_cell_internal() {
 	fi
 
 	cell_paths "${name}"
-	[ -d "${ROOT_DIR}" ] || create_cell "${name}"
+	if [ ! -d "${ROOT_DIR}" ] || [ ! -r "${CELL_CONF}" ]; then
+		echo "missing rendered runtime state for ${name}; run: cellmgr apply --all" >&2
+		exit 1
+	fi
 	mount_cell_root
 
 	if cell_exists "${name}"; then
-		cid=$(cellctl list | awk -v n="${name}" '$4==n{print $1; exit}')
+		cid=$(cell_cid_by_name "${name}" || true)
+		if [ -z "${cid}" ]; then
+			echo "failed to resolve CID for running cell ${name}" >&2
+			exit 1
+		fi
 		if [ "${supervise}" != "YES" ]; then
 			echo "Cell ${name} already running"
 			return
@@ -553,6 +2439,15 @@ start_cell_internal() {
 		fi
 		if [ -n "${CELL_CREATE_RESERVED_PORTS:-}" ]; then
 			set -- "$@" -r "${CELL_CREATE_RESERVED_PORTS}"
+		fi
+		if [ -n "${CELL_CREATE_RLIMIT_NOFILE:-}" ]; then
+			set -- "$@" -N "${CELL_CREATE_RLIMIT_NOFILE}"
+		fi
+		if [ -n "${CELL_CREATE_RLIMIT_AS:-}" ]; then
+			set -- "$@" -A "${CELL_CREATE_RLIMIT_AS}"
+		fi
+		if [ -n "${CELL_CREATE_RLIMIT_CORE:-}" ]; then
+			set -- "$@" -C "${CELL_CREATE_RLIMIT_CORE}"
 		fi
 		set -- "$@" "${ROOT_DIR}"
 		# cellctl create/supervise print "cell <cid>" on stdout; keep cellmgr
@@ -574,11 +2469,9 @@ start_cell_internal() {
 		if [ -n "${CELL_SUPERVISE_TAG:-}" ]; then
 			set -- "$@" -t "${CELL_SUPERVISE_TAG}"
 		fi
-		set -- "$@" "${name}"
-		# shellcheck disable=SC2086
-		set -f
-		set -- "$@" ${effective_supervise_cmd}
-		set +f
+		# Keep CELL_SUPERVISE_CMD as a shell command string so quoted arguments
+		# (e.g. su -c '...') remain intact.
+		set -- "$@" "${name}" /bin/sh -c "exec ${effective_supervise_cmd}"
 		"$@" >/dev/null
 	fi
 	echo "Started cell ${name}"
@@ -594,15 +2487,25 @@ stop_cell() {
 	need_root
 	require_tools
 	name=$1
+	cell_paths "${name}"
 
 	if cell_exists "${name}"; then
-		cid=$(cellctl list | awk -v n="${name}" '$4==n{print $1}')
+		cid=$(cell_cid_by_name "${name}" || true)
+		if [ -z "${cid}" ]; then
+			echo "failed to resolve CID for running cell ${name}" >&2
+			exit 1
+		fi
 		stop_cell_processes "${name}" "${cid}"
 		cellctl destroy "${cid}"
 		echo "Destroyed cell ${name} (cid ${cid})"
 	fi
 
-	cell_paths "${name}"
+	if [ -r "${CELL_CONF}" ]; then
+		load_cell_conf "${name}"
+	else
+		CELL_VOLUME_MOUNTS=
+	fi
+
 	if [ -d "${ROOT_DIR}" ]; then
 		umount_cell_root || true
 	fi
@@ -614,9 +2517,6 @@ start_all() {
 		[ -f "${cell_conf}" ] || continue
 		name=${cell_conf%/cell.conf}
 		name=${name##*/}
-		if ! cell_autostart_enabled "${name}"; then
-			continue
-		fi
 		if ! start_cell "${name}"; then
 			failed=1
 			echo "Failed to start cell ${name}; continuing" >&2
@@ -632,24 +2532,453 @@ stop_all() {
 		[ -f "${cell_conf}" ] || continue
 		name=${cell_conf%/cell.conf}
 		name=${name##*/}
-		if cell_autostart_enabled "${name}"; then
-			stop_cell "${name}"
-		fi
+		stop_cell "${name}"
 	done
 }
 
 cell_cid_by_name() {
 	name=$1
-	cellctl list | awk -v n="${name}" '$4==n{print $1; exit}'
+	cellctl list -T -H 2>/dev/null |
+	    awk -F '\t' -v n="${name}" '$2==n{print $1; exit}'
 }
 
 require_apply_tools() {
-	for t in cellctl mktemp cp; do
+	for t in cellctl mktemp cp dirname; do
 		command -v "${t}" >/dev/null 2>&1 || {
 			echo "missing required tool: ${t}" >&2
 			exit 1
 		}
 	done
+}
+
+trim_ws() {
+	printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+quote_sh() {
+	printf '%s' "$1" | sed -e "s/'/'\\\\''/g" -e "1s/^/'/" -e "\$s/\$/'/"
+}
+
+validate_pkg_name() {
+	pkg=$1
+	case "${pkg}" in
+	*[!A-Za-z0-9._+-]*|"")
+		echo "invalid package token in apply plan: ${pkg}" >&2
+		return 1
+		;;
+	esac
+	return 0
+}
+
+apply_exec_in_cell() {
+	cell_cid=$1
+	action_cmd=$2
+	qpkg_path=$(quote_sh "${PKG_PATH}")
+	cellctl exec "${cell_cid}" /bin/sh -c "export PKG_PATH=${qpkg_path}; ${action_cmd}"
+}
+
+apply_write_block_file() {
+	cell_cid=$1
+	target_path=$2
+	host_block_file=$3
+	mode=${4:-}
+	owner=${5:-}
+	group=${6:-}
+
+	case "${target_path}" in
+	/*)
+		;;
+	*)
+		echo "FILE_BEGIN target must be an absolute path: ${target_path}" >&2
+		return 1
+		;;
+	esac
+
+	if command -v uuidgen >/dev/null 2>&1; then
+		block_id=$(uuidgen | tr -d '-')
+	else
+		block_id="$(date +%s)-$$"
+	fi
+
+	cell_tmp_path="/tmp/cellmgr-apply-block-${block_id}.tmp"
+	host_stage_path="${ROOT_DIR}${cell_tmp_path}"
+	if ! cp "${host_block_file}" "${host_stage_path}"; then
+		echo "failed to stage block content for ${target_path}" >&2
+		return 1
+	fi
+
+	target_dir=$(dirname "${target_path}")
+	qcell_tmp=$(quote_sh "${cell_tmp_path}")
+	qtarget=$(quote_sh "${target_path}")
+	qtarget_dir=$(quote_sh "${target_dir}")
+
+	cmd="mkdir -p ${qtarget_dir} && if [ -f ${qtarget} ] && cmp -s ${qcell_tmp} ${qtarget}; then rm -f ${qcell_tmp}; else mv -f ${qcell_tmp} ${qtarget}; fi"
+	if [ -n "${mode}" ]; then
+		cmd="${cmd} && chmod ${mode} ${qtarget}"
+	fi
+	if [ -n "${owner}" ] && [ -n "${group}" ]; then
+		cmd="${cmd} && chown ${owner}:${group} ${qtarget}"
+	elif [ -n "${owner}" ]; then
+		cmd="${cmd} && chown ${owner} ${qtarget}"
+	elif [ -n "${group}" ]; then
+		cmd="${cmd} && chgrp ${group} ${qtarget}"
+	fi
+
+	if apply_exec_in_cell "${cell_cid}" "${cmd}"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	rm -f "${host_stage_path}" || true
+	return "${rc}"
+}
+
+apply_patch_block() {
+	cell_cid=$1
+	target_path=$2
+	host_patch_file=$3
+	strip_level=${4:-0}
+
+	case "${target_path}" in
+	/*)
+		;;
+	*)
+		echo "PATCH_BEGIN target must be an absolute path: ${target_path}" >&2
+		return 1
+		;;
+	esac
+
+	case "${strip_level}" in
+	*[!0-9]*|"")
+		echo "PATCH_BEGIN strip must be a non-negative integer: ${strip_level}" >&2
+		return 1
+		;;
+	esac
+
+	if command -v uuidgen >/dev/null 2>&1; then
+		patch_id=$(uuidgen | tr -d '-')
+	else
+		patch_id="$(date +%s)-$$"
+	fi
+
+	cell_tmp_patch="/tmp/cellmgr-apply-patch-${patch_id}.diff"
+	host_stage_patch="${ROOT_DIR}${cell_tmp_patch}"
+	if ! cp "${host_patch_file}" "${host_stage_patch}"; then
+		echo "failed to stage patch snippet for ${target_path}" >&2
+		return 1
+	fi
+
+	qtarget=$(quote_sh "${target_path}")
+	qpatch=$(quote_sh "${cell_tmp_patch}")
+
+	cmd="command -v patch >/dev/null 2>&1 || { echo 'missing patch(1) in cell' >&2; exit 1; }; [ -f ${qtarget} ] || { echo 'PATCH target missing: ${target_path}' >&2; exit 1; }; if patch -N -p${strip_level} --dry-run ${qtarget} < ${qpatch} >/dev/null 2>&1; then patch -N -p${strip_level} ${qtarget} < ${qpatch} >/dev/null 2>&1; elif patch -R -p${strip_level} --dry-run ${qtarget} < ${qpatch} >/dev/null 2>&1; then :; else patch -N -p${strip_level} ${qtarget} < ${qpatch}; fi; rm -f ${qpatch}"
+
+	if apply_exec_in_cell "${cell_cid}" "${cmd}"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	rm -f "${host_stage_patch}" || true
+	return "${rc}"
+}
+
+apply_declarative_plan() {
+	cell_cid=$1
+	plan_file=$2
+	line_no=0
+	block_active=NO
+	block_target=
+	block_mode=
+	block_owner=
+	block_group=
+	block_strip=0
+	block_tmp_file=
+	block_kind=
+	block_end_token=
+
+	while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
+		line_no=$((line_no + 1))
+
+		if [ "${block_active}" = "YES" ]; then
+			line=$(trim_ws "${raw_line}")
+			if [ "${line}" = "${block_end_token}" ]; then
+				if [ "${block_kind}" = "FILE" ]; then
+					if ! apply_write_block_file "${cell_cid}" "${block_target}" \
+					    "${block_tmp_file}" "${block_mode}" \
+					    "${block_owner}" "${block_group}"; then
+						rm -f "${block_tmp_file}" || true
+						return 1
+					fi
+				elif [ "${block_kind}" = "PATCH" ]; then
+					if ! apply_patch_block "${cell_cid}" "${block_target}" \
+					    "${block_tmp_file}" "${block_strip}"; then
+						rm -f "${block_tmp_file}" || true
+						return 1
+					fi
+				else
+					echo "internal error: unknown block kind ${block_kind}" >&2
+					rm -f "${block_tmp_file}" || true
+					return 1
+				fi
+				rm -f "${block_tmp_file}" || true
+				block_active=NO
+				block_target=
+				block_mode=
+				block_owner=
+				block_group=
+				block_strip=0
+				block_tmp_file=
+				block_kind=
+				block_end_token=
+				continue
+			fi
+			printf '%s\n' "${raw_line}" >> "${block_tmp_file}"
+			continue
+		fi
+
+		line=$(trim_ws "${raw_line}")
+		[ -n "${line}" ] || continue
+		case "${line}" in
+		\#*)
+			continue
+			;;
+		esac
+
+		op=${line%%[[:space:]]*}
+		upper_op=$(printf '%s' "${op}" | tr '[:lower:]' '[:upper:]')
+		if [ "${op}" != "${upper_op}" ]; then
+			echo "${plan_file}:${line_no}: directive must be uppercase: ${op}" >&2
+			return 1
+		fi
+		op=${upper_op}
+		if [ "${op}" = "${line}" ]; then
+			rest=
+		else
+			rest=$(trim_ws "${line#"${line%%[[:space:]]*}"}")
+		fi
+
+		case "${op}" in
+		PKG)
+			[ -n "${rest}" ] || {
+				echo "${plan_file}:${line_no}: PKG requires at least one package" >&2
+				return 1
+			}
+			set -f
+			set -- ${rest}
+			set +f
+			for pkg in "$@"; do
+				validate_pkg_name "${pkg}" || return 1
+				qpkg=$(quote_sh "${pkg}")
+				qpattern=$(quote_sh "${pkg}-*")
+				apply_exec_in_cell "${cell_cid}" \
+				    "if ! pkg_info -qe ${qpattern} >/dev/null 2>&1; then pkg_add ${qpkg}; fi" || return 1
+			done
+			;;
+		EXEC)
+			[ -n "${rest}" ] || {
+				echo "${plan_file}:${line_no}: EXEC requires a command" >&2
+				return 1
+			}
+			apply_exec_in_cell "${cell_cid}" "${rest}" || return 1
+			;;
+		DIR)
+			[ -n "${rest}" ] || {
+				echo "${plan_file}:${line_no}: DIR requires a path" >&2
+				return 1
+			}
+			set -f
+			set -- ${rest}
+			set +f
+			[ $# -ge 1 ] || {
+				echo "${plan_file}:${line_no}: DIR requires a path" >&2
+				return 1
+			}
+			path=$1
+			shift
+			mode=
+			owner=
+			group=
+			for opt in "$@"; do
+				case "${opt}" in
+				mode=*)
+					mode=${opt#mode=}
+					;;
+				owner=*)
+					owner=${opt#owner=}
+					;;
+				group=*)
+					group=${opt#group=}
+					;;
+				*)
+					echo "${plan_file}:${line_no}: unknown DIR option: ${opt}" >&2
+					return 1
+					;;
+				esac
+			done
+			qpath=$(quote_sh "${path}")
+			cmd="mkdir -p ${qpath}"
+			if [ -n "${mode}" ]; then
+				cmd="${cmd} && chmod ${mode} ${qpath}"
+			fi
+			if [ -n "${owner}" ] && [ -n "${group}" ]; then
+				cmd="${cmd} && chown ${owner}:${group} ${qpath}"
+			elif [ -n "${owner}" ]; then
+				cmd="${cmd} && chown ${owner} ${qpath}"
+			elif [ -n "${group}" ]; then
+				cmd="${cmd} && chgrp ${group} ${qpath}"
+			fi
+			apply_exec_in_cell "${cell_cid}" "${cmd}" || return 1
+			;;
+		LINE)
+			case "${rest}" in
+			*'|'*)
+				path=$(trim_ws "${rest%%|*}")
+				text=$(trim_ws "${rest#*|}")
+				;;
+			*)
+				echo "${plan_file}:${line_no}: LINE requires '<path> | <text>'" >&2
+				return 1
+				;;
+			esac
+			[ -n "${path}" ] || {
+				echo "${plan_file}:${line_no}: LINE path cannot be empty" >&2
+				return 1
+			}
+			qpath=$(quote_sh "${path}")
+			qtext=$(quote_sh "${text}")
+			apply_exec_in_cell "${cell_cid}" \
+			    "touch ${qpath} && (grep -F -x -- ${qtext} ${qpath} >/dev/null 2>&1 || printf '%s\\n' ${qtext} >> ${qpath})" || return 1
+			;;
+		SYMLINK)
+			[ -n "${rest}" ] || {
+				echo "${plan_file}:${line_no}: SYMLINK requires '<target> <linkpath>'" >&2
+				return 1
+			}
+			set -f
+			set -- ${rest}
+			set +f
+			if [ $# -ne 2 ]; then
+				echo "${plan_file}:${line_no}: SYMLINK requires exactly two arguments" >&2
+				return 1
+			fi
+			qtarget=$(quote_sh "$1")
+			qlink=$(quote_sh "$2")
+			apply_exec_in_cell "${cell_cid}" "ln -snf ${qtarget} ${qlink}" || return 1
+			;;
+		PATCH_BEGIN)
+			[ -n "${rest}" ] || {
+				echo "${plan_file}:${line_no}: PATCH_BEGIN requires a target path" >&2
+				return 1
+			}
+			set -f
+			set -- ${rest}
+			set +f
+			[ $# -ge 1 ] || {
+				echo "${plan_file}:${line_no}: PATCH_BEGIN requires a target path" >&2
+				return 1
+			}
+			block_target=$1
+			shift
+			block_strip=0
+			for opt in "$@"; do
+				case "${opt}" in
+				strip=*)
+					block_strip=${opt#strip=}
+					;;
+				*)
+					echo "${plan_file}:${line_no}: unknown PATCH_BEGIN option: ${opt}" >&2
+					return 1
+					;;
+				esac
+			done
+			case "${block_target}" in
+			/*)
+				;;
+			*)
+				echo "${plan_file}:${line_no}: PATCH_BEGIN target must be absolute" >&2
+				return 1
+				;;
+			esac
+			case "${block_strip}" in
+			*[!0-9]*|"")
+				echo "${plan_file}:${line_no}: PATCH_BEGIN strip must be integer" >&2
+				return 1
+				;;
+			esac
+			block_tmp_file=$(mktemp /tmp/cellmgr-apply-patch.XXXXXX)
+			block_active=YES
+			block_kind=PATCH
+			block_end_token=PATCH_END
+			;;
+		PATCH_END)
+			echo "${plan_file}:${line_no}: PATCH_END without PATCH_BEGIN" >&2
+			return 1
+			;;
+		FILE_BEGIN)
+			[ -n "${rest}" ] || {
+				echo "${plan_file}:${line_no}: FILE_BEGIN requires a target path" >&2
+				return 1
+			}
+			set -f
+			set -- ${rest}
+			set +f
+			[ $# -ge 1 ] || {
+				echo "${plan_file}:${line_no}: FILE_BEGIN requires a target path" >&2
+				return 1
+			}
+			block_target=$1
+			shift
+			block_mode=
+			block_owner=
+			block_group=
+			for opt in "$@"; do
+				case "${opt}" in
+				mode=*)
+					block_mode=${opt#mode=}
+					;;
+				owner=*)
+					block_owner=${opt#owner=}
+					;;
+				group=*)
+					block_group=${opt#group=}
+					;;
+				*)
+					echo "${plan_file}:${line_no}: unknown FILE_BEGIN option: ${opt}" >&2
+					return 1
+					;;
+				esac
+			done
+			case "${block_target}" in
+			/*)
+				;;
+			*)
+				echo "${plan_file}:${line_no}: FILE_BEGIN target must be absolute" >&2
+				return 1
+				;;
+			esac
+			block_tmp_file=$(mktemp /tmp/cellmgr-apply-block.XXXXXX)
+			block_active=YES
+			block_kind=FILE
+			block_end_token=FILE_END
+			;;
+		FILE_END)
+			echo "${plan_file}:${line_no}: FILE_END without FILE_BEGIN" >&2
+			return 1
+			;;
+		*)
+			echo "${plan_file}:${line_no}: unknown directive: ${op}" >&2
+			return 1
+			;;
+		esac
+	done < "${plan_file}"
+
+	if [ "${block_active}" = "YES" ]; then
+		echo "${plan_file}:${line_no}: missing ${block_end_token} for ${block_kind}_BEGIN ${block_target}" >&2
+		rm -f "${block_tmp_file}" || true
+		return 1
+	fi
+
+	return 0
 }
 
 apply_cell_script() {
@@ -686,25 +3015,23 @@ apply_cell_script() {
 	name=$1
 	shift
 
-	script_source=
-	if [ $# -gt 0 ] && [ "$1" != "--" ]; then
-		script_source=$1
+	plan_source=
+	if [ $# -gt 0 ]; then
+		plan_source=$1
 		shift
 	fi
-	if [ $# -gt 0 ] && [ "$1" = "--" ]; then
-		shift
+	if [ $# -ne 0 ]; then
+		usage
+		exit 1
 	fi
 
-	if [ -z "${script_source}" ]; then
-		if [ -t 0 ]; then
-			echo "apply: missing script path (or use stdin with '-')" >&2
-			exit 1
-		fi
-		script_source=-
+	if [ -z "${plan_source}" ]; then
+		manifest_cell_paths "${name}"
+		plan_source=${MANIFEST_APPLY_FILE}
 	fi
 
-	if [ "${script_source}" != "-" ] && [ ! -r "${script_source}" ]; then
-		echo "apply: cannot read script: ${script_source}" >&2
+	if [ ! -r "${plan_source}" ]; then
+		echo "apply: cannot read declarative plan: ${plan_source}" >&2
 		exit 1
 	fi
 
@@ -720,43 +3047,17 @@ apply_cell_script() {
 	cell_paths "${name}"
 	cell_cid=$(cell_cid_by_name "${name}" || true)
 	if [ -z "${cell_cid}" ]; then
-		echo "apply: failed to resolve JID for cell ${name}" >&2
+		echo "apply: failed to resolve CID for cell ${name}" >&2
 		exit 1
 	fi
 
-	if command -v uuidgen >/dev/null 2>&1; then
-		script_id=$(uuidgen | tr -d '-')
-	else
-		script_id="$(date +%s)-$$"
+	if ! apply_exec_in_cell "${cell_cid}" \
+	    "command -v certctl >/dev/null 2>&1 || { echo 'missing certctl(8) in cell' >&2; exit 1; }; certctl rehash"; then
+		echo "apply: certctl rehash failed in cell ${name}" >&2
+		exit 1
 	fi
 
-	cell_script="/tmp/cellmgr-apply-${script_id}.sh"
-	host_script="${ROOT_DIR}${cell_script}"
-	stdin_tmp=
-
-	cleanup_apply() {
-		rm -f "${host_script}"
-		if [ -n "${stdin_tmp}" ]; then
-			rm -f "${stdin_tmp}"
-		fi
-	}
-	trap cleanup_apply EXIT INT TERM HUP
-
-	if [ "${script_source}" = "-" ]; then
-		stdin_tmp=$(mktemp /tmp/cellmgr-apply-stdin.XXXXXX)
-		cat > "${stdin_tmp}"
-		if [ ! -s "${stdin_tmp}" ]; then
-			echo "apply: stdin script is empty" >&2
-			exit 1
-		fi
-		cp "${stdin_tmp}" "${host_script}"
-	else
-		cp "${script_source}" "${host_script}"
-	fi
-	chmod 700 "${host_script}"
-
-	set -- cellctl exec "${cell_cid}" /bin/sh "${cell_script}" "$@"
-	if "$@"; then
+	if apply_declarative_plan "${cell_cid}" "${plan_source}"; then
 		apply_rc=0
 	else
 		apply_rc=$?
@@ -789,162 +3090,2130 @@ restart_all() {
 
 edit_cell_config() {
 	name=$1
-	load_cell_conf "${name}"
+	manifest_cell_paths "${name}"
+	if [ ! -r "${MANIFEST_CELL_CONF}" ]; then
+		echo "missing manifest ${MANIFEST_CELL_CONF}" >&2
+		exit 1
+	fi
 	editor=${VISUAL:-${EDITOR:-vi}}
-	"${editor}" "${CELL_CONF}"
+	"${editor}" "${MANIFEST_CELL_CONF}"
 }
 
-# Operational snapshot that combines kernel cell table output with mount view
-# so operators can correlate runtime and filesystem state quickly.
-status() {
-	cellctl list || true
-	echo
-	mount | awk -v p="${CELL_DATA_DIR}/" 'index($0,p){print}'
+show_manifest_cell() {
+	name=$1
+	assert_valid_cell_name "${name}"
+	load_manifest_cell_conf "${name}"
+	manifest_cell_paths "${name}"
+
+	if [ -r "${CELL_DATA_DIR}/${name}/cell.conf" ]; then
+		rendered=YES
+	else
+		rendered=NO
+	fi
+
+	if command -v cellctl >/dev/null 2>&1; then
+		if cell_exists "${name}"; then
+			running=YES
+		else
+			running=NO
+		fi
+	else
+		running=UNKNOWN
+	fi
+
+	if [ -f "${MANIFEST_APPLY_FILE}" ]; then
+		apply_present=YES
+	else
+		apply_present=NO
+	fi
+
+	printf 'name=%s\n' "${name}"
+	printf 'manifest=%s\n' "${MANIFEST_CELL_CONF}"
+	printf 'apply=%s\n' "${apply_present}"
+	printf 'rendered=%s\n' "${rendered}"
+	printf 'running=%s\n' "${running}"
+	printf 'autostart=%s\n' "${CELL_AUTOSTART:-NO}"
+	printf 'create_profile=%s\n' "${CELL_CREATE_PROFILE:-}"
+	printf 'create_reserved_ports=%s\n' "${CELL_CREATE_RESERVED_PORTS:-}"
+	printf 'create_rlimit_nofile=%s\n' "${CELL_CREATE_RLIMIT_NOFILE:-unlimited}"
+	printf 'create_rlimit_as=%s\n' "${CELL_CREATE_RLIMIT_AS:-unlimited}"
+	printf 'create_rlimit_core=%s\n' "${CELL_CREATE_RLIMIT_CORE:-unlimited}"
+	printf 'depends_on=%s\n' "${CELL_DEPENDS_ON:-}"
+	printf 'volume_mounts=%s\n' "${CELL_VOLUME_MOUNTS:-}"
+	printf 'healthcheck=%s\n' "${CELL_HEALTHCHECK_CMD:-}"
+	printf 'supervise_cmd=%s\n' "${CELL_SUPERVISE_CMD:-}"
 }
 
-list_cells() {
-	printf '%-20s %-36s %-30s %-10s\n' 'NAME' 'ROOT' 'SUPERVISE_CMD' 'AUTOSTART'
-	for cell_conf in "${CELL_DATA_DIR}"/*/cell.conf; do
+list_manifest_cells() {
+	printf '%-20s %-10s %-10s %-10s %-30s\n' \
+	    'NAME' 'DESIRED' 'RENDERED' 'RUNNING' 'SUPERVISE_CMD'
+	for cell_conf in "${MANIFEST_DIR}"/*.cell; do
 		[ -f "${cell_conf}" ] || continue
-		name=${cell_conf%/cell.conf}
-		name=${name##*/}
-		load_cell_conf "${name}"
-		printf '%-20s %-36s %-30s %-10s\n' \
-			"${name}" "${CELL_DATA_DIR}/${name}/root" \
-			"${CELL_SUPERVISE_CMD:-}" "${CELL_AUTOSTART:-NO}"
+		name=${cell_conf##*/}
+		name=${name%.cell}
+		load_manifest_cell_conf "${name}"
+		desired=${CELL_AUTOSTART:-NO}
+		if [ -r "${CELL_DATA_DIR}/${name}/cell.conf" ]; then
+			rendered=YES
+		else
+			rendered=NO
+		fi
+		if command -v cellctl >/dev/null 2>&1; then
+			if cell_exists "${name}"; then
+				running=YES
+			else
+				running=NO
+			fi
+		else
+			running=UNKNOWN
+		fi
+		printf '%-20s %-10s %-10s %-10s %-30s\n' \
+			"${name}" "${desired}" "${rendered}" "${running}" \
+			"${CELL_SUPERVISE_CMD:-}"
 	done
 }
 
-cmd=${1:-}
-case "${cmd}" in
-	bootstrap)
-		ensure_rc_conf_entry
-		ensure_secmodel_cell
-		write_default_conf
-		fetch_sets
-		build_base
+show_volume() {
+	name=$1
+	assert_valid_volume_name "${name}"
+	volume_manifest_paths "${name}"
+
+	if [ -f "${VOLUME_CONF}" ]; then
+		manifest=YES
+		load_volume_manifest_conf "${name}"
+		mode=${VOLUME_MODE:-}
+	else
+		manifest=NO
+		mode=
+	fi
+
+	if [ -d "${VOLUME_PATH}" ]; then
+		runtime=YES
+	else
+		runtime=NO
+	fi
+
+	refs=$(volume_ref_count "${name}")
+	printf 'name=%s\n' "${name}"
+	printf 'manifest=%s\n' "${manifest}"
+	printf 'runtime=%s\n' "${runtime}"
+	printf 'refs=%s\n' "${refs}"
+	printf 'mode=%s\n' "${mode}"
+	printf 'path=%s\n' "${VOLUME_PATH}"
+}
+
+runtime_tsv_sanitize() {
+	printf '%s' "${1:-}" | tr '\t\r\n' '   '
+}
+
+runtime_supported_fields() {
+	view=${1:-merged}
+	case "${view}" in
+	desired)
+		cat <<FIELDS
+name
+desired_state
+autostart
+create_profile
+create_reserved_ports
+create_rlimit_nofile
+create_rlimit_as
+create_rlimit_core
+depends_on
+healthcheck
+supervise_cmd
+volume_mounts
+manifest
+apply_present
+FIELDS
 		;;
-	create)
-		autostart=NO
-		supervise_cmd="/bin/sleep 60"
-		create_profile=
-		create_reserved_ports=
-		supervise_facility=
-		supervise_stdout_level=
-		supervise_stderr_level=
-		supervise_tag=
-		shift
-		while [ $# -gt 0 ]; do
-			case "$1" in
-			-a)
-				autostart=YES
-				shift
-				;;
-			-x)
-				[ $# -ge 2 ] || { usage; exit 1; }
-				supervise_cmd=$2
-				shift 2
-				;;
-			-l)
-				[ $# -ge 2 ] || { usage; exit 1; }
-				create_profile=$2
-				shift 2
-				;;
-			-r)
-				[ $# -ge 2 ] || { usage; exit 1; }
-				create_reserved_ports=$2
-				shift 2
-				;;
-			-f)
-				[ $# -ge 2 ] || { usage; exit 1; }
-				supervise_facility=$2
-				shift 2
-				;;
-			-o)
-				[ $# -ge 2 ] || { usage; exit 1; }
-				supervise_stdout_level=$2
-				shift 2
-				;;
-			-e)
-				[ $# -ge 2 ] || { usage; exit 1; }
-				supervise_stderr_level=$2
-				shift 2
-				;;
-			-t)
-				[ $# -ge 2 ] || { usage; exit 1; }
-				supervise_tag=$2
-				shift 2
-				;;
-			-*)
-				usage
-				exit 1
-				;;
-			*)
-				break
-				;;
-			esac
-		done
-		if [ $# -ne 1 ]; then
-			usage
-			exit 1
-		fi
-		name=$1
-		create_cell "${name}" "${autostart}" "${supervise_cmd}" \
-		    "${create_profile}" \
-		    "${create_reserved_ports}" \
-		    "${supervise_facility}" "${supervise_stdout_level}" \
-		    "${supervise_stderr_level}" "${supervise_tag}"
+	runtime)
+		cat <<FIELDS
+name
+running
+cid
+refs
+procs
+cpu1s
+cpu10s
+memory
+age
+root
+rendered
+FIELDS
 		;;
-	start)
-		if [ $# -eq 2 ] && [ "$2" = "--all" ]; then
-			start_all
-		elif [ $# -eq 2 ]; then
-			start_cell "$2"
-		else
-			usage
-			exit 1
-		fi
-		;;
-	stop)
-		if [ $# -eq 2 ] && [ "$2" = "--all" ]; then
-			stop_all
-		elif [ $# -eq 2 ]; then
-			stop_cell "$2"
-		else
-			usage
-			exit 1
-		fi
-		;;
-	restart)
-		if [ $# -eq 2 ] && [ "$2" = "--all" ]; then
-			restart_all
-		elif [ $# -eq 2 ]; then
-			restart_cell "$2"
-		else
-			usage
-			exit 1
-		fi
-		;;
-	apply)
-		shift
-		apply_cell_script "$@"
-		;;
-	config)
-		if [ $# -eq 2 ]; then
-			edit_cell_config "$2"
-		else
-			usage
-			exit 1
-		fi
-		;;
-	status)
-		status
-		;;
-	list)
-		list_cells
+	merged)
+		cat <<FIELDS
+name
+running
+desired_state
+cid
+refs
+procs
+cpu1s
+cpu10s
+memory
+age
+root
+autostart
+create_profile
+create_reserved_ports
+create_rlimit_nofile
+create_rlimit_as
+create_rlimit_core
+depends_on
+healthcheck
+supervise_cmd
+volume_mounts
+manifest
+rendered
+apply_present
+FIELDS
 		;;
 	*)
-		usage
-		exit 1
+		echo "cell: invalid view '${view}' (expected merged|desired|runtime)" >&2
+		return 1
 		;;
-esac
+	esac
+}
+
+runtime_view_default_fields() {
+	case "${1:-merged}" in
+	desired)
+		printf '%s\n' 'name,desired_state,autostart,create_profile,create_reserved_ports,create_rlimit_nofile,create_rlimit_as,create_rlimit_core,depends_on,healthcheck,volume_mounts,supervise_cmd,manifest,apply_present'
+		;;
+	runtime)
+		printf '%s\n' 'name,running,cid,procs,refs,cpu1s,cpu10s,memory,age,root,rendered'
+		;;
+	merged)
+		printf '%s\n' 'name,running,desired_state,cid,procs,refs,cpu1s,cpu10s,memory,age,autostart,create_profile,create_reserved_ports,create_rlimit_nofile,create_rlimit_as,create_rlimit_core,root,supervise_cmd,manifest,rendered'
+		;;
+	*)
+		echo "cell: invalid view '${1}' (expected merged|desired|runtime)" >&2
+		return 1
+		;;
+	esac
+}
+
+runtime_field_allowed() {
+	view=$1
+	field=$2
+	case "${view}:${field}" in
+	merged:*)
+		return 0
+		;;
+	desired:name|desired:desired_state|desired:autostart|desired:create_profile|desired:create_reserved_ports|desired:create_rlimit_nofile|desired:create_rlimit_as|desired:create_rlimit_core|desired:depends_on|desired:healthcheck|desired:supervise_cmd|desired:volume_mounts|desired:manifest|desired:apply_present)
+		return 0
+		;;
+	runtime:name|runtime:running|runtime:cid|runtime:refs|runtime:procs|runtime:cpu1s|runtime:cpu10s|runtime:memory|runtime:age|runtime:root|runtime:rendered)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+runtime_field_index() {
+	case "$1" in
+	name) printf '1\n' ;;
+	running) printf '2\n' ;;
+	desired_state) printf '3\n' ;;
+	cid) printf '4\n' ;;
+	refs) printf '5\n' ;;
+	procs) printf '6\n' ;;
+	cpu1s) printf '7\n' ;;
+	cpu10s) printf '8\n' ;;
+	memory) printf '9\n' ;;
+	age) printf '10\n' ;;
+	root) printf '11\n' ;;
+	autostart) printf '12\n' ;;
+	create_profile) printf '13\n' ;;
+	create_reserved_ports) printf '14\n' ;;
+	create_rlimit_nofile) printf '15\n' ;;
+	create_rlimit_as) printf '16\n' ;;
+	create_rlimit_core) printf '17\n' ;;
+	depends_on) printf '18\n' ;;
+	healthcheck) printf '19\n' ;;
+	supervise_cmd) printf '20\n' ;;
+	volume_mounts) printf '21\n' ;;
+	manifest) printf '22\n' ;;
+	rendered) printf '23\n' ;;
+	apply_present) printf '24\n' ;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+runtime_parse_output_fields() {
+	requested=${1:-}
+	view=${2:-merged}
+	if [ -z "${requested}" ]; then
+		requested=$(runtime_view_default_fields "${view}") || return 1
+	fi
+
+	RUNTIME_OUTPUT_FIELDS=
+	RUNTIME_OUTPUT_CUT=
+	for field in $(printf '%s' "${requested}" | tr ',' ' '); do
+		case "${field}" in
+		*[!a-z0-9_]*|'')
+			echo "cell: invalid field token '${field}'" >&2
+			return 1
+			;;
+		esac
+
+		if ! runtime_field_allowed "${view}" "${field}"; then
+			echo "cell: field '${field}' is not available in view '${view}'" >&2
+			return 1
+		fi
+
+		if ! idx=$(runtime_field_index "${field}"); then
+			echo "cell: unknown field '${field}'" >&2
+			return 1
+		fi
+
+		if [ -z "${RUNTIME_OUTPUT_FIELDS}" ]; then
+			RUNTIME_OUTPUT_FIELDS=${field}
+			RUNTIME_OUTPUT_CUT=${idx}
+		else
+			RUNTIME_OUTPUT_FIELDS="${RUNTIME_OUTPUT_FIELDS} ${field}"
+			RUNTIME_OUTPUT_CUT="${RUNTIME_OUTPUT_CUT},${idx}"
+		fi
+	done
+
+	if [ -z "${RUNTIME_OUTPUT_FIELDS}" ]; then
+		echo "cell: field list is empty" >&2
+		return 1
+	fi
+}
+
+runtime_print_header() {
+	line=
+	for field in ${RUNTIME_OUTPUT_FIELDS}; do
+		if [ -z "${line}" ]; then
+			line=${field}
+		else
+			line=$(printf '%s\t%s' "${line}" "${field}")
+		fi
+	done
+	printf '%s\n' "${line}"
+}
+
+runtime_project_fields() {
+	in_file=$1
+	awk -F '\t' -v cols="${RUNTIME_OUTPUT_CUT}" '
+		BEGIN {
+			OFS="\t"
+			n = split(cols, idx, ",")
+		}
+		{
+			for (i = 1; i <= n; i++) {
+				field_no = idx[i] + 0
+				value = ""
+				if (field_no >= 1 && field_no <= NF) {
+					value = $(field_no)
+				}
+				if (i == 1) {
+					out = value
+				} else {
+					out = out OFS value
+				}
+			}
+			print out
+		}
+	' "${in_file}"
+}
+
+runtime_print_human_table() {
+	in_file=$1
+	awk -F '\t' -v cols="${RUNTIME_OUTPUT_FIELDS}" '
+		function is_bool_field(f) {
+			return (f == "running" || f == "desired_state" || f == "manifest" ||
+			    f == "rendered" || f == "apply_present")
+		}
+		function humanize_age(v, s, m, h, d, w) {
+			if (v == "")
+				return "-"
+			s = v + 0
+			if (s < 60)
+				return s "s"
+			if (s < 3600) {
+				m = int(s / 60)
+				return m "m" (s % 60) "s"
+			}
+			if (s < 86400) {
+				h = int(s / 3600)
+				m = int((s % 3600) / 60)
+				return h "h" m "m"
+			}
+			if (s < 604800) {
+				d = int(s / 86400)
+				h = int((s % 86400) / 3600)
+				return d "d" h "h"
+			}
+			w = int(s / 604800)
+			d = int((s % 604800) / 86400)
+			return w "w" d "d"
+		}
+		function humanize(f, v) {
+			if (f == "age")
+				return humanize_age(v)
+			if (is_bool_field(f)) {
+				if (v == "1")
+					return "YES"
+				if (v == "0")
+					return "NO"
+			}
+			if (v == "")
+				return "-"
+			return v
+		}
+		BEGIN {
+			n = split(cols, names, " ")
+			for (i = 1; i <= n; i++) {
+				headers[i] = toupper(names[i])
+				width[i] = length(headers[i])
+			}
+		}
+		{
+			rows = NR
+			for (i = 1; i <= n; i++) {
+				val = humanize(names[i], $i)
+				cell[NR, i] = val
+				if (length(val) > width[i])
+					width[i] = length(val)
+			}
+		}
+		END {
+			for (i = 1; i <= n; i++) {
+				printf "%-*s", width[i], headers[i]
+				if (i < n)
+					printf "  "
+				else
+					printf "\n"
+			}
+			for (r = 1; r <= rows; r++) {
+				for (i = 1; i <= n; i++) {
+					printf "%-*s", width[i], cell[r, i]
+					if (i < n)
+						printf "  "
+					else
+						printf "\n"
+				}
+			}
+		}
+	' "${in_file}"
+}
+
+runtime_collect_snapshot() {
+	out_file=$1
+	rendered_tmp=$(mktemp /tmp/cellmgr-runtime-rendered.XXXXXX)
+	manifest_tmp=$(mktemp /tmp/cellmgr-runtime-manifest.XXXXXX)
+	list_raw_tmp=$(mktemp /tmp/cellmgr-runtime-list-raw.XXXXXX)
+	list_tmp=$(mktemp /tmp/cellmgr-runtime-list.XXXXXX)
+	stats_raw_tmp=$(mktemp /tmp/cellmgr-runtime-stats-raw.XXXXXX)
+	stats_tmp=$(mktemp /tmp/cellmgr-runtime-stats.XXXXXX)
+	merged_tmp=$(mktemp /tmp/cellmgr-runtime-merged.XXXXXX)
+
+	: > "${rendered_tmp}"
+	: > "${manifest_tmp}"
+	: > "${list_tmp}"
+	: > "${stats_tmp}"
+
+	if ensure_manifest_layout; then
+		for cell_conf in "${MANIFEST_DIR}"/*.cell; do
+			[ -f "${cell_conf}" ] || continue
+			cell_name=${cell_conf##*/}
+			cell_name=${cell_name%.cell}
+			assert_valid_cell_name "${cell_name}"
+			load_manifest_cell_conf "${cell_name}"
+			manifest_autostart=$(runtime_tsv_sanitize "${CELL_AUTOSTART:-NO}")
+			manifest_profile=$(runtime_tsv_sanitize "${CELL_CREATE_PROFILE:-}")
+			manifest_ports=$(runtime_tsv_sanitize "${CELL_CREATE_RESERVED_PORTS:-}")
+			manifest_rlimit_nofile=$(runtime_tsv_sanitize "${CELL_CREATE_RLIMIT_NOFILE:-}")
+			manifest_rlimit_as=$(runtime_tsv_sanitize "${CELL_CREATE_RLIMIT_AS:-}")
+			manifest_rlimit_core=$(runtime_tsv_sanitize "${CELL_CREATE_RLIMIT_CORE:-}")
+			manifest_depends=$(runtime_tsv_sanitize "${CELL_DEPENDS_ON:-}")
+			manifest_healthcheck=$(runtime_tsv_sanitize "${CELL_HEALTHCHECK_CMD:-}")
+			manifest_supervise=$(runtime_tsv_sanitize "${CELL_SUPERVISE_CMD:-}")
+			manifest_mounts=$(runtime_tsv_sanitize "${CELL_VOLUME_MOUNTS:-}")
+			apply_present=0
+			if [ -f "${MANIFEST_APPLY_FILE}" ]; then
+				apply_present=1
+			fi
+			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			    "${cell_name}" "${manifest_autostart}" "${manifest_profile}" \
+			    "${manifest_ports}" "${manifest_rlimit_nofile}" "${manifest_rlimit_as}" \
+			    "${manifest_rlimit_core}" "${manifest_depends}" "${manifest_healthcheck}" \
+			    "${manifest_supervise}" "${manifest_mounts}" "${apply_present}" \
+			    >> "${manifest_tmp}"
+		done
+	fi
+
+	if [ -d "${CELL_DATA_DIR}" ]; then
+		for cell_conf in "${CELL_DATA_DIR}"/*/cell.conf; do
+			[ -f "${cell_conf}" ] || continue
+			cell_name=${cell_conf%/cell.conf}
+			cell_name=${cell_name##*/}
+			assert_valid_cell_name "${cell_name}"
+
+			load_cell_conf "${cell_name}"
+			rendered_root=$(runtime_tsv_sanitize "${ROOT_DIR}")
+			rendered_autostart=$(runtime_tsv_sanitize "${CELL_AUTOSTART:-NO}")
+			rendered_profile=$(runtime_tsv_sanitize "${CELL_CREATE_PROFILE:-}")
+			rendered_ports=$(runtime_tsv_sanitize "${CELL_CREATE_RESERVED_PORTS:-}")
+			rendered_rlimit_nofile=$(runtime_tsv_sanitize "${CELL_CREATE_RLIMIT_NOFILE:-}")
+			rendered_rlimit_as=$(runtime_tsv_sanitize "${CELL_CREATE_RLIMIT_AS:-}")
+			rendered_rlimit_core=$(runtime_tsv_sanitize "${CELL_CREATE_RLIMIT_CORE:-}")
+			rendered_depends=$(runtime_tsv_sanitize "${CELL_DEPENDS_ON:-}")
+			rendered_healthcheck=$(runtime_tsv_sanitize "${CELL_HEALTHCHECK_CMD:-}")
+			rendered_supervise=$(runtime_tsv_sanitize "${CELL_SUPERVISE_CMD:-}")
+			rendered_mounts=$(runtime_tsv_sanitize "${CELL_VOLUME_MOUNTS:-}")
+
+			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			    "${cell_name}" "${rendered_autostart}" "${rendered_profile}" \
+			    "${rendered_ports}" "${rendered_rlimit_nofile}" "${rendered_rlimit_as}" \
+			    "${rendered_rlimit_core}" "${rendered_depends}" "${rendered_healthcheck}" \
+			    "${rendered_supervise}" "${rendered_mounts}" "${rendered_root}" \
+			    >> "${rendered_tmp}"
+		done
+	fi
+
+	if ! command -v cellctl >/dev/null 2>&1; then
+		echo "missing required tool: cellctl" >&2
+		rm -f "${rendered_tmp}" "${manifest_tmp}" "${list_raw_tmp}" "${list_tmp}" \
+		    "${stats_raw_tmp}" "${stats_tmp}" "${merged_tmp}"
+		return 1
+	fi
+
+	if ! cellctl list -T > "${list_raw_tmp}"; then
+		echo "runtime: failed to read cellctl list" >&2
+		rm -f "${rendered_tmp}" "${manifest_tmp}" "${list_raw_tmp}" "${list_tmp}" \
+		    "${stats_raw_tmp}" "${stats_tmp}" "${merged_tmp}"
+		return 1
+	fi
+
+	if ! awk -F '\t' '
+		BEGIN { OFS="\t" }
+		NR == 1 {
+			if (NF != 6 && NF != 9)
+				exit 2
+			if ($1 != "CID" || $2 != "NAME" || $3 != "REFS" ||
+			    $4 != "PROCS" || $5 != "AGE" || $6 != "ROOT")
+				exit 2
+			if (NF == 9 && ($7 != "NOFILE" || $8 != "AS" || $9 != "CORE"))
+				exit 2
+			next
+		}
+		{
+			if (NF != 6 && NF != 9)
+				exit 3
+			print $2, $1, $3, $4, $5, $6
+		}
+	' "${list_raw_tmp}" > "${list_tmp}"; then
+		echo "runtime: unexpected TSV schema from cellctl list -T" >&2
+		rm -f "${rendered_tmp}" "${manifest_tmp}" "${list_raw_tmp}" "${list_tmp}" \
+		    "${stats_raw_tmp}" "${stats_tmp}" "${merged_tmp}"
+		return 1
+	fi
+
+	if ! cellctl stats -T > "${stats_raw_tmp}"; then
+		echo "runtime: failed to read cellctl stats" >&2
+		rm -f "${rendered_tmp}" "${manifest_tmp}" "${list_raw_tmp}" "${list_tmp}" \
+		    "${stats_raw_tmp}" "${stats_tmp}" "${merged_tmp}"
+		return 1
+	fi
+
+	if ! awk -F '\t' '
+		BEGIN { OFS="\t" }
+		NR == 1 {
+			if (NF != 9 || $1 != "CID" || $2 != "NAME" || $3 != "CPU1S" ||
+			    $4 != "CPU10S" || $5 != "PROCS" || $6 != "REFS" ||
+			    $7 != "MEMORY" || $8 != "AGE" || $9 != "ROOT")
+				exit 2
+			next
+		}
+		{
+			if (NF != 9)
+				exit 3
+			print $2, $3, $4, $5, $7, $8
+		}
+	' "${stats_raw_tmp}" > "${stats_tmp}"; then
+		echo "runtime: unexpected TSV schema from cellctl stats -T" >&2
+		rm -f "${rendered_tmp}" "${manifest_tmp}" "${list_raw_tmp}" "${list_tmp}" \
+		    "${stats_raw_tmp}" "${stats_tmp}" "${merged_tmp}"
+		return 1
+	fi
+
+	awk -F '\t' \
+	    -v manifest_file="${manifest_tmp}" \
+	    -v rendered_file="${rendered_tmp}" \
+	    -v list_file="${list_tmp}" \
+	    -v stats_file="${stats_tmp}" '
+		BEGIN { OFS="\t" }
+		function sanitize(s) {
+			gsub(/[\t\r\n]/, " ", s)
+			return s
+		}
+		FILENAME == manifest_file {
+			n = $1
+			manifest[n] = 1
+			m_autostart[n] = $2
+			m_profile[n] = $3
+			m_ports[n] = $4
+			m_rlimit_nofile[n] = $5
+			m_rlimit_as[n] = $6
+			m_rlimit_core[n] = $7
+			m_depends[n] = $8
+			m_healthcheck[n] = $9
+			m_supervise[n] = $10
+			m_mounts[n] = $11
+			m_apply_present[n] = $12
+			names[n] = 1
+			next
+		}
+		FILENAME == rendered_file {
+			n = $1
+			rendered[n] = 1
+			r_autostart[n] = $2
+			r_profile[n] = $3
+			r_ports[n] = $4
+			r_rlimit_nofile[n] = $5
+			r_rlimit_as[n] = $6
+			r_rlimit_core[n] = $7
+			r_depends[n] = $8
+			r_healthcheck[n] = $9
+			r_supervise[n] = $10
+			r_mounts[n] = $11
+			rendered_root[n] = $12
+			names[n] = 1
+			next
+		}
+		FILENAME == list_file {
+			n = $1
+			running[n] = 1
+			cid[n] = $2
+			refs[n] = $3
+			procs[n] = $4
+			age[n] = $5
+			runtime_root[n] = $6
+			names[n] = 1
+			next
+		}
+		FILENAME == stats_file {
+			n = $1
+			cpu1s[n] = $2
+			cpu10s[n] = $3
+			stats_procs[n] = $4
+			memory[n] = $5
+			stats_age[n] = $6
+			names[n] = 1
+			next
+		}
+		END {
+			for (n in names) {
+				running_v = ((n in running) ? 1 : 0)
+				rendered_v = ((n in rendered) ? 1 : 0)
+				manifest_v = ((n in manifest) ? 1 : 0)
+				apply_present_v = m_apply_present[n]
+				if (apply_present_v == "")
+					apply_present_v = 0
+
+				autostart_v = m_autostart[n]
+				if (autostart_v == "")
+					autostart_v = r_autostart[n]
+				if (autostart_v == "")
+					autostart_v = "NO"
+
+				desired_state_v = (autostart_v == "YES") ? 1 : 0
+
+				profile_v = m_profile[n]
+				if (profile_v == "")
+					profile_v = r_profile[n]
+
+				ports_v = m_ports[n]
+				if (ports_v == "")
+					ports_v = r_ports[n]
+
+				rlimit_nofile_v = m_rlimit_nofile[n]
+				if (rlimit_nofile_v == "")
+					rlimit_nofile_v = r_rlimit_nofile[n]
+				if (rlimit_nofile_v == "")
+					rlimit_nofile_v = "unlimited"
+
+				rlimit_as_v = m_rlimit_as[n]
+				if (rlimit_as_v == "")
+					rlimit_as_v = r_rlimit_as[n]
+				if (rlimit_as_v == "")
+					rlimit_as_v = "unlimited"
+
+				rlimit_core_v = m_rlimit_core[n]
+				if (rlimit_core_v == "")
+					rlimit_core_v = r_rlimit_core[n]
+				if (rlimit_core_v == "")
+					rlimit_core_v = "unlimited"
+
+				depends_v = m_depends[n]
+				if (depends_v == "")
+					depends_v = r_depends[n]
+
+				healthcheck_v = m_healthcheck[n]
+				if (healthcheck_v == "")
+					healthcheck_v = r_healthcheck[n]
+
+				supervise_v = m_supervise[n]
+				if (supervise_v == "")
+					supervise_v = r_supervise[n]
+
+				mounts_v = m_mounts[n]
+				if (mounts_v == "")
+					mounts_v = r_mounts[n]
+
+				procs_v = procs[n]
+				if (stats_procs[n] != "") {
+					procs_v = stats_procs[n]
+				}
+
+				age_v = age[n]
+				if (stats_age[n] != "") {
+					age_v = stats_age[n]
+				}
+
+				root_v = runtime_root[n]
+				if (root_v == "") {
+					root_v = rendered_root[n]
+				}
+
+				print sanitize(n), running_v, desired_state_v, sanitize(cid[n]), \
+				    sanitize(refs[n]), sanitize(procs_v), sanitize(cpu1s[n]), \
+				    sanitize(cpu10s[n]), sanitize(memory[n]), sanitize(age_v), \
+				    sanitize(root_v), sanitize(autostart_v), sanitize(profile_v), \
+				    sanitize(ports_v), sanitize(rlimit_nofile_v), \
+				    sanitize(rlimit_as_v), sanitize(rlimit_core_v), \
+				    sanitize(depends_v), sanitize(healthcheck_v), \
+				    sanitize(supervise_v), sanitize(mounts_v), manifest_v, \
+				    rendered_v, apply_present_v
+			}
+		}
+	' "${manifest_tmp}" "${rendered_tmp}" "${list_tmp}" "${stats_tmp}" > "${merged_tmp}"
+
+	LC_ALL=C sort -k1,1 "${merged_tmp}" > "${out_file}"
+
+	rm -f "${rendered_tmp}" "${manifest_tmp}" "${list_raw_tmp}" "${list_tmp}" \
+	    "${stats_raw_tmp}" "${stats_tmp}" "${merged_tmp}"
+	return 0
+}
+
+runtime_list() {
+	header=YES
+	tsv=NO
+	view=merged
+	output_fields=
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--view)
+			[ $# -ge 2 ] || {
+				echo "cell list: --view requires a value" >&2
+				exit 1
+			}
+			view=$2
+			shift 2
+			;;
+		-o)
+			[ $# -ge 2 ] || {
+				echo "cell list: -o requires a field list" >&2
+				exit 1
+			}
+			output_fields=$2
+			shift 2
+			;;
+		-T)
+			tsv=YES
+			shift
+			;;
+		-H)
+			header=NO
+			shift
+			;;
+		-*)
+			echo "cell list: unknown option $1" >&2
+			exit 1
+			;;
+		*)
+			echo "cell list: unexpected argument $1" >&2
+			exit 1
+			;;
+		esac
+	done
+	if [ "${header}" = "NO" ] && [ "${tsv}" != "YES" ]; then
+		echo "cell list: -H requires -T" >&2
+		exit 1
+	fi
+
+	runtime_parse_output_fields "${output_fields}" "${view}" || exit 1
+	snapshot_tmp=$(mktemp /tmp/cellmgr-runtime-snapshot.XXXXXX)
+	projected_tmp=$(mktemp /tmp/cellmgr-runtime-projected.XXXXXX)
+	if ! runtime_collect_snapshot "${snapshot_tmp}"; then
+		rm -f "${snapshot_tmp}" "${projected_tmp}"
+		exit 1
+	fi
+	runtime_project_fields "${snapshot_tmp}" > "${projected_tmp}"
+
+	if [ "${tsv}" = "YES" ]; then
+		if [ "${header}" = "YES" ]; then
+			runtime_print_header
+		fi
+		cat "${projected_tmp}"
+	else
+		runtime_print_human_table "${projected_tmp}"
+	fi
+
+	rm -f "${snapshot_tmp}" "${projected_tmp}"
+}
+
+runtime_show() {
+	[ $# -ge 1 ] || {
+		echo "cell show: missing cell name" >&2
+		exit 1
+	}
+	target_name=$1
+	shift
+	assert_valid_cell_name "${target_name}"
+
+	header=YES
+	tsv=NO
+	view=merged
+	output_fields=
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--view)
+			[ $# -ge 2 ] || {
+				echo "cell show: --view requires a value" >&2
+				exit 1
+			}
+			view=$2
+			shift 2
+			;;
+		-o)
+			[ $# -ge 2 ] || {
+				echo "cell show: -o requires a field list" >&2
+				exit 1
+			}
+			output_fields=$2
+			shift 2
+			;;
+		-T)
+			tsv=YES
+			shift
+			;;
+		-H)
+			header=NO
+			shift
+			;;
+		-*)
+			echo "cell show: unknown option $1" >&2
+			exit 1
+			;;
+		*)
+			echo "cell show: unexpected argument $1" >&2
+			exit 1
+			;;
+		esac
+	done
+	if [ "${header}" = "NO" ] && [ "${tsv}" != "YES" ]; then
+		echo "cell show: -H requires -T" >&2
+		exit 1
+	fi
+
+	runtime_parse_output_fields "${output_fields}" "${view}" || exit 1
+	snapshot_tmp=$(mktemp /tmp/cellmgr-runtime-snapshot.XXXXXX)
+	row_tmp=$(mktemp /tmp/cellmgr-runtime-row.XXXXXX)
+	projected_tmp=$(mktemp /tmp/cellmgr-runtime-projected.XXXXXX)
+
+	if ! runtime_collect_snapshot "${snapshot_tmp}"; then
+		rm -f "${snapshot_tmp}" "${row_tmp}" "${projected_tmp}"
+		exit 1
+	fi
+
+	if ! awk -F '\t' -v n="${target_name}" '$1==n{print;found=1;exit} END{exit found?0:1}' \
+	    "${snapshot_tmp}" > "${row_tmp}"; then
+		echo "cell not found: ${target_name}" >&2
+		rm -f "${snapshot_tmp}" "${row_tmp}" "${projected_tmp}"
+		exit 1
+	fi
+	runtime_project_fields "${row_tmp}" > "${projected_tmp}"
+
+	if [ "${tsv}" = "YES" ]; then
+		if [ "${header}" = "YES" ]; then
+			runtime_print_header
+		fi
+		cat "${projected_tmp}"
+	else
+		runtime_print_human_table "${projected_tmp}"
+	fi
+
+	rm -f "${snapshot_tmp}" "${row_tmp}" "${projected_tmp}"
+}
+
+runtime_fields() {
+	view=merged
+	tsv=NO
+	header=YES
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--view)
+			[ $# -ge 2 ] || {
+				echo "cell fields: --view requires a value" >&2
+				exit 1
+			}
+			view=$2
+			shift 2
+			;;
+		-T)
+			tsv=YES
+			shift
+			;;
+		-H)
+			header=NO
+			shift
+			;;
+		-*)
+			echo "cell fields: unknown option $1" >&2
+			exit 1
+			;;
+		*)
+			echo "cell fields: unexpected argument $1" >&2
+			exit 1
+			;;
+		esac
+	done
+	if [ "${header}" = "NO" ] && [ "${tsv}" != "YES" ]; then
+		echo "cell fields: -H requires -T" >&2
+		exit 1
+	fi
+	fields_tmp=$(mktemp /tmp/cellmgr-runtime-fields.XXXXXX)
+	runtime_supported_fields "${view}" > "${fields_tmp}" || {
+		rm -f "${fields_tmp}"
+		exit 1
+	}
+	if [ "${tsv}" = "YES" ]; then
+		if [ "${header}" = "YES" ]; then
+			printf 'field\n'
+		fi
+		cat "${fields_tmp}"
+	else
+		printf '%-24s\n' 'FIELD'
+		awk '{ printf "%-24s\n", $0 }' "${fields_tmp}"
+	fi
+	rm -f "${fields_tmp}"
+}
+
+runtime_shell() {
+	need_root
+	name=$1
+	assert_valid_cell_name "${name}"
+	if ! command -v cellctl >/dev/null 2>&1; then
+		echo "missing required tool: cellctl" >&2
+		exit 1
+	fi
+	cellctl exec "${name}" /bin/sh
+}
+
+volume_used_by_list() {
+	volume_name=$1
+	used_by=
+
+	if ensure_manifest_layout; then
+		for cell_conf in "${MANIFEST_DIR}"/*.cell; do
+			[ -f "${cell_conf}" ] || continue
+			cell_name=${cell_conf##*/}
+			cell_name=${cell_name%.cell}
+			CELL_VOLUME_MOUNTS=
+			# shellcheck disable=SC1090
+			. "${cell_conf}"
+			for spec in $(normalize_volume_mount_list "${CELL_VOLUME_MOUNTS:-}"); do
+				if ! parse_volume_mount_spec "${spec}" "volume used_by"; then
+					continue
+				fi
+				if [ "${MOUNT_VOLUME}" = "${volume_name}" ]; then
+					if ! word_list_contains "${cell_name}" "${used_by}"; then
+						used_by="${used_by} ${cell_name}"
+					fi
+					break
+				fi
+			done
+		done
+	fi
+
+	printf '%s\n' "${used_by# }" | tr ' ' ','
+}
+
+volume_supported_fields() {
+	view=${1:-merged}
+	case "${view}" in
+	desired)
+		cat <<FIELDS
+name
+manifest
+mode
+refs
+used_by
+FIELDS
+		;;
+	runtime)
+		cat <<FIELDS
+name
+runtime
+path
+mounted
+refs
+used_by
+FIELDS
+		;;
+	merged)
+		cat <<FIELDS
+name
+manifest
+runtime
+mode
+path
+mounted
+refs
+used_by
+FIELDS
+		;;
+	*)
+		echo "volume: invalid view '${view}' (expected merged|desired|runtime)" >&2
+		return 1
+		;;
+	esac
+}
+
+volume_view_default_fields() {
+	case "${1:-merged}" in
+	desired)
+		printf '%s\n' 'name,manifest,mode,refs,used_by'
+		;;
+	runtime)
+		printf '%s\n' 'name,runtime,path,mounted,refs,used_by'
+		;;
+	merged)
+		printf '%s\n' 'name,manifest,runtime,refs,mounted,mode,path,used_by'
+		;;
+	*)
+		echo "volume: invalid view '${1}' (expected merged|desired|runtime)" >&2
+		return 1
+		;;
+	esac
+}
+
+volume_field_allowed() {
+	view=$1
+	field=$2
+	case "${view}:${field}" in
+	merged:*)
+		return 0
+		;;
+	desired:name|desired:manifest|desired:mode|desired:refs|desired:used_by)
+		return 0
+		;;
+	runtime:name|runtime:runtime|runtime:path|runtime:mounted|runtime:refs|runtime:used_by)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+volume_field_index() {
+	case "$1" in
+	name) printf '1\n' ;;
+	manifest) printf '2\n' ;;
+	runtime) printf '3\n' ;;
+	mode) printf '4\n' ;;
+	path) printf '5\n' ;;
+	mounted) printf '6\n' ;;
+	refs) printf '7\n' ;;
+	used_by) printf '8\n' ;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+volume_parse_output_fields() {
+	requested=${1:-}
+	view=${2:-merged}
+	if [ -z "${requested}" ]; then
+		requested=$(volume_view_default_fields "${view}") || return 1
+	fi
+
+	VOLUME_OUTPUT_FIELDS=
+	VOLUME_OUTPUT_CUT=
+	for field in $(printf '%s' "${requested}" | tr ',' ' '); do
+		case "${field}" in
+		*[!a-z0-9_]*|'')
+			echo "volume: invalid field token '${field}'" >&2
+			return 1
+			;;
+		esac
+		if ! volume_field_allowed "${view}" "${field}"; then
+			echo "volume: field '${field}' is not available in view '${view}'" >&2
+			return 1
+		fi
+		if ! idx=$(volume_field_index "${field}"); then
+			echo "volume: unknown field '${field}'" >&2
+			return 1
+		fi
+		if [ -z "${VOLUME_OUTPUT_FIELDS}" ]; then
+			VOLUME_OUTPUT_FIELDS=${field}
+			VOLUME_OUTPUT_CUT=${idx}
+		else
+			VOLUME_OUTPUT_FIELDS="${VOLUME_OUTPUT_FIELDS} ${field}"
+			VOLUME_OUTPUT_CUT="${VOLUME_OUTPUT_CUT},${idx}"
+		fi
+	done
+
+	if [ -z "${VOLUME_OUTPUT_FIELDS}" ]; then
+		echo "volume: field list is empty" >&2
+		return 1
+	fi
+}
+
+volume_print_header() {
+	line=
+	for field in ${VOLUME_OUTPUT_FIELDS}; do
+		if [ -z "${line}" ]; then
+			line=${field}
+		else
+			line=$(printf '%s\t%s' "${line}" "${field}")
+		fi
+	done
+	printf '%s\n' "${line}"
+}
+
+volume_project_fields() {
+	in_file=$1
+	awk -F '\t' -v cols="${VOLUME_OUTPUT_CUT}" '
+		BEGIN {
+			OFS="\t"
+			n = split(cols, idx, ",")
+		}
+		{
+			for (i = 1; i <= n; i++) {
+				field_no = idx[i] + 0
+				value = ""
+				if (field_no >= 1 && field_no <= NF)
+					value = $(field_no)
+				if (i == 1)
+					out = value
+				else
+					out = out OFS value
+			}
+			print out
+		}
+	' "${in_file}"
+}
+
+volume_print_human_table() {
+	in_file=$1
+	awk -F '\t' -v cols="${VOLUME_OUTPUT_FIELDS}" '
+		function is_bool_field(f) {
+			return (f == "manifest" || f == "runtime" || f == "mounted")
+		}
+		function humanize(f, v) {
+			if (is_bool_field(f)) {
+				if (v == "1")
+					return "YES"
+				if (v == "0")
+					return "NO"
+			}
+			if (v == "")
+				return "-"
+			return v
+		}
+		BEGIN {
+			n = split(cols, names, " ")
+			for (i = 1; i <= n; i++) {
+				headers[i] = toupper(names[i])
+				width[i] = length(headers[i])
+			}
+		}
+		{
+			rows = NR
+			for (i = 1; i <= n; i++) {
+				val = humanize(names[i], $i)
+				cell[NR, i] = val
+				if (length(val) > width[i])
+					width[i] = length(val)
+			}
+		}
+		END {
+			for (i = 1; i <= n; i++) {
+				printf "%-*s", width[i], headers[i]
+				if (i < n)
+					printf "  "
+				else
+					printf "\n"
+			}
+			for (r = 1; r <= rows; r++) {
+				for (i = 1; i <= n; i++) {
+					printf "%-*s", width[i], cell[r, i]
+					if (i < n)
+						printf "  "
+					else
+						printf "\n"
+				}
+			}
+		}
+	' "${in_file}"
+}
+
+volume_collect_snapshot() {
+	out_file=$1
+	raw_tmp=$(mktemp /tmp/cellmgr-volume-raw.XXXXXX)
+	names=
+
+	if ensure_volume_manifest_layout; then
+		for volume_conf in "${MANIFEST_DIR}"/*.volume; do
+			[ -f "${volume_conf}" ] || continue
+			name=${volume_conf##*/}
+			name=${name%.volume}
+			assert_valid_volume_name "${name}"
+			names="${names} ${name}"
+		done
+	fi
+
+	if [ -d "${CELL_VOLUME_DIR}" ]; then
+		for volume_path in "${CELL_VOLUME_DIR}"/*; do
+			[ -d "${volume_path}" ] || continue
+			name=${volume_path##*/}
+			case "${name}" in
+			*[!A-Za-z0-9._-]*)
+				echo "Skipping invalid runtime volume directory ${volume_path}" >&2
+				continue
+				;;
+			esac
+			if ! word_list_contains "${name}" "${names}"; then
+				names="${names} ${name}"
+			fi
+		done
+	fi
+
+	: > "${raw_tmp}"
+	for name in ${names}; do
+		volume_manifest_paths "${name}"
+		manifest=0
+		runtime=0
+		mounted=0
+		mode=
+		if [ -f "${VOLUME_CONF}" ]; then
+			manifest=1
+			load_volume_manifest_conf "${name}"
+			mode=$(runtime_tsv_sanitize "${VOLUME_MODE:-}")
+		fi
+		path=$(runtime_tsv_sanitize "${VOLUME_PATH}")
+		if [ -d "${VOLUME_PATH}" ]; then
+			runtime=1
+			if runtime_volume_mounted "${VOLUME_PATH}"; then
+				mounted=1
+			fi
+		fi
+		refs=$(volume_ref_count "${name}")
+		used_by=$(runtime_tsv_sanitize "$(volume_used_by_list "${name}")")
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		    "${name}" "${manifest}" "${runtime}" "${mode}" "${path}" \
+		    "${mounted}" "${refs}" "${used_by}" >> "${raw_tmp}"
+	done
+
+	LC_ALL=C sort -k1,1 "${raw_tmp}" > "${out_file}"
+	rm -f "${raw_tmp}"
+}
+
+volume_list_view() {
+	header=YES
+	tsv=NO
+	view=merged
+	output_fields=
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--view)
+			[ $# -ge 2 ] || {
+				echo "volume list: --view requires a value" >&2
+				exit 1
+			}
+			view=$2
+			shift 2
+			;;
+		-o)
+			[ $# -ge 2 ] || {
+				echo "volume list: -o requires a field list" >&2
+				exit 1
+			}
+			output_fields=$2
+			shift 2
+			;;
+		-T)
+			tsv=YES
+			shift
+			;;
+		-H)
+			header=NO
+			shift
+			;;
+		-*)
+			echo "volume list: unknown option $1" >&2
+			exit 1
+			;;
+		*)
+			echo "volume list: unexpected argument $1" >&2
+			exit 1
+			;;
+		esac
+	done
+	if [ "${header}" = "NO" ] && [ "${tsv}" != "YES" ]; then
+		echo "volume list: -H requires -T" >&2
+		exit 1
+	fi
+	volume_parse_output_fields "${output_fields}" "${view}" || exit 1
+	snapshot_tmp=$(mktemp /tmp/cellmgr-volume-snapshot.XXXXXX)
+	projected_tmp=$(mktemp /tmp/cellmgr-volume-projected.XXXXXX)
+	volume_collect_snapshot "${snapshot_tmp}"
+	volume_project_fields "${snapshot_tmp}" > "${projected_tmp}"
+
+	if [ "${tsv}" = "YES" ]; then
+		if [ "${header}" = "YES" ]; then
+			volume_print_header
+		fi
+		cat "${projected_tmp}"
+	else
+		volume_print_human_table "${projected_tmp}"
+	fi
+
+	rm -f "${snapshot_tmp}" "${projected_tmp}"
+}
+
+volume_show_view() {
+	[ $# -ge 1 ] || {
+		echo "volume show: missing volume name" >&2
+		exit 1
+	}
+	name=$1
+	shift
+	assert_valid_volume_name "${name}"
+
+	header=YES
+	tsv=NO
+	view=merged
+	output_fields=
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--view)
+			[ $# -ge 2 ] || {
+				echo "volume show: --view requires a value" >&2
+				exit 1
+			}
+			view=$2
+			shift 2
+			;;
+		-o)
+			[ $# -ge 2 ] || {
+				echo "volume show: -o requires a field list" >&2
+				exit 1
+			}
+			output_fields=$2
+			shift 2
+			;;
+		-T)
+			tsv=YES
+			shift
+			;;
+		-H)
+			header=NO
+			shift
+			;;
+		-*)
+			echo "volume show: unknown option $1" >&2
+			exit 1
+			;;
+		*)
+			echo "volume show: unexpected argument $1" >&2
+			exit 1
+			;;
+		esac
+	done
+	if [ "${header}" = "NO" ] && [ "${tsv}" != "YES" ]; then
+		echo "volume show: -H requires -T" >&2
+		exit 1
+	fi
+
+	volume_parse_output_fields "${output_fields}" "${view}" || exit 1
+	snapshot_tmp=$(mktemp /tmp/cellmgr-volume-snapshot.XXXXXX)
+	row_tmp=$(mktemp /tmp/cellmgr-volume-row.XXXXXX)
+	projected_tmp=$(mktemp /tmp/cellmgr-volume-projected.XXXXXX)
+	volume_collect_snapshot "${snapshot_tmp}"
+	if ! awk -F '\t' -v n="${name}" '$1==n{print;found=1;exit} END{exit found?0:1}' \
+	    "${snapshot_tmp}" > "${row_tmp}"; then
+		echo "volume not found: ${name}" >&2
+		rm -f "${snapshot_tmp}" "${row_tmp}" "${projected_tmp}"
+		exit 1
+	fi
+	volume_project_fields "${row_tmp}" > "${projected_tmp}"
+
+	if [ "${tsv}" = "YES" ]; then
+		if [ "${header}" = "YES" ]; then
+			volume_print_header
+		fi
+		cat "${projected_tmp}"
+	else
+		volume_print_human_table "${projected_tmp}"
+	fi
+
+	rm -f "${snapshot_tmp}" "${row_tmp}" "${projected_tmp}"
+}
+
+volume_fields_view() {
+	view=merged
+	tsv=NO
+	header=YES
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--view)
+			[ $# -ge 2 ] || {
+				echo "volume fields: --view requires a value" >&2
+				exit 1
+			}
+			view=$2
+			shift 2
+			;;
+		-T)
+			tsv=YES
+			shift
+			;;
+		-H)
+			header=NO
+			shift
+			;;
+		-*)
+			echo "volume fields: unknown option $1" >&2
+			exit 1
+			;;
+		*)
+			echo "volume fields: unexpected argument $1" >&2
+			exit 1
+			;;
+		esac
+	done
+	if [ "${header}" = "NO" ] && [ "${tsv}" != "YES" ]; then
+		echo "volume fields: -H requires -T" >&2
+		exit 1
+	fi
+
+	fields_tmp=$(mktemp /tmp/cellmgr-volume-fields.XXXXXX)
+	volume_supported_fields "${view}" > "${fields_tmp}" || {
+		rm -f "${fields_tmp}"
+		exit 1
+	}
+	if [ "${tsv}" = "YES" ]; then
+		if [ "${header}" = "YES" ]; then
+			printf 'field\n'
+		fi
+		cat "${fields_tmp}"
+	else
+		printf '%-24s\n' 'FIELD'
+		awk '{ printf "%-24s\n", $0 }' "${fields_tmp}"
+	fi
+	rm -f "${fields_tmp}"
+}
+
+emit_reconcile_section() {
+	emit_section=$1
+	if [ "${RECONCILE_LAST_SECTION:-}" != "${emit_section}" ]; then
+		if [ -n "${RECONCILE_LAST_SECTION:-}" ]; then
+			printf '\n'
+		fi
+		printf '%s\n' "${emit_section}"
+		RECONCILE_LAST_SECTION=${emit_section}
+	fi
+}
+
+emit_reconcile_section_action() {
+	emit_section=$1
+	emit_action=$2
+	emit_msg=${3:-}
+	if [ "${RECONCILE_SILENT}" = "YES" ]; then
+		return
+	fi
+	emit_reconcile_section "${emit_section}"
+	printf '  %-12s %s\n' "${emit_action}" "${emit_msg}"
+}
+
+emit_reconcile() {
+	emit_name=$1
+	emit_action=$2
+	emit_msg=${3:-}
+	emit_reconcile_section_action "cell ${emit_name}" "${emit_action}" "${emit_msg}"
+}
+
+emit_reconcile_header() {
+	dry_run=$1
+	reapply=$2
+	restart_changed=$3
+	verbose=$4
+	if [ "${RECONCILE_SILENT}" = "YES" ]; then
+		return
+	fi
+	printf 'apply: dry-run=%s reapply=%s restart-changed=%s verbose=%s\n' \
+	    "${dry_run}" "${reapply}" "${restart_changed}" "${verbose}"
+}
+
+emit_reconcile_footer() {
+	total=$1
+	changed=$2
+	failed=$3
+	dry_run=$4
+	if [ "${RECONCILE_SILENT}" = "YES" ]; then
+		return
+	fi
+	printf '\n'
+	printf 'summary: cells=%s changed=%s failed=%s dry-run=%s\n' \
+	    "${total}" "${changed}" "${failed}" "${dry_run}"
+}
+
+emit_reconcile_result() {
+	emit_name=$1
+	emit_status=$2
+	emit_msg=${3:-}
+	emit_reconcile_section_action "cell ${emit_name}" "${emit_status}" "${emit_msg}"
+}
+
+run_reconcile_step() {
+	step_label=$1
+	shift
+	if [ "${RECONCILE_VERBOSE}" = "YES" ]; then
+		printf '    %s\n' "${step_label}"
+		"$@"
+		rc=$?
+		if [ "${rc}" -ne 0 ]; then
+			printf '    failed: %s (exit %s)\n' "${step_label}" "${rc}" >&2
+		fi
+		return "${rc}"
+	fi
+
+	step_log=$(mktemp /tmp/cellmgr-reconcile.XXXXXX)
+	if "$@" >"${step_log}" 2>&1; then
+		rm -f "${step_log}"
+		return 0
+	fi
+	rc=$?
+	if [ -s "${step_log}" ]; then
+		printf '    failed: %s\n' "${step_label}" >&2
+		cat "${step_log}" >&2
+	else
+		printf '    failed: %s (exit %s)\n' "${step_label}" "${rc}" >&2
+	fi
+	rm -f "${step_log}"
+	return "${rc}"
+}
+
+word_list_contains() {
+	needle=$1
+	list=$2
+	for item in ${list}; do
+		if [ "${item}" = "${needle}" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+reconcile_order() {
+	if ! ensure_manifest_layout; then
+		return 0
+	fi
+	pending=
+	for cell_conf in "${MANIFEST_DIR}"/*.cell; do
+		[ -f "${cell_conf}" ] || continue
+		cell_name=${cell_conf##*/}
+		cell_name=${cell_name%.cell}
+		assert_valid_cell_name "${cell_name}"
+		pending="${pending} ${cell_name}"
+	done
+
+	set -- ${pending}
+	if [ $# -eq 0 ]; then
+		return 0
+	fi
+
+	done_names=
+	ordered=
+	while :; do
+		set -- ${pending}
+		if [ $# -eq 0 ]; then
+			break
+		fi
+
+		progress=0
+		remaining=
+		for cell_name in "$@"; do
+			load_manifest_cell_conf "${cell_name}"
+			deps=$(normalize_dep_list "${CELL_DEPENDS_ON:-}")
+			ready=YES
+			for dep in ${deps}; do
+				if ! manifest_cell_exists "${dep}"; then
+					echo "cell ${cell_name} depends on missing manifest cell ${dep}" >&2
+					return 1
+				fi
+				if ! word_list_contains "${dep}" "${done_names}"; then
+					ready=NO
+					break
+				fi
+			done
+
+			if [ "${ready}" = "YES" ]; then
+				ordered="${ordered} ${cell_name}"
+				done_names="${done_names} ${cell_name}"
+				progress=1
+			else
+				remaining="${remaining} ${cell_name}"
+			fi
+		done
+
+		if [ "${progress}" -eq 0 ]; then
+			echo "dependency cycle detected among:${remaining}" >&2
+			return 1
+		fi
+		pending=${remaining}
+	done
+
+	for name in ${ordered}; do
+		printf '%s\n' "${name}"
+	done
+}
+
+healthcheck_cell() {
+	name=$1
+	health_cmd=$2
+	[ -n "${health_cmd}" ] || return 0
+
+	cell_cid=$(cell_cid_by_name "${name}" || true)
+	if [ -z "${cell_cid}" ]; then
+		echo "healthcheck: cell ${name} is not running" >&2
+		return 1
+	fi
+
+	cellctl exec "${cell_cid}" /bin/sh -c "${health_cmd}"
+}
+
+reconcile_one_cell() {
+	name=$1
+	dry_run=$2
+	reapply=$3
+	restart_changed=$4
+
+	load_manifest_cell_conf "${name}"
+	manifest_autostart=${CELL_AUTOSTART:-NO}
+	manifest_supervise_cmd=${CELL_SUPERVISE_CMD:-}
+	manifest_create_profile=${CELL_CREATE_PROFILE:-}
+	manifest_create_reserved_ports=${CELL_CREATE_RESERVED_PORTS:-}
+	manifest_create_rlimit_nofile=${CELL_CREATE_RLIMIT_NOFILE:-}
+	manifest_create_rlimit_as=${CELL_CREATE_RLIMIT_AS:-}
+	manifest_create_rlimit_core=${CELL_CREATE_RLIMIT_CORE:-}
+	manifest_supervise_facility=${CELL_SUPERVISE_FACILITY:-}
+	manifest_supervise_stdout_level=${CELL_SUPERVISE_STDOUT_LEVEL:-}
+	manifest_supervise_stderr_level=${CELL_SUPERVISE_STDERR_LEVEL:-}
+	manifest_supervise_tag=${CELL_SUPERVISE_TAG:-}
+	manifest_depends_on=${CELL_DEPENDS_ON:-}
+	manifest_healthcheck_cmd=${CELL_HEALTHCHECK_CMD:-}
+	manifest_volume_mounts=${CELL_VOLUME_MOUNTS:-}
+
+	cell_paths "${name}"
+	manifest_hash=$(file_hash "${MANIFEST_CELL_CONF}")
+	manifest_hash_file="${STATE_DIR}/manifest.sha256"
+	apply_hash_file="${STATE_DIR}/apply.sha256"
+	runtime_exists=NO
+	config_changed=NO
+	policy_changed=NO
+	service_changed=NO
+	changed=0
+
+	if [ -r "${CELL_CONF}" ]; then
+		runtime_exists=YES
+		load_cell_conf "${name}"
+		if [ "${CELL_AUTOSTART:-NO}" != "${manifest_autostart}" ] ||
+		   [ "${CELL_SUPERVISE_CMD:-}" != "${manifest_supervise_cmd}" ] ||
+		   [ "${CELL_SUPERVISE_FACILITY:-}" != "${manifest_supervise_facility}" ] ||
+		   [ "${CELL_SUPERVISE_STDOUT_LEVEL:-}" != "${manifest_supervise_stdout_level}" ] ||
+		   [ "${CELL_SUPERVISE_STDERR_LEVEL:-}" != "${manifest_supervise_stderr_level}" ] ||
+		   [ "${CELL_SUPERVISE_TAG:-}" != "${manifest_supervise_tag}" ] ||
+		   [ "${CELL_DEPENDS_ON:-}" != "${manifest_depends_on}" ] ||
+		   [ "${CELL_HEALTHCHECK_CMD:-}" != "${manifest_healthcheck_cmd}" ] ||
+		   [ "${CELL_VOLUME_MOUNTS:-}" != "${manifest_volume_mounts}" ]; then
+			config_changed=YES
+			service_changed=YES
+		fi
+		if [ "${CELL_CREATE_PROFILE:-}" != "${manifest_create_profile}" ] ||
+		   [ "${CELL_CREATE_RESERVED_PORTS:-}" != "${manifest_create_reserved_ports}" ] ||
+		   [ "${CELL_CREATE_RLIMIT_NOFILE:-}" != "${manifest_create_rlimit_nofile}" ] ||
+		   [ "${CELL_CREATE_RLIMIT_AS:-}" != "${manifest_create_rlimit_as}" ] ||
+		   [ "${CELL_CREATE_RLIMIT_CORE:-}" != "${manifest_create_rlimit_core}" ]; then
+			config_changed=YES
+			policy_changed=YES
+		fi
+	fi
+
+	running=NO
+	if cell_exists "${name}"; then
+		running=YES
+	fi
+
+	apply_needed=NO
+	apply_hash=
+	if [ -r "${MANIFEST_APPLY_FILE}" ]; then
+		apply_hash=$(file_hash "${MANIFEST_APPLY_FILE}")
+		prev_apply_hash=$(state_read "${apply_hash_file}")
+		if [ "${reapply}" = "YES" ] || [ "${apply_hash}" != "${prev_apply_hash}" ]; then
+			apply_needed=YES
+		fi
+	fi
+
+	if [ "${runtime_exists}" = "NO" ]; then
+		emit_reconcile "${name}" "CREATE" "render runtime cell state"
+		changed=1
+	elif [ "${config_changed}" = "YES" ]; then
+		emit_reconcile "${name}" "UPDATE" "reconcile runtime cell.conf"
+		changed=1
+	fi
+
+	if [ "${manifest_autostart}" = "YES" ]; then
+		if [ "${apply_needed}" = "YES" ]; then
+			if [ "${running}" = "YES" ]; then
+				emit_reconcile "${name}" "QUIESCE" "pause supervised service for apply"
+				emit_reconcile "${name}" "APPLY" "run ${MANIFEST_APPLY_FILE}"
+				emit_reconcile "${name}" "RESTART" "supervised service after apply"
+			else
+				emit_reconcile "${name}" "APPLY" "run ${MANIFEST_APPLY_FILE}"
+				emit_reconcile "${name}" "START" "supervised service after apply"
+			fi
+			changed=1
+		elif [ "${running}" = "NO" ]; then
+			emit_reconcile "${name}" "START" "autostart=YES"
+			changed=1
+		elif [ "${service_changed}" = "YES" ]; then
+			emit_reconcile "${name}" "RESTART" "service settings changed"
+			changed=1
+		elif [ "${policy_changed}" = "YES" ] && [ "${restart_changed}" = "YES" ]; then
+			emit_reconcile "${name}" "RESTART" "policy changed (--restart-changed)"
+			changed=1
+		elif [ "${policy_changed}" = "YES" ]; then
+			emit_reconcile "${name}" "WARN" "policy drift requires restart or --restart-changed"
+		fi
+	else
+		if [ "${running}" = "YES" ]; then
+			emit_reconcile "${name}" "STOP" "autostart=NO"
+			changed=1
+		fi
+		if [ "${apply_needed}" = "YES" ]; then
+			emit_reconcile "${name}" "APPLY" "run ${MANIFEST_APPLY_FILE}"
+			changed=1
+		fi
+	fi
+
+	if [ -n "${manifest_healthcheck_cmd}" ] && [ "${manifest_autostart}" = "YES" ]; then
+		emit_reconcile "${name}" "HEALTHCHECK" "${manifest_healthcheck_cmd}"
+	fi
+
+	if [ "${changed}" -eq 0 ]; then
+		emit_reconcile "${name}" "NOOP" "already converged"
+	fi
+
+	if [ "${dry_run}" = "YES" ]; then
+		if [ "${changed}" -ne 0 ]; then
+			emit_reconcile_result "${name}" "DRY-RUN" "changes pending"
+			return 2
+		fi
+		emit_reconcile_result "${name}" "DRY-RUN" "already converged"
+		return 0
+	fi
+
+	if [ "${runtime_exists}" = "NO" ]; then
+		if ! run_reconcile_step "create runtime state" create_cell "${name}" "${manifest_autostart}" "${manifest_supervise_cmd}" \
+		    "${manifest_create_profile}" "${manifest_create_reserved_ports}" \
+		    "${manifest_create_rlimit_nofile}" "${manifest_create_rlimit_as}" \
+		    "${manifest_create_rlimit_core}" \
+		    "${manifest_supervise_facility}" "${manifest_supervise_stdout_level}" \
+		    "${manifest_supervise_stderr_level}" "${manifest_supervise_tag}" \
+		    "${manifest_depends_on}" "${manifest_healthcheck_cmd}" \
+		    "${manifest_volume_mounts}"; then
+			state_write "${STATE_DIR}/last_reconcile_result" "error:create"
+			emit_reconcile_result "${name}" "FAILED" "create"
+			return 1
+		fi
+		state_write "${manifest_hash_file}" "${manifest_hash}"
+	elif [ "${config_changed}" = "YES" ]; then
+		mkdir -p "${STATE_DIR}"
+		if ! write_runtime_cell_conf "${name}" "${manifest_autostart}" \
+		    "${manifest_supervise_cmd}" "${manifest_create_profile}" \
+		    "${manifest_create_reserved_ports}" "${manifest_create_rlimit_nofile}" \
+		    "${manifest_create_rlimit_as}" "${manifest_create_rlimit_core}" \
+		    "${manifest_supervise_facility}" \
+		    "${manifest_supervise_stdout_level}" "${manifest_supervise_stderr_level}" \
+		    "${manifest_supervise_tag}" "${manifest_depends_on}" \
+		    "${manifest_healthcheck_cmd}" "${manifest_volume_mounts}"; then
+			state_write "${STATE_DIR}/last_reconcile_result" "error:render"
+			return 1
+		fi
+		state_write "${manifest_hash_file}" "${manifest_hash}"
+	fi
+
+	if [ "${manifest_autostart}" = "YES" ]; then
+		if [ "${apply_needed}" = "YES" ]; then
+			if [ "${running}" = "YES" ]; then
+				cell_cid=$(cell_cid_by_name "${name}" || true)
+				if [ -z "${cell_cid}" ]; then
+					state_write "${STATE_DIR}/last_reconcile_result" "error:quiesce"
+					emit_reconcile_result "${name}" "FAILED" "quiesce"
+					return 1
+				fi
+				if ! run_reconcile_step "quiesce supervised service" stop_cell_processes "${name}" "${cell_cid}"; then
+					state_write "${STATE_DIR}/last_reconcile_result" "error:quiesce"
+					emit_reconcile_result "${name}" "FAILED" "quiesce"
+					return 1
+				fi
+			fi
+		else
+			if ! cell_exists "${name}"; then
+				if [ "${RECONCILE_SILENT}" = "YES" ]; then
+					printf 'Starting cell: %s.\n' "${name}"
+				fi
+				if ! run_reconcile_step "start service" start_cell "${name}"; then
+					state_write "${STATE_DIR}/last_reconcile_result" "error:start"
+					emit_reconcile_result "${name}" "FAILED" "start"
+					return 1
+				fi
+			elif [ "${service_changed}" = "YES" ]; then
+				if ! run_reconcile_step "restart service" restart_cell "${name}"; then
+					state_write "${STATE_DIR}/last_reconcile_result" "error:restart"
+					emit_reconcile_result "${name}" "FAILED" "restart"
+					return 1
+				fi
+			elif [ "${policy_changed}" = "YES" ] && [ "${restart_changed}" = "YES" ]; then
+				if ! run_reconcile_step "restart service" restart_cell "${name}"; then
+					state_write "${STATE_DIR}/last_reconcile_result" "error:restart"
+					emit_reconcile_result "${name}" "FAILED" "restart"
+					return 1
+				fi
+			fi
+		fi
+	else
+		if cell_exists "${name}"; then
+			if ! run_reconcile_step "stop service" stop_cell "${name}"; then
+				state_write "${STATE_DIR}/last_reconcile_result" "error:stop"
+				emit_reconcile_result "${name}" "FAILED" "stop"
+				return 1
+			fi
+		fi
+	fi
+
+	if [ "${apply_needed}" = "YES" ]; then
+		if [ "${manifest_autostart}" = "YES" ]; then
+			if ! run_reconcile_step "apply plan" apply_cell_script "${name}" "${MANIFEST_APPLY_FILE}"; then
+				if [ "${running}" = "YES" ]; then
+					run_reconcile_step "restore service after failed apply" start_cell "${name}" || true
+				fi
+				state_write "${STATE_DIR}/last_reconcile_result" "error:apply"
+				emit_reconcile_result "${name}" "FAILED" "apply"
+				return 1
+			fi
+		else
+			if ! run_reconcile_step "apply plan (ephemeral)" apply_cell_script --ephemeral "${name}" "${MANIFEST_APPLY_FILE}"; then
+				state_write "${STATE_DIR}/last_reconcile_result" "error:apply"
+				emit_reconcile_result "${name}" "FAILED" "apply"
+				return 1
+			fi
+		fi
+		state_write "${apply_hash_file}" "${apply_hash}"
+	fi
+
+	if [ "${manifest_autostart}" = "YES" ] && [ "${apply_needed}" = "YES" ]; then
+		post_apply_step="start service after apply"
+		if [ "${running}" = "YES" ]; then
+			post_apply_step="restart service after apply"
+		fi
+		if ! run_reconcile_step "${post_apply_step}" start_cell "${name}"; then
+			state_write "${STATE_DIR}/last_reconcile_result" "error:start"
+			emit_reconcile_result "${name}" "FAILED" "start"
+			return 1
+		fi
+	fi
+
+	if [ -n "${manifest_healthcheck_cmd}" ] && [ "${manifest_autostart}" = "YES" ]; then
+		if ! run_reconcile_step "healthcheck" healthcheck_cell "${name}" "${manifest_healthcheck_cmd}"; then
+			state_write "${STATE_DIR}/last_reconcile_result" "error:healthcheck"
+			emit_reconcile_result "${name}" "FAILED" "healthcheck"
+			return 1
+		fi
+	fi
+
+	state_write "${manifest_hash_file}" "${manifest_hash}"
+	state_write "${STATE_DIR}/last_reconcile_epoch" "$(date +%s)"
+	state_write "${STATE_DIR}/last_reconcile_result" "ok"
+
+	if [ "${changed}" -ne 0 ]; then
+		emit_reconcile_result "${name}" "RESULT" "changed"
+		return 2
+	fi
+	emit_reconcile_result "${name}" "RESULT" "ok"
+	return 0
+}
+
+reconcile_all() {
+	dry_run=$1
+	reapply=$2
+	restart_changed=$3
+
+	command -v cellctl >/dev/null 2>&1 || {
+		echo "missing required tool: cellctl" >&2
+		return 1
+	}
+
+	if [ "${dry_run}" != "YES" ]; then
+		need_root
+	fi
+
+	if ! order=$(reconcile_order); then
+		return 1
+	fi
+
+	if [ -n "${RECONCILE_TARGET_NAMES}" ]; then
+		for target in ${RECONCILE_TARGET_NAMES}; do
+			if ! manifest_cell_exists "${target}"; then
+				echo "cell not found in desired state: ${target}" >&2
+				return 1
+			fi
+		done
+	fi
+
+	if [ -z "${order}" ]; then
+		echo "No manifests found in ${MANIFEST_DIR} (*.cell)"
+		return 0
+	fi
+
+	if [ -n "${RECONCILE_TARGET_NAMES}" ]; then
+
+		filtered_order=
+		for name in ${order}; do
+			if word_list_contains "${name}" "${RECONCILE_TARGET_NAMES}"; then
+				filtered_order="${filtered_order} ${name}"
+			fi
+		done
+		order=${filtered_order# }
+		if [ -z "${order}" ]; then
+			echo "No matching manifests selected"
+			return 0
+		fi
+	fi
+
+	RECONCILE_LAST_SECTION=
+	emit_reconcile_header "${dry_run}" "${reapply}" "${restart_changed}" \
+	    "${RECONCILE_VERBOSE}"
+	changes=0
+	total=0
+	changed_cells=0
+	failed_cells=0
+	if reconcile_volumes "${dry_run}"; then
+		vol_rc=0
+	else
+		vol_rc=$?
+	fi
+	case "${vol_rc}" in
+	0)
+		;;
+	2)
+		changes=1
+		changed_cells=$((changed_cells + 1))
+		;;
+	*)
+		failed_cells=$((failed_cells + 1))
+		emit_reconcile_footer "${total}" "${changed_cells}" "${failed_cells}" "${dry_run}"
+		return "${vol_rc}"
+		;;
+	esac
+	for name in ${order}; do
+		total=$((total + 1))
+		if reconcile_one_cell "${name}" "${dry_run}" "${reapply}" \
+		    "${restart_changed}"; then
+			rc=0
+		else
+			rc=$?
+		fi
+
+		case "${rc}" in
+		0)
+			;;
+		2)
+			changes=1
+			changed_cells=$((changed_cells + 1))
+			;;
+		*)
+			failed_cells=$((failed_cells + 1))
+			emit_reconcile_footer "${total}" "${changed_cells}" \
+			    "${failed_cells}" "${dry_run}"
+			return "${rc}"
+			;;
+		esac
+	done
+
+	emit_reconcile_footer "${total}" "${changed_cells}" "${failed_cells}" \
+	    "${dry_run}"
+
+	if [ "${dry_run}" = "YES" ] && [ "${changes}" -ne 0 ]; then
+		return 2
+	fi
+	return 0
+}
+
+run_reconcile_command() {
+	dry_run=NO
+	reapply=NO
+	restart_changed=NO
+	all=NO
+	target_names=
+	RECONCILE_VERBOSE=NO
+	RECONCILE_SILENT=NO
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--dry-run)
+			dry_run=YES
+			shift
+			;;
+		--reapply)
+			reapply=YES
+			shift
+			;;
+		--restart-changed)
+			restart_changed=YES
+			shift
+			;;
+		--all)
+			all=YES
+			shift
+			;;
+		--silent)
+			RECONCILE_SILENT=YES
+			shift
+			;;
+		--manifest-dir)
+			[ $# -ge 2 ] || {
+				usage
+				exit 1
+			}
+			MANIFEST_DIR=$2
+			shift 2
+			;;
+		-v|--verbose)
+			RECONCILE_VERBOSE=YES
+			shift
+			;;
+		-*)
+			usage
+			return 1
+			;;
+		*)
+			assert_valid_cell_name "$1"
+			target_names="${target_names} $1"
+			shift
+			;;
+		esac
+	done
+
+	if [ "${RECONCILE_SILENT}" = "YES" ] && [ "${RECONCILE_VERBOSE}" = "YES" ]; then
+		echo "apply: --silent and --verbose are mutually exclusive" >&2
+		return 1
+	fi
+
+	if [ "${all}" = "YES" ] && [ -n "${target_names}" ]; then
+		echo "apply: --all cannot be combined with explicit cell names" >&2
+		return 1
+	fi
+
+	if [ "${all}" = "YES" ] || [ -z "${target_names}" ]; then
+		RECONCILE_TARGET_NAMES=
+	else
+		RECONCILE_TARGET_NAMES=${target_names# }
+	fi
+
+	reconcile_all "${dry_run}" "${reapply}" "${restart_changed}"
+	rc=$?
+	if [ "${rc}" -eq 0 ]; then
+		return 0
+	fi
+	return "${rc}"
+}
+
+
+resolve_cellmgr_self_path() {
+	cellmgr_self=$0
+	case "${cellmgr_self}" in
+	*/*)
+		;;
+	*)
+		cellmgr_self=$(command -v -- "${cellmgr_self}" 2>/dev/null || printf '%s' "${cellmgr_self}")
+		;;
+	esac
+	case "${cellmgr_self}" in
+	/*)
+		printf '%s\n' "${cellmgr_self}"
+		;;
+	*)
+		printf '%s/%s\n' "$(pwd)" "${cellmgr_self}"
+		;;
+	esac
+}
+
+load_cellmgr_modules() {
+	cellmgr_self_path=$(resolve_cellmgr_self_path)
+	cellmgr_script_dir=${cellmgr_self_path%/*}
+	cellmgr_libdir=
+
+	for candidate in \
+	    "${cellmgr_script_dir}/lib" \
+	    "${cellmgr_script_dir}/../libexec/cellmgr" \
+	    "/usr/libexec/cellmgr"; do
+		if [ -r "${candidate}/dispatch.sh" ]; then
+			cellmgr_libdir=${candidate}
+			break
+		fi
+	done
+
+	if [ -z "${cellmgr_libdir}" ]; then
+		echo "unable to locate cellmgr module directory" >&2
+		exit 1
+	fi
+
+	for module in \
+	    legacy.sh \
+	    cell.sh \
+	    volume.sh \
+	    system.sh \
+	    ipc.sh \
+	    dispatch.sh; do
+		if [ ! -r "${cellmgr_libdir}/${module}" ]; then
+			echo "missing cellmgr module: ${cellmgr_libdir}/${module}" >&2
+			exit 1
+		fi
+		# shellcheck disable=SC1090
+		. "${cellmgr_libdir}/${module}"
+	done
+}
+
+load_cellmgr_modules
+
+dispatch_command "$@"
+exit "$?"

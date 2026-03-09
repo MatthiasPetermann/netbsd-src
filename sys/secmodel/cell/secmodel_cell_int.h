@@ -27,6 +27,8 @@ struct cell_entry {
   char ce_name[CELL_NAME_MAX + 1];
   /* Configured root path metadata for userland tooling and reporting. */
   char ce_root[CELL_ROOT_MAX + 1];
+  /* Creation timestamp in monotonic nanoseconds since boot. */
+  uint64_t ce_created_ns;
   /* System policy profile controlling kauth deny/defer behavior. */
   enum cell_policy_profile ce_profile;
   /* Sampled process count from allproc (excludes zombies). */
@@ -53,6 +55,12 @@ struct cell_entry {
   uint16_t ce_nports;
   /* Reserved listening ports (host byte order as configured by userland). */
   uint16_t ce_ports[CELL_PORTS_MAX];
+  /* Create-time flags copied from struct cell_create. */
+  uint32_t ce_create_flags;
+  /* Optional supervised process limits (CELL_RLIMIT_INFINITY = unlimited). */
+  uint64_t ce_rlimit_nofile;
+  uint64_t ce_rlimit_as;
+  uint64_t ce_rlimit_core;
   /* Link in global cell_list. */
   LIST_ENTRY(cell_entry) ce_entry;
 };

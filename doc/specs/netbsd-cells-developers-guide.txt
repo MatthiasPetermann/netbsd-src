@@ -1,280 +1,254 @@
-NetBSD cells-v2 developer guide (implementation deep dive)
-===========================================================
+NetBSD cells-v2 developer guide (implementation notes)
+======================================================
 
 Status
 ------
-This document is an implementation-oriented guide for the current cells-v2
-stack in this source tree. It explains what each layer does, how it is wired,
-and where to read the code first.
-
-Covered components:
-- secmodel_cell (kernel security model + snapshot telemetry)
-- cellctl (sysctl transport + supervise/runtime adapter)
-- cellmgr (host orchestration shell tool)
-- svcmgr (inside-cell multi-service runner)
+This guide reflects the current source tree and runtime behavior.
 
 
-1. NetBSD context and design placement
---------------------------------------
-The stack is intentionally NetBSD-native:
-- policy and enforcement in the kernel via secmodel/kauth
-- narrow userland tools that mostly transport intent
-- host-root controlled lifecycle and logging via existing syslogd paths
-
-Relevant code entry points:
-- Kernel model registration and lifecycle:
-  - sys/secmodel/cell/secmodel_cell.c
-  - sys/secmodel/cell/cell.h
-- Shared cell ABI types/flags:
-  - sys/sys/cell.h
-- Userland control/orchestration:
-  - usr.sbin/cellctl/cellctl.c
-  - usr.sbin/cellmgr/cellmgr
-  - usr.sbin/svcmgr/svcmgr.c
-
-
-2. secmodel_cell internals (kernel)
------------------------------------
-2.1 Core data model
-- `struct cell_entry` is the authoritative in-kernel object per cell:
-  identity, metadata (name/root), profile, reserved ports, and snapshot
-  counters (`ce_*` fields).
-- Global state:
-  - list head (`cell_list`)
-  - model lock (`cell_lock`)
-  - monotonic id allocator (`cell_next_id`, host remains id 0)
-  - periodic callout for telemetry sampling (`cell_cpu_account_ch`)
-
-Read first:
-- struct definitions and globals near top of
-  `sys/secmodel/cell/secmodel_cell.c`.
-
-2.2 Control plane via sysctl
-secmodel_cell exports the control ABI under `security.models.cell.*`.
-
-Handlers:
-- `id`: read current credential cell id / write to request cell entry
-  (host-root only for write).
-- `create`: structured write-only input (`struct cell_create`), validates
-  flags and payload invariants, allocates new cell id, and returns it.
-- `destroy`: remove empty cell object by id.
-- `list`: snapshot array of `struct cell_info`.
-
-Implementation notes:
-- `create` rejects unknown flags, invalid reserved ports, and bad profile value.
-- profile defaults to HIGH when not explicitly set.
-- `destroy` refuses if procs/zombies still reference the cell.
-
-Read first:
-- `secmodel_cell_sysctl_id`
-- `secmodel_cell_sysctl_create`
-- `secmodel_cell_sysctl_destroy`
-- `secmodel_cell_sysctl_list`
-
-2.3 Enforcement model: kauth listeners
-Listeners are registered for process, cred, system, and network scopes.
-
-Process scope:
-- `KAUTH_PROCESS_CANSEE` and `KAUTH_PROCESS_SIGNAL` enforce same-cell boundary
-  (except host-root bypass).
-
-Credential scope:
-- `KAUTH_CRED_INIT` initializes jid to host (0).
-- `KAUTH_CRED_COPY` preserves source jid.
-
-System scope:
-- celled credentials are constrained for host-wide admin classes
-  (mount/module/reboot/time/sysctl-write families and more), depending on
-  profile (`low`, `medium`, `high`).
-- medium keeps SysV IPC admin requests deferred where high denies.
-
-Network scope:
-- bind checks apply per-port reservation ownership.
-- if port is reserved by any cell, only owning cell credentials may bind.
-- ephemeral port 0 is intentionally not reservation-restricted.
-
-Read first:
-- `secmodel_cell_process_cb`
-- `secmodel_cell_cred_cb`
-- `secmodel_cell_system_cb`
-- `secmodel_cell_network_cb`
-
-2.4 Snapshot metrics model
-- secmodel_cell uses a periodic sampler to populate per-cell metrics.
-- Exported snapshots include:
-  - CPU ticks over the last 1-second window
-  - rolling 10-second average of per-second CPU ticks
-  - current member process count
-  - member reference count including zombies
-  - sampled virtual-memory size
-- These counters are observation-only and intentionally avoid hot-path policy
-  hooks in scheduler, VM, descriptor, or socket allocation paths.
-- The exported values are gauge-style snapshots; CPU values are window metrics
-  derived from sampled process tick counters.
-
-Read first:
-- `secmodel_cell_cpu_account_tick`
-
-2.5 Concurrency and lifecycle
-- Most cell state is under `cell_lock`.
-- process table walks coordinate `proc_lock` + `cell_lock`.
-- module init path:
-  1) secmodel registration (`secmodel_register`)
-  2) sysctl tree + key init
-  3) kauth listeners start
-  4) snapshot callout scheduled
-- module stop path removes listeners and callout.
-
-
-3. cellctl internals (userland control adapter)
------------------------------------------------
-3.1 ABI boundary and object translation
-- `cellctl create` builds a `struct cell_create` and writes it to
-  `security.models.cell.create`.
-- `cellctl list` reads `security.models.cell.list` and prints table output.
-- `cellctl destroy` writes target id to `security.models.cell.destroy`.
-- `cellctl exec/supervise` writes target id through `security.models.cell.id`
-  before `chroot + chdir + execvp` in child path.
-
-`cellctl` intentionally performs very little policy logic; validation is mostly
-argument sanity and forwarding into kernel ABI fields.
-
-3.2 Supervise mode
-`cellctl supervise` is a detached monitor process that:
-- daemonizes
-- starts one command inside target cell
-- captures child stdout/stderr using pipes
-- forwards line-oriented logs to syslog with separate priorities
-- restarts the command on exit with exponential backoff (1..10s)
-- resets backoff if runtime lasted >= 30s
-- supports clean shutdown on TERM/INT/QUIT
-
-This is the host-side glue used by `cellmgr start`.
-
-3.3 Stats output
-`cellctl stats` exposes `security.models.cell.list` counters as:
-- human table mode
-- verbose table mode
-- Prometheus text format (`-P`), optional HTTP header (`-h`)
-
-Read first:
-- command dispatch in `main()` and `usage()`
-- `cell_fetch_list`
-- `cell_supervise_loop`
-- `cell_run_monitor_once`
-- `cell_stats`
-
-
-4. cellmgr internals (host orchestration)
------------------------------------------
-4.1 Implementation style
-- `cellmgr` is a POSIX shell tool (`usr.sbin/cellmgr/cellmgr`) with
-  explicit command orchestration around `cellctl`, mounts, and config files.
-- global config: `/etc/cellmgr.conf`
-- per-cell config: `${CELL_DATA_DIR}/<name>/cell.conf`
-
-4.2 Bootstrap path
-`bootstrap` performs platform preparation:
-- ensures root/tools
-- ensures secmodel_cell module is loaded now (`modload secmodel_cell`)
-- persists module autoload line in `/etc/modules.conf`
-- fetches base/etc sets and builds shared base layer
-- writes default `/etc/cellmgr.conf` if absent
-- ensures rc.conf has `cellmgr=NO` default entry
-
-4.3 Filesystem composition
-Per cell:
-- read-only null mount of shared base to `<root>`
-- writable null mount of cell data directory to `<root>/.data`
-- shared base contains symlinks (`/etc`, `/var`, `/tmp`, `/home`, `/root`,
-  `/usr/pkg`, dotfiles) into `/.data/...`
-- optional cell-local `/dev` tmpfs + `MAKEDEV`, optional `ptyfs` on `/dev/pts`
-
-This yields immutable base with writable per-cell state.
-
-4.4 Lifecycle commands
-- `create`: create dirs + etc seed + persist cell.conf defaults/options.
-- `start`: mount root, `cellctl create`, then `cellctl supervise`.
-- `stop`: terminate supervise monitor, destroy cell id, unmount.
-- `restart`: stop then start.
-- `start --all` / `stop --all`: operate on autostart-enabled cells.
-- `apply [--ephemeral]`: execute script in cell via `cellctl exec`.
-- `status` and `list`: reporting helpers over config and runtime.
-
-Policy forwarding model:
-- persisted `CELL_CREATE_*` fields are limited to profile/reserved ports and
-  are mapped 1:1 to `cellctl create` flags.
-
-Read first:
-- `start_cell_internal`
-- `create_cell`
-- `mount_cell_root` / `umount_cell_root`
-- `ensure_secmodel_cell`
-- `apply_cell_script`
-
-
-5. svcmgr internals (inside-cell process bundle runner)
--------------------------------------------------------
-5.1 Config format
-Default config file is `/etc/svcmgr.conf`.
-Each non-empty, non-comment line is:
-
-  <tag><whitespace><command...>
-
-Parser preserves the full command tail after first separator.
-
-5.2 Runtime model
-- one child per configured service (`/bin/sh -c <command>`)
-- each child runs in own session/process-group (`setsid`)
-- monitor event loop polls stdout/stderr pipes from all services
-- output is transformed to line records and emitted as:
-
-  <tag> <line>
-
-- stdout/stderr are line-buffered (`setvbuf(..., _IOLBF, ...)`) and flushed
-  per emitted line
-- on TERM/INT/QUIT: send SIGTERM to all running groups, wait up to 5s,
-  then SIGKILL remaining groups
-- no automatic respawn; service restarts are delegated to outer supervisor
-  layer (typically `cellctl supervise`)
-
-Read first:
-- `load_config`
-- `spawn_service`
-- `monitor_services`
-- `process_stream_chunk`
-
-
-6. End-to-end control/data flow
--------------------------------
-Create/start path:
-1) cellmgr prepares mounts + config
-2) cellmgr calls `cellctl create` (structured create payload)
-3) kernel secmodel_cell allocates id + stores policy
-4) cellmgr calls `cellctl supervise`
-5) supervise enters cell and executes command (often svcmgr)
-6) application logs -> svcmgr tag lines (if used) -> cellctl syslog forward
-
-Runtime observability path:
-- secmodel_cell sampler refreshes snapshot counters periodically
-- cellctl reads those snapshots from `security.models.cell.list`
-
-
-7. Source-map quick reference
------------------------------
-Kernel and ABI:
+1. Source and module map
+------------------------
+Kernel components:
 - `sys/secmodel/cell/secmodel_cell.c`
+- `sys/secmodel/cell/secmodel_cell_policy.c`
+- `sys/secmodel/cell/secmodel_cell_sysctl.c`
 - `sys/secmodel/cell/cell.h`
 - `sys/sys/cell.h`
 
-Userland tools:
+Userland components:
 - `usr.sbin/cellctl/cellctl.c`
-- `usr.sbin/cellctl/cellctl.8`
 - `usr.sbin/cellmgr/cellmgr`
-- `usr.sbin/cellmgr/cellmgr.8`
-- `usr.sbin/svcmgr/svcmgr.c`
-- `usr.sbin/svcmgr/svcmgr.8`
+- `usr.sbin/cellmgr/lib/dispatch.sh`
+- `usr.sbin/cellmgr/lib/cell.sh`
+- `usr.sbin/cellmgr/lib/volume.sh`
+- `usr.sbin/cellmgr/lib/system.sh`
+- `usr.sbin/cellmgr/lib/ipc.sh`
+- `usr.sbin/cellmgr/lib/legacy.sh`
+- `usr.sbin/cellui/adapter.c`
+- `usr.sbin/cellui/ui.c`
 
-Existing specs/ops docs:
-- `doc/specs/netbsd-cells-specification.txt`
-- `doc/specs/netbsd-cells-operations-guide.txt`
+`cellmgr` load order details:
+- `usr.sbin/cellmgr/cellmgr` defines base functions
+- `load_cellmgr_modules` sources `lib/*.sh`
+- sourced module functions intentionally become the active command handlers
+
+
+2. Command architecture
+-----------------------
+Current top-level dispatch (`dispatch_command`):
+- `ipc`
+- `cell`
+- `volume`
+- `system`
+- `apply`
+- `help`
+
+Design contracts:
+- resource-oriented read verbs: `list|show|fields`
+- mutation domain is explicit via `--scope`
+- read projection is explicit via `--view`
+- machine output is explicit via `-T`/`-H`/`-o`
+
+
+3. Cell snapshot/read pipeline internals
+----------------------------------------
+Key functions:
+- `runtime_collect_snapshot`
+- `runtime_parse_output_fields`
+- `runtime_project_fields`
+- `runtime_list`
+- `runtime_show`
+- `runtime_fields`
+
+Snapshot assembly sources:
+- desired manifests (`MANIFEST_DIR/*.cell`)
+- rendered runtime config (`CELL_DATA_DIR/*/cell.conf`)
+- `cellctl list -T`
+- `cellctl stats -T`
+
+Schema guards:
+- `cellctl list -T` accepts only 6-column or 9-column header variants
+- `cellctl stats -T` must match exact 9-column header
+- any mismatch returns hard error (`runtime: unexpected TSV schema ...`)
+
+Merge result column layout (internal stable order):
+1. `name`
+2. `running`
+3. `desired_state`
+4. `cid`
+5. `refs`
+6. `procs`
+7. `cpu1s`
+8. `cpu10s`
+9. `memory`
+10. `age`
+11. `root`
+12. `autostart`
+13. `create_profile`
+14. `create_reserved_ports`
+15. `create_rlimit_nofile`
+16. `create_rlimit_as`
+17. `create_rlimit_core`
+18. `depends_on`
+19. `healthcheck`
+20. `supervise_cmd`
+21. `volume_mounts`
+22. `manifest`
+23. `rendered`
+24. `apply_present`
+
+
+4. Volume snapshot/read pipeline internals
+------------------------------------------
+Key functions:
+- `volume_collect_snapshot`
+- `volume_parse_output_fields`
+- `volume_project_fields`
+- `volume_list_view`
+- `volume_show_view`
+- `volume_fields_view`
+
+Merged row layout:
+1. `name`
+2. `manifest`
+3. `runtime`
+4. `mode`
+5. `path`
+6. `mounted`
+7. `refs`
+8. `used_by`
+
+Computation notes:
+- `refs` from manifest scan (`volume_ref_count`)
+- `used_by` from manifest mount references (`volume_used_by_list`)
+- `mounted` from mount-table scan (`runtime_volume_mounted`)
+
+
+5. Mutation internals
+---------------------
+Desired state writers:
+- `create_manifest_cell`
+- `set_manifest_cell`
+- `write_manifest_cell_conf_file`
+- `create_manifest_volume`
+- `set_manifest_volume`
+
+Runtime render/mount path:
+- `create_cell`
+- `write_runtime_cell_conf`
+- `mount_cell_root` / `umount_cell_root`
+- `mount_cell_volumes` / `umount_cell_volumes`
+- `setup_local_dev`
+
+Lifecycle actions:
+- `start_cell_internal`
+- `start_cell`, `stop_cell`, `restart_cell`
+- `stop_cell_processes`
+
+Prune paths:
+- `prune_runtime_cell`, `prune_runtime_all`
+- `prune_runtime_volume`, `prune_runtime_volumes`
+
+Backup paths:
+- volumes: `backup_volume`, `restore_volume`, `delete_volume_backup`
+- overlays: `backup_overlay`, `restore_overlay`, `delete_overlay_backup`
+
+
+6. Reconcile/apply internals
+----------------------------
+Entry points:
+- `run_reconcile_command`
+- `reconcile_all`
+- `reconcile_one_cell`
+- `reconcile_volumes`
+
+Dependency ordering:
+- `reconcile_order` performs topological ordering from `CELL_DEPENDS_ON`
+- missing dependency manifests and cycles are hard failures
+
+Cell-level state machine inputs:
+- manifest hash and prior `state/manifest.sha256`
+- apply hash and prior `state/apply.sha256`
+- runtime existence (`cell.conf` presence)
+- running state (`cell_exists`)
+- drift class:
+  - service drift (`autostart`, supervise cmd/log settings, depends, healthcheck, mounts)
+  - policy drift (`create profile`, reserved ports, rlimits)
+
+Notable reconcile behavior:
+- apply plan hash drift triggers `apply_cell_script`
+- autostarted running cell with apply drift is quiesced before plan run
+- policy-only drift warns unless `--restart-changed` is supplied
+- healthcheck runs post-convergence when configured and autostarted
+
+Return semantics:
+- per-cell reconcile returns `2` when changed, `0` when noop, non-zero on failure
+- global `apply --dry-run` returns `2` if any changes are pending
+
+
+7. Declarative plan parser internals
+------------------------------------
+Core parser:
+- `apply_declarative_plan`
+
+Execution helpers:
+- `apply_exec_in_cell`
+- `apply_write_block_file`
+- `apply_patch_block`
+
+Parser contracts:
+- uppercase directive enforcement
+- explicit block state machine for `FILE_BEGIN/FILE_END` and `PATCH_BEGIN/PATCH_END`
+- strict option parsing for `DIR`, `FILE_BEGIN`, `PATCH_BEGIN`
+- package token validation in `validate_pkg_name`
+
+Runtime notes:
+- `apply_cell_script` ensures cert store refresh via `certctl rehash`
+- stopped cells use `--ephemeral` path when applying with autostart `NO`
+
+
+8. IPC internals (`ipc serve --stdio`)
+--------------------------------------
+Server path:
+- `run_ipc_resource_command`
+- `run_ipc_serve_command`
+- `ipc_serve_stdio`
+
+Protocol helpers:
+- `ipc_send_frame_file`
+- `ipc_read_payload`
+- `ipc_execute_call`
+
+Protocol constraints:
+- framed header format: `M 1 <TYPE> <ID> <P1> <P2> <P3> <LEN>`
+- payload hard limit: `67108864` bytes (64 MiB)
+- CALL mode `0` captures stdout/stderr, mode `1` binds command I/O to `/dev/tty`
+- optional single env override is validated (`[A-Za-z_][A-Za-z0-9_]*`)
+
+
+9. `cellui` integration internals
+---------------------------------
+Bridge and protocol client:
+- `usr.sbin/cellui/adapter.c`
+
+Cell list parser contract:
+- command uses fixed `-o` field order with 18 columns
+- parser uses `split_tsv_fixed(..., 18)` and strict bool decoding
+
+Storage parser contract:
+- volumes from 8-column merged volume TSV
+- overlays synthesized from 4-column cell TSV (`name,manifest,running,root`)
+
+Operational behavior:
+- prefers long-lived IPC session
+- on transport failure marks bridge disconnected and surfaces reconnect UI
+
+
+10. Developer guardrails
+------------------------
+- Keep `cellctl -T` schema validation strict and fail-closed.
+- Keep exported field names lowercase `snake_case` and stable.
+- Preserve human-table default for read commands.
+- Keep machine output contracts stable (`-T`, headers, field order with `-o`).
+- Preserve confirmation gates for destructive paths (`--all`, `--orphans`, restore/delete).
+- Maintain name and mount-spec validators as single sources of truth.

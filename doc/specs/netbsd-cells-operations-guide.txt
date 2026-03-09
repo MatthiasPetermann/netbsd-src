@@ -1,241 +1,201 @@
-NetBSD cells-v2 operations guide (pragmatic)
-============================================
+NetBSD cells-v2 operations guide (unified `cellmgr`)
+====================================================
 
 Status
 ------
-This document explains the operational model for the cells-v2 stack from a
-DevOps/SRE perspective. It is intentionally practical and complements the
-formal specification in:
-- doc/specs/netbsd-cells-specification.txt
-- doc/specs/netbsd-cells-developers-guide.txt
+This guide documents operational workflows for the current implementation.
 
-Scope covered here:
-- secmodel_cell (kernel isolation policy + snapshot metrics)
-- cellctl (low-level control and supervised runtime entry)
-- cellmgr (fleet-level provisioning and lifecycle orchestration)
-- svcmgr (inside-cell lightweight multi-service launcher)
+Primary references:
+- `usr.sbin/cellmgr/cellmgr.8`
+- `usr.sbin/cellctl/cellctl.8`
+- `usr.sbin/cellui/cellui.8`
+- `doc/specs/netbsd-cells-specification.txt`
 
 
-1. Why this stack exists
-------------------------
-The stack follows a strict layering model:
-- kernel owns isolation policy and cell identity
-- userland tools transport intent with minimal hidden behavior
-- logs are centralized on the host through standard NetBSD syslog paths
+1. Day-0 bootstrap and first converge
+-------------------------------------
+Recommended bootstrap path:
 
-In practice this means:
-- secmodel_cell is the source of truth for cell identity and isolation policy
-- cellctl is the precise operational tool
-- cellmgr scales that operation for many cells and persistent config
-- svcmgr lets one cell run multiple tightly-coupled processes while still
-  presenting tagged logs through one supervise entrypoint
+1) Initialize host integration and base layer:
+   - `cellmgr system bootstrap`
+2) Create desired manifests:
+   - `cellmgr volume create data --scope desired`
+   - `cellmgr cell create app --cmd '/usr/sbin/daemon-example' --scope desired`
+3) Review planned drift:
+   - `cellmgr apply --dry-run --all`
+4) Converge:
+   - `cellmgr apply --all`
 
-
-2. Layered architecture at a glance
------------------------------------
-
-+---------------------------------------------------------------+
-| Host root (jid 0)                                              |
-|                                                               |
-|  +----------------------+     +-----------------------------+  |
-|  | cellmgr              | --> | cellctl supervise/create... |  |
-|  | (orchestration)      |     | (runtime/control adapter)   |  |
-|  +----------------------+     +--------------+--------------+  |
-|                                               |                 |
-|                                               v                 |
-|                              +-------------------------------+  |
-|                              | secmodel_cell (kernel)        |  |
-|                              | - cell metadata               |  |
-|                              | - profile / ports             |  |
-|                              | - kauth isolation listeners   |  |
-|                              | - snapshot metrics sampler    |  |
-|                              +-------------------------------+  |
-|                                                               |
-| Host syslogd <--- stdout/stderr forwarded by cellctl supervise |
-+---------------------------------------------------------------+
-
-Inside each cell runtime:
-
-+---------------------------------------------------------------+
-| Cell "X"                                                      |
-|  svcmgr (optional)                                             |
-|   |- service A (stdout/stderr)                                 |
-|   |- service B (stdout/stderr)                                 |
-|   `- service C (stdout/stderr)                                 |
-+---------------------------------------------------------------+
+What bootstrap does:
+- ensures `cellmgr=YES` in `/etc/rc.conf`
+- ensures `secmodel_cell` is loaded and persistent via `/etc/modules.conf`
+- writes default `/etc/cellmgr.conf` when absent
+- fetches release sets and builds the shared base layer
 
 
-3. Who does what (operational contract)
----------------------------------------
-3.1 secmodel_cell (kernel)
-- Enforces cell-scoped identity and process boundaries.
-- Enforces create-time policy (profile, reserved ports).
-- Publishes periodic snapshot counters per cell.
+2. Read workflows (day-1/day-2)
+-------------------------------
+Primary read commands:
+- `cellmgr cell list|show|fields`
+- `cellmgr volume list|show|fields`
 
-Operational takeaway:
-- If isolation behavior is surprising, inspect kernel/cell config first.
-- Userland tools are thin and generally do not reinterpret policy.
+Projection controls:
+- `--view merged|desired|runtime`
+- `-o field1,field2,...`
+- `-T` for TSV, `-H` for headerless TSV
 
-3.2 cellctl
-- Creates/destroys/lists cells.
-- Enters cell runtime via exec.
-- Runs one supervised command per invocation:
-  - daemonized monitor
-  - stdout/stderr forwarding to host syslog
-  - restart with backoff
+Examples:
+- `cellmgr cell list --view merged`
+- `cellmgr cell list --view runtime -T -H -o name,cid,procs,cpu1s,cpu10s,age`
+- `cellmgr volume list --view merged -T -o name,manifest,runtime,mounted,refs,used_by`
 
-Operational takeaway:
-- cellctl is the exact low-level primitive to debug first.
-- If you can do it with cellctl manually, cellmgr can generally automate it.
-
-3.3 cellmgr
-- Prepares filesystem/base layers and persistent per-cell config.
-- Encodes desired state in cell.conf and applies it at start.
-- Starts/stops multiple cells consistently.
-
-Operational takeaway:
-- Treat cellmgr as the fleet operator and source of persisted intent.
-
-3.4 svcmgr
-- Optional helper used as the single supervised entrypoint inside one cell.
-- Reads /etc/svcmgr.conf and starts multiple services in parallel.
-- Prefixes each emitted line with a service tag and flushes per line.
-- Does not respawn services itself; restart is delegated to outer supervision.
-
-Operational takeaway:
-- Use svcmgr when one cell intentionally contains a small process bundle.
-- Keep the host model simple: one supervise command per cell.
+Output reminders:
+- `age` is raw seconds in TSV and humanized in table mode
+- boolean-like fields are `1|0` in TSV and `YES|NO` in table mode
 
 
-4. Practical topology example
------------------------------
-Example desired topology:
-- Cell "mantisbt": nginx (port 3000) + php-fpm
-- Cell "postgresql": PostgreSQL service
-- Cell "egress": nginx (port 443) as edge ingress/egress endpoint
+3. Mutation workflows and scope intent
+--------------------------------------
+Scope guidance:
+- use `--scope desired` for GitOps/declarative-only changes
+- use `--scope runtime` for immediate live actions
+- use `--scope both` when intent must be reflected immediately and declaratively
 
-ASCII deployment map:
+Command families:
+- `cell create|set`: `--scope desired|both`
+- `cell start|stop|restart`: `--scope runtime|both`
+- `cell remove`: `--scope desired|runtime|both`
+- `volume create|set`: `--scope desired|both`
+- `volume remove`: `--scope desired|runtime|both`
 
-                         Internet
-                             |
-                             v
-                  +-----------------------+
-                  | cell: egress          |
-                  | nginx :443            |
-                  +-----------+-----------+
-                              |
-                              | upstream over TCP
-                              v
-                  +-----------------------+
-                  | cell: mantisbt        |
-                  | nginx :3000           |
-                  | php-fpm               |
-                  +-----------+-----------+
-                              |
-                              | DB over TCP
-                              v
-                  +-----------------------+
-                  | cell: postgresql      |
-                  | postgresql :5432      |
-                  +-----------------------+
-
-Notes:
-- Cross-cell communication is typically TCP.
-- Keep explicit ports and network paths documented per cell.
-- Use reserved-port/profile controls at create time as needed.
+Useful examples:
+- `cellmgr cell set api --autostart YES --scope desired`
+- `cellmgr cell start api --scope runtime`
+- `cellmgr cell stop api --scope both` (also sets desired autostart to `NO`)
+- `cellmgr volume create uploads -m 0750 --scope both`
 
 
-5. Recommended setup flow
--------------------------
-5.1 Bootstrap and base prep (host)
-1) Ensure secmodel_cell is active (bootstrap path).
-2) Prepare base layers and cellmgr directories.
-3) Keep /etc/cellmgr.conf under config management.
+4. Reconciliation runbook (`cellmgr apply`)
+-------------------------------------------
+Canonical command:
+- `cellmgr apply [--all|<name>...] [--dry-run] [--reapply] [--restart-changed] [--silent|-v]`
 
-5.2 Create cells with cellmgr
-- Create mantisbt, postgresql, egress cells.
-- Set create-time profile/ports in each cell.conf.
+Operational sequence:
 
-5.3 Define runtime entrypoints
-Option A (single process cell):
-- CELL_SUPERVISE_CMD starts the service directly.
+    desired manifests
+          |
+          v
+    dependency order
+          |
+          v
+    reconcile volumes
+          |
+          v
+    reconcile cells
+      |   |    |
+      |   |    +--> optional apply plan
+      |   +--------> optional restart
+      +------------> optional healthcheck
 
-Option B (multi-process cell, recommended for tightly-coupled app stacks):
-- CELL_SUPERVISE_CMD starts svcmgr.
-- /etc/svcmgr.conf defines tagged services.
+Options:
+- `--dry-run`: print plan, return exit code `2` when changes would be needed
+- `--reapply`: re-run apply plan even when plan hash is unchanged
+- `--restart-changed`: restart on policy drift (`profile/ports/rlimits`)
+- `--silent` and `-v` are mutually exclusive
 
-Example for mantisbt cell:
-- tag: nginx, command: nginx foreground mode on 3000
-- tag: phpfpm, command: php-fpm no-daemon mode
-
-5.4 Start and verify
-- Start cells via cellmgr start <name> (or --all with autostart).
-- Verify runtime with cellctl list/status paths.
-- Export counters with cellctl stats (human or Prometheus mode).
-- Treat stats values as snapshot gauges, not monotonic lifecycle counters.
-- Verify host syslog contains expected tagged lines.
-
-
-6. Log-flow model (important)
------------------------------
-The log path is intentionally stdout/stderr-centric and NetBSD-native.
-
-For one cell using svcmgr:
-
-service stdout/stderr
-        |
-        v
-      svcmgr (prefixes with service tag, line-buffered flush)
-        |
-        v
-cellctl supervise monitor (host side)
-  - forwards stdout/stderr to syslog with configured facility/levels/tag
-        |
-        v
-   host syslogd (central concentrator)
-
-Why this is operationally useful:
-- one canonical host log sink (syslogd)
-- no hidden side-channel per service by default
-- standard NetBSD syslog tooling applies uniformly
-
-Practical guidance:
-- Prefer foreground/no-daemon modes for supervised services.
-- Prefer service logging to stdout/stderr where possible.
-- If a daemon defaults to internal syslog only, decide explicitly whether to:
-  - keep internal syslog behavior, or
-  - switch to stderr/stdout mode for unified host forwarding.
+Recommended production flow:
+1) `cellmgr apply --dry-run --all`
+2) review planned `CREATE/UPDATE/START/STOP/APPLY/HEALTHCHECK` actions
+3) `cellmgr apply --all`
 
 
-7. Operational runbook (day-2)
+5. Declarative apply plans (`*.apply`)
+--------------------------------------
+Supported directives:
+- `PKG`, `EXEC`, `DIR`, `LINE`, `SYMLINK`, `FILE_BEGIN...FILE_END`, `PATCH_BEGIN...PATCH_END`
+
+Rules that matter operationally:
+- directives must be uppercase
+- `FILE_BEGIN` and `PATCH_BEGIN` targets must be absolute paths
+- for stopped (`autostart=NO`) cells, plan execution is ephemeral (start/apply/stop)
+
+Manual run for one cell:
+- `cellmgr cell plan run <name>`
+- `cellmgr cell plan run <name> --file /path/to/custom.apply`
+- `cellmgr cell plan run <name> --ephemeral`
+
+
+6. Backup and restore operations
+--------------------------------
+Volume backups:
+- create: `cellmgr volume backup create <name>`
+- list: `cellmgr volume backup list <name> [-T] [-H]`
+- restore: `cellmgr volume backup restore <name> --latest [--manifest] --yes`
+- delete: `cellmgr volume backup delete <name> --latest --yes`
+
+Overlay backups (per cell runtime overlay):
+- create: `cellmgr cell backup create <name>`
+- list: `cellmgr cell backup list <name> [-T] [-H]`
+- restore: `cellmgr cell backup restore <name> --latest [--manifest] --yes`
+- delete: `cellmgr cell backup delete <name> --latest --yes`
+
+Important constraints:
+- volume restore/delete is blocked while volume is mounted
+- overlay backup/restore is blocked while cell is running or overlay is mounted
+- restore/delete require confirmation (or `--yes`)
+
+
+7. Reset and cleanup workflows
 ------------------------------
-7.1 Incident triage order
-1) Host syslog: confirm service-level tagged output present.
-2) cellctl/cellmgr status: confirm cell exists and supervise process is alive.
-3) Service command health inside cell (cellctl exec ...).
-4) Isolation policy constraints: profile/port reservations.
+Targeted destructive reset:
+- `cellmgr system reset [--scope desired|runtime|both] [--cells] [--volumes] [--yes]`
 
-7.2 Restart strategy
-- Prefer restarting at the smallest effective scope:
-  - service-level (if svcmgr/service tooling supports it)
-  - cell-level via cellmgr restart <name>
-- For persistent crash loops, inspect command flags and foreground/logging mode.
+Behavior:
+- if neither `--cells` nor `--volumes` is given, both are reset
+- internally chains destructive `remove --all` operations
 
-7.3 Change management
-- Keep cellmgr config and per-cell cell.conf in version control.
-- Treat svcmgr.conf as application deployment artifact.
-- Roll changes one cell at a time in production.
+Orphan cleanup examples:
+- `cellmgr cell remove --orphans --scope runtime --yes`
+- `cellmgr volume remove --orphans --scope runtime --yes`
 
 
-8. NetBSD standards and operational philosophy
+8. Safety model and non-interactive automation
 ----------------------------------------------
-This stack intentionally follows NetBSD conventions:
-- explicit, auditable control paths
-- syslogd-centered logging aggregation
-- small tools with clear boundaries
-- host-root control-plane for cell operations
+Destructive operations are guarded:
+- `--all` / `--orphans` removals
+- backup restore/delete actions
 
-The result is a practical model for DevOps teams:
-- understandable layering
-- predictable lifecycle semantics
-- centralized logging plus simple snapshot observability
+Automation guidance:
+- always pass `--yes` for non-interactive jobs
+- treat apply exit code `2` as drift (not as fatal failure)
+- keep TSV contracts pinned (`-T`, explicit `-o`, explicit `--view`)
+
+Validation highlights:
+- names must match `[A-Za-z0-9._-]`
+- mount specs must be `<volume>:<absolute-target>[:ro|rw]`
+
+
+9. Incident triage order
+------------------------
+1) `cellmgr cell list --view merged`
+2) `cellmgr apply --dry-run --all`
+3) `cellctl list -T` and `cellctl stats -T`
+4) host syslog (supervise output/restarts)
+5) `cellmgr cell shell <name>` for in-cell inspection
+6) if config drift suspected, inspect:
+   - `/etc/cellmgr/<name>.cell`
+   - `/var/cellmgr/cells/<name>/cell.conf`
+
+
+10. `cellui` operational notes
+------------------------------
+`cellui` behavior:
+- refreshes every 4 seconds
+- uses persistent `cellmgr ipc serve --stdio` bridge when available
+- has two modes: cell management and storage management (`TAB`)
+- supports backup create/restore/delete from storage mode
+
+Failure behavior:
+- command/schema failures are surfaced as refresh errors
+- malformed TSV lines are currently skipped by the parser
+- IPC disconnect triggers reconnect dialog (`Enter` to reconnect)

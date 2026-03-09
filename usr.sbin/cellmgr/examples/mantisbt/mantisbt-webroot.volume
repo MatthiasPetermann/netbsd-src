@@ -1,0 +1,2 @@
+VOLUME_NAME=mantisbt-webroot
+VOLUME_MODE="0755"
