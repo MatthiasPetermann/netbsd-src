@@ -696,6 +696,21 @@ validate_volume_mode() {
 	esac
 }
 
+normalize_volume_mode() {
+	volume_mode_value=${1:-}
+	[ -n "${volume_mode_value}" ] || {
+		printf '\n'
+		return 0
+	}
+
+	while [ "${volume_mode_value#0}" != "${volume_mode_value}" ] &&
+	    [ "${volume_mode_value}" != "0" ]; do
+		volume_mode_value=${volume_mode_value#0}
+	done
+
+	printf '%s\n' "${volume_mode_value}"
+}
+
 parse_volume_mount_spec() {
 	spec=$1
 	spec_ctx=$2
@@ -853,6 +868,7 @@ reconcile_volumes() {
 		[ -f "${volume_conf}" ] || continue
 		name=${volume_conf##*/}
 		name=${name%.volume}
+		volume_changed=0
 		assert_valid_volume_name "${name}"
 		load_volume_manifest_conf "${name}"
 		volume_manifest_paths "${name}"
@@ -861,6 +877,20 @@ reconcile_volumes() {
 			emit_reconcile_section_action "volumes" "VOLUME" \
 			    "create ${name} (${VOLUME_PATH})"
 			changed=1
+			volume_changed=1
+		elif [ -n "${VOLUME_MODE:-}" ]; then
+			runtime_mode_raw=$(stat -f %Lp "${VOLUME_PATH}" 2>/dev/null || true)
+			runtime_mode=$(normalize_volume_mode "${runtime_mode_raw}")
+			desired_mode=$(normalize_volume_mode "${VOLUME_MODE}")
+			if [ -n "${runtime_mode}" ] && [ "${runtime_mode}" != "${desired_mode}" ]; then
+				emit_reconcile_section_action "volumes" "VOLUME" \
+				    "chmod ${name} (${VOLUME_PATH}) ${runtime_mode} -> ${VOLUME_MODE}"
+				changed=1
+				volume_changed=1
+			fi
+		fi
+		if [ "${volume_changed}" -eq 0 ]; then
+			emit_reconcile_section_action "volumes" "NOOP" "${name} already converged"
 		fi
 		if [ "${dry_run}" = "NO" ]; then
 			ensure_volume_runtime_from_manifest "${name}"
