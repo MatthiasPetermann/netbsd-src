@@ -32,7 +32,7 @@
 # Layout:
 #   /var/cellmgr/releases/<release>/<arch>/{base,etc[,xbase]}.tar.xz
 #   /var/cellmgr/base/<release>-<arch>/
-#   /var/cellmgr/cells/<name>/{root,.overlay}
+#   /var/cellmgr/cells/<name>/{root,overlay}
 #
 # Config:
 #   /etc/cellmgr.conf
@@ -316,7 +316,7 @@ Paths:
   Volume backups:      ${CELL_BACKUP_DIR}/volumes/<name>_YYYYmmddHHMMSS.tar.gz
   Overlay backups:     ${CELL_BACKUP_DIR}/overlays/<name>_YYYYmmddHHMMSS.tar.gz
   Rendered runtime:    ${CELL_DATA_DIR}/<name>/cell.conf
-  Runtime overlay:     ${CELL_DATA_DIR}/<name>/.overlay (mounted as /.overlay)
+  Runtime overlay:     ${CELL_DATA_DIR}/<name>/overlay (mounted as /.overlay)
 USAGE
 }
 
@@ -1299,7 +1299,7 @@ backup_overlay() {
 	assert_valid_cell_name "${name}"
 	cell_paths "${name}"
 
-	if [ ! -d "${DATA_DIR}" ]; then
+	if [ ! -d "${OVERLAY_DIR}" ]; then
 		echo "runtime overlay not found: ${name}" >&2
 		exit 1
 	fi
@@ -1318,7 +1318,7 @@ backup_overlay() {
 		exit 1
 	fi
 
-	if ! tar -czpf "${archive_path}" -C "${DATA_DIR}" .; then
+	if ! tar -czpf "${archive_path}" -C "${OVERLAY_DIR}" .; then
 		rm -f "${archive_path}" >/dev/null 2>&1 || true
 		echo "failed to create backup archive: ${archive_path}" >&2
 		exit 1
@@ -1391,17 +1391,17 @@ restore_overlay() {
 		exit 1
 	fi
 
-	if [ ! -d "${DATA_DIR}" ]; then
-		mkdir -p "${CELL_DIR}" "${DATA_DIR}"
+	if [ ! -d "${OVERLAY_DIR}" ]; then
+		mkdir -p "${CELL_DIR}" "${OVERLAY_DIR}"
 	fi
 
-	if [ "${DATA_DIR}" = "${CELL_DATA_DIR}" ] ||
-	    ! path_is_same_or_child "${DATA_DIR}" "${CELL_DATA_DIR}"; then
-		echo "refusing to restore into unsafe overlay path: ${DATA_DIR}" >&2
+	if [ "${OVERLAY_DIR}" = "${CELL_DATA_DIR}" ] ||
+	    ! path_is_same_or_child "${OVERLAY_DIR}" "${CELL_DATA_DIR}"; then
+		echo "refusing to restore into unsafe overlay path: ${OVERLAY_DIR}" >&2
 		exit 1
 	fi
 
-	if ! confirm_data_loss "Restoring overlay ${name} from ${archive_path} into ${DATA_DIR}"; then
+	if ! confirm_data_loss "Restoring overlay ${name} from ${archive_path} into ${OVERLAY_DIR}"; then
 		exit 1
 	fi
 
@@ -1412,13 +1412,13 @@ restore_overlay() {
 		exit 1
 	fi
 
-	if ! clear_directory_contents "${DATA_DIR}"; then
+	if ! clear_directory_contents "${OVERLAY_DIR}"; then
 		rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
 		exit 1
 	fi
-	if ! cp -Rp "${restore_tmp}/." "${DATA_DIR}"; then
+	if ! cp -Rp "${restore_tmp}/." "${OVERLAY_DIR}"; then
 		rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
-		echo "failed to restore backup contents into ${DATA_DIR}" >&2
+		echo "failed to restore backup contents into ${OVERLAY_DIR}" >&2
 		exit 1
 	fi
 	rm -rf "${restore_tmp}" >/dev/null 2>&1 || true
@@ -2060,16 +2060,16 @@ cell_paths() {
 	name=$1
 	CELL_DIR="${CELL_DATA_DIR}/${name}"
 	ROOT_DIR="${CELL_DIR}/root"
-	DATA_DIR="${CELL_DIR}/.overlay"
-	if [ -d "${CELL_DIR}/overlay" ] && [ ! -e "${DATA_DIR}" ]; then
-		DATA_DIR="${CELL_DIR}/overlay"
+	OVERLAY_DIR="${CELL_DIR}/overlay"
+	if [ ! -e "${OVERLAY_DIR}" ] && [ -d "${CELL_DIR}/.overlay" ]; then
+		OVERLAY_DIR="${CELL_DIR}/.overlay"
 	fi
-	DATA_ETC_DIR="${DATA_DIR}/etc"
-	DATA_VAR_DIR="${DATA_DIR}/var"
-	DATA_TMP_DIR="${DATA_DIR}/tmp"
-	DATA_HOME_DIR="${DATA_DIR}/home"
-	DATA_ROOT_DIR="${DATA_DIR}/root"
-	DATA_PKG_DIR="${DATA_DIR}/usr/pkg"
+	DATA_ETC_DIR="${OVERLAY_DIR}/etc"
+	DATA_VAR_DIR="${OVERLAY_DIR}/var"
+	DATA_TMP_DIR="${OVERLAY_DIR}/tmp"
+	DATA_HOME_DIR="${OVERLAY_DIR}/home"
+	DATA_ROOT_DIR="${OVERLAY_DIR}/root"
+	DATA_PKG_DIR="${OVERLAY_DIR}/usr/pkg"
 	STATE_DIR="${CELL_DIR}/state"
 	CELL_CONF="${CELL_DIR}/cell.conf"
 }
@@ -2162,7 +2162,7 @@ setup_etc() {
 		# etc.tar.xz stores root dotfiles as hardlinks to ./.cshrc/.profile.
 		# Extract those link targets too so tar does not abort with missing
 		# hard-link target errors while unpacking ./root.
-		tar -xzp -f "${ETC_SET}" -C "${DATA_DIR}" \
+		tar -xzp -f "${ETC_SET}" -C "${OVERLAY_DIR}" \
 			./.cshrc ./.profile ./etc ./root ./var
 	fi
 
@@ -2273,7 +2273,7 @@ mount_cell_root() {
 	fi
 
 	mount -t null -o ro "${BASE_LAYER}" "${ROOT_DIR}"
-	mount -t null "${DATA_DIR}" "${ROOT_DIR}/.overlay"
+	mount -t null "${OVERLAY_DIR}" "${ROOT_DIR}/.overlay"
 	setup_local_dev
 	mount_cell_volumes
 }
