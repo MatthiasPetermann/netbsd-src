@@ -3,9 +3,9 @@ run_cell_create() {
 		usage
 		return 1
 	}
-	name=$1
+	cell_name=$1
 	shift
-	assert_valid_cell_name "${name}"
+	assert_valid_cell_name "${cell_name}"
 
 	autostart=NO
 	supervise_cmd=
@@ -164,7 +164,7 @@ run_cell_create() {
 	validate_cell_rlimit "as" "${create_rlimit_as}" || return 1
 	validate_cell_rlimit "core" "${create_rlimit_core}" || return 1
 
-	create_manifest_cell "${name}" "${autostart}" "${supervise_cmd}" \
+	create_manifest_cell "${cell_name}" "${autostart}" "${supervise_cmd}" \
 	    "${create_profile}" "${create_reserved_ports}" \
 	    "${create_rlimit_nofile}" "${create_rlimit_as}" "${create_rlimit_core}" \
 	    "${supervise_facility}" "${supervise_stdout_level}" \
@@ -172,7 +172,7 @@ run_cell_create() {
 	    "${depends_on}" "${healthcheck_cmd}" "${volume_mounts}"
 
 	if [ "${scope}" = "both" ]; then
-		run_reconcile_command "${name}"
+		run_reconcile_command "${cell_name}"
 	fi
 }
 
@@ -181,10 +181,10 @@ run_cell_set() {
 		usage
 		return 1
 	}
-	name=$1
+	cell_name=$1
 	shift
-	assert_valid_cell_name "${name}"
-	load_manifest_cell_conf "${name}"
+	assert_valid_cell_name "${cell_name}"
+	load_manifest_cell_conf "${cell_name}"
 
 	autostart=${CELL_AUTOSTART:-NO}
 	supervise_cmd=${CELL_SUPERVISE_CMD:-}
@@ -347,7 +347,7 @@ run_cell_set() {
 	validate_cell_rlimit "as" "${create_rlimit_as}" || return 1
 	validate_cell_rlimit "core" "${create_rlimit_core}" || return 1
 
-	set_manifest_cell "${name}" "${autostart}" "${supervise_cmd}" \
+	set_manifest_cell "${cell_name}" "${autostart}" "${supervise_cmd}" \
 	    "${create_profile}" "${create_reserved_ports}" \
 	    "${create_rlimit_nofile}" "${create_rlimit_as}" "${create_rlimit_core}" \
 	    "${supervise_facility}" "${supervise_stdout_level}" \
@@ -355,7 +355,7 @@ run_cell_set() {
 	    "${depends_on}" "${healthcheck_cmd}" "${volume_mounts}"
 
 	if [ "${scope}" = "both" ]; then
-		run_reconcile_command "${name}"
+		run_reconcile_command "${cell_name}"
 	fi
 }
 
@@ -503,9 +503,9 @@ run_cell_lifecycle() {
 			if [ "${scope}" = "both" ]; then
 				for cell_conf in "${MANIFEST_DIR}"/*.cell; do
 					[ -f "${cell_conf}" ] || continue
-					name=${cell_conf##*/}
-					name=${name%.cell}
-					set_cell_autostart_if_manifest "${name}" "YES"
+					manifest_cell_name=${cell_conf##*/}
+					manifest_cell_name=${manifest_cell_name%.cell}
+					set_cell_autostart_if_manifest "${manifest_cell_name}" "YES"
 				done
 			fi
 			;;
@@ -514,9 +514,9 @@ run_cell_lifecycle() {
 			if [ "${scope}" = "both" ]; then
 				for cell_conf in "${MANIFEST_DIR}"/*.cell; do
 					[ -f "${cell_conf}" ] || continue
-					name=${cell_conf##*/}
-					name=${name%.cell}
-					set_cell_autostart_if_manifest "${name}" "NO"
+					manifest_cell_name=${cell_conf##*/}
+					manifest_cell_name=${manifest_cell_name%.cell}
+					set_cell_autostart_if_manifest "${manifest_cell_name}" "NO"
 				done
 			fi
 			;;
@@ -552,9 +552,9 @@ run_cell_plan_command() {
 		usage
 		return 1
 	}
-	sub=$1
+	plan_sub=$1
 	shift
-	case "${sub}" in
+	case "${plan_sub}" in
 	run)
 		;;
 	*)
@@ -590,14 +590,14 @@ run_cell_plan_command() {
 		echo "cell plan run: expected exactly one cell name" >&2
 		return 1
 	}
-	name=$1
-	assert_valid_cell_name "${name}"
+	cell_name=$1
+	assert_valid_cell_name "${cell_name}"
 
 	set --
 	if [ "${ephemeral}" = "YES" ]; then
 		set -- "$@" --ephemeral
 	fi
-	set -- "$@" "${name}"
+	set -- "$@" "${cell_name}"
 	if [ -n "${plan_file}" ]; then
 		set -- "$@" "${plan_file}"
 	fi
@@ -617,7 +617,7 @@ run_cell_backup_list() {
 		echo "cell backup list: expected cell name" >&2
 		return 1
 	}
-	name=$1
+	cell_name=$1
 	shift
 	tsv=NO
 	header=YES
@@ -648,7 +648,7 @@ run_cell_backup_list() {
 		return 1
 	fi
 
-	list_overlay_backups "${name}" "${tsv}" "${header}"
+	list_overlay_backups "${cell_name}" "${tsv}" "${header}"
 }
 
 run_cell_backup_restore() {
@@ -656,7 +656,7 @@ run_cell_backup_restore() {
 		echo "cell backup restore: expected cell name" >&2
 		return 1
 	}
-	name=$1
+	cell_name=$1
 	shift
 	archive=
 	latest=NO
@@ -699,7 +699,7 @@ run_cell_backup_restore() {
 		esac
 	done
 
-	restore_overlay "${name}" "${archive}" "${latest}" "${restore_manifest}"
+	restore_overlay "${cell_name}" "${archive}" "${latest}" "${restore_manifest}"
 }
 
 run_cell_backup_delete() {
@@ -707,7 +707,7 @@ run_cell_backup_delete() {
 		echo "cell backup delete: expected cell name" >&2
 		return 1
 	}
-	name=$1
+	cell_name=$1
 	shift
 	archive=
 	latest=NO
@@ -745,7 +745,7 @@ run_cell_backup_delete() {
 		esac
 	done
 
-	delete_overlay_backup "${name}" "${archive}" "${latest}"
+	delete_overlay_backup "${cell_name}" "${archive}" "${latest}"
 }
 
 run_cell_backup_resource_command() {
@@ -753,9 +753,9 @@ run_cell_backup_resource_command() {
 		echo "cell backup: expected subcommand create|list|restore|delete" >&2
 		return 1
 	}
-	sub=$1
+	backup_sub=$1
 	shift
-	case "${sub}" in
+	case "${backup_sub}" in
 	create)
 		run_cell_backup_create "$@"
 		;;
@@ -769,7 +769,7 @@ run_cell_backup_resource_command() {
 		run_cell_backup_delete "$@"
 		;;
 	*)
-		echo "unknown cell backup command: ${sub}" >&2
+		echo "unknown cell backup command: ${backup_sub}" >&2
 		usage
 		return 1
 		;;
@@ -781,9 +781,9 @@ run_cell_resource_command() {
 		usage
 		return 1
 	}
-	sub=$1
+	cell_sub=$1
 	shift
-	case "${sub}" in
+	case "${cell_sub}" in
 	list)
 		runtime_list "$@"
 		;;
@@ -832,7 +832,7 @@ run_cell_resource_command() {
 		edit_cell_config "$1"
 		;;
 	*)
-		echo "unknown cell command: ${sub}" >&2
+		echo "unknown cell command: ${cell_sub}" >&2
 		usage
 		return 1
 		;;

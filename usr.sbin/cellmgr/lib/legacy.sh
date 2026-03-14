@@ -107,8 +107,8 @@ run_cell_create_command() {
 		exit 1
 	fi
 
-	name=$1
-	create_manifest_cell "${name}" "${autostart}" "${supervise_cmd}" \
+	legacy_cell_name=$1
+	create_manifest_cell "${legacy_cell_name}" "${autostart}" "${supervise_cmd}" \
 	    "${create_profile}" "${create_reserved_ports}" \
 	    "${create_rlimit_nofile}" "${create_rlimit_as}" "${create_rlimit_core}" \
 	    "${supervise_facility}" "${supervise_stdout_level}" \
@@ -155,10 +155,10 @@ run_cell_command() {
 		usage
 		exit 1
 	}
-	sub=$1
+	legacy_cell_sub=$1
 	shift
 
-	case "${sub}" in
+	case "${legacy_cell_sub}" in
 	create)
 		run_cell_create_command "$@"
 		;;
@@ -198,10 +198,10 @@ run_volume_command() {
 		usage
 		exit 1
 	}
-	sub=$1
+	legacy_volume_sub=$1
 	shift
 
-	case "${sub}" in
+	case "${legacy_volume_sub}" in
 	create)
 		volume_mode=
 		while [ $# -gt 0 ]; do
@@ -258,7 +258,7 @@ run_volume_command() {
 }
 
 run_runtime_lifecycle_command() {
-	action=$1
+	lifecycle_action=$1
 	shift
 
 	if [ $# -ne 1 ]; then
@@ -266,9 +266,9 @@ run_runtime_lifecycle_command() {
 		exit 1
 	fi
 
-	target=$1
-	if [ "${target}" = "--all" ]; then
-		case "${action}" in
+	lifecycle_target=$1
+	if [ "${lifecycle_target}" = "--all" ]; then
+		case "${lifecycle_action}" in
 		start)
 			start_all
 			;;
@@ -282,16 +282,16 @@ run_runtime_lifecycle_command() {
 		return
 	fi
 
-	assert_valid_cell_name "${target}"
-	case "${action}" in
+	assert_valid_cell_name "${lifecycle_target}"
+	case "${lifecycle_action}" in
 	start)
-		start_cell "${target}"
+		start_cell "${lifecycle_target}"
 		;;
 	stop)
-		stop_cell "${target}"
+		stop_cell "${lifecycle_target}"
 		;;
 	restart)
-		restart_cell "${target}"
+		restart_cell "${lifecycle_target}"
 		;;
 	esac
 }
@@ -408,10 +408,10 @@ run_runtime_cell_command() {
 		usage
 		exit 1
 	}
-	sub=$1
+	legacy_runtime_cell_sub=$1
 	shift
 
-	case "${sub}" in
+	case "${legacy_runtime_cell_sub}" in
 	list)
 		runtime_list "$@"
 		;;
@@ -420,9 +420,9 @@ run_runtime_cell_command() {
 			usage
 			exit 1
 		}
-		name=$1
+		legacy_runtime_cell_name=$1
 		shift
-		runtime_show "${name}" "$@"
+		runtime_show "${legacy_runtime_cell_name}" "$@"
 		;;
 	fields)
 		[ $# -eq 0 ] || {
@@ -465,10 +465,10 @@ run_runtime_volume_command() {
 		usage
 		exit 1
 	}
-	sub=$1
+	legacy_runtime_volume_sub=$1
 	shift
 
-	case "${sub}" in
+	case "${legacy_runtime_volume_sub}" in
 	list)
 		[ $# -eq 0 ] || {
 			usage
@@ -499,10 +499,10 @@ run_runtime_command() {
 		exit 1
 	}
 
-	noun=$1
+	legacy_runtime_noun=$1
 	shift
 
-	case "${noun}" in
+	case "${legacy_runtime_noun}" in
 	cell)
 		run_runtime_cell_command "$@"
 		;;
@@ -608,10 +608,10 @@ run_manifest_command() {
 		usage
 		exit 1
 	}
-	noun=$1
+	legacy_manifest_noun=$1
 	shift
 
-	case "${noun}" in
+	case "${legacy_manifest_noun}" in
 	cell)
 		run_cell_command "$@"
 		;;
@@ -638,14 +638,14 @@ validate_cell_profile() {
 }
 
 validate_cell_rlimit() {
-	name=$1
-	value=${2:-}
-	case "${value}" in
+	rlimit_field=$1
+	rlimit_value=${2:-}
+	case "${rlimit_value}" in
 	""|unlimited)
 		return 0
 		;;
 	*[!0-9]*)
-		echo "invalid rlimit ${name} '${value}' (expected integer or unlimited)" >&2
+		echo "invalid rlimit ${rlimit_field} '${rlimit_value}' (expected integer or unlimited)" >&2
 		return 1
 		;;
 	esac
@@ -653,13 +653,13 @@ validate_cell_rlimit() {
 }
 
 set_cell_autostart_if_manifest() {
-	name=$1
-	autostart=$2
-	if ! manifest_cell_exists "${name}"; then
+	autostart_cell_name=$1
+	autostart_value=$2
+	if ! manifest_cell_exists "${autostart_cell_name}"; then
 		return 0
 	fi
-	load_manifest_cell_conf "${name}"
-	set_manifest_cell "${name}" "${autostart}" "${CELL_SUPERVISE_CMD:-}" \
+	load_manifest_cell_conf "${autostart_cell_name}"
+	set_manifest_cell "${autostart_cell_name}" "${autostart_value}" "${CELL_SUPERVISE_CMD:-}" \
 	    "${CELL_CREATE_PROFILE:-}" "${CELL_CREATE_RESERVED_PORTS:-}" \
 	    "${CELL_CREATE_RLIMIT_NOFILE:-}" "${CELL_CREATE_RLIMIT_AS:-}" \
 	    "${CELL_CREATE_RLIMIT_CORE:-}" \
@@ -667,4 +667,3 @@ set_cell_autostart_if_manifest() {
 	    "${CELL_SUPERVISE_STDERR_LEVEL:-}" "${CELL_SUPERVISE_TAG:-}" \
 	    "${CELL_DEPENDS_ON:-}" "${CELL_HEALTHCHECK_CMD:-}" "${CELL_VOLUME_MOUNTS:-}"
 }
-
