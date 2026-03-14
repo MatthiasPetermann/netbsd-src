@@ -2061,9 +2061,6 @@ cell_paths() {
 	CELL_DIR="${CELL_DATA_DIR}/${name}"
 	ROOT_DIR="${CELL_DIR}/root"
 	OVERLAY_DIR="${CELL_DIR}/overlay"
-	if [ ! -e "${OVERLAY_DIR}" ] && [ -d "${CELL_DIR}/.overlay" ]; then
-		OVERLAY_DIR="${CELL_DIR}/.overlay"
-	fi
 	DATA_ETC_DIR="${OVERLAY_DIR}/etc"
 	DATA_VAR_DIR="${OVERLAY_DIR}/var"
 	DATA_TMP_DIR="${OVERLAY_DIR}/tmp"
