@@ -122,13 +122,13 @@ ipc_execute_call() {
 	case "${ipc_mode}" in
 	0)
 		if [ "${ipc_env_enabled}" -eq 1 ]; then
-			if (export "${ipc_env_key}=${ipc_env_val}"; dispatch_command "$@") \
+			if (export "${ipc_env_key}=${ipc_env_val}" CELLMGR_CALL_CONTEXT=ipc; dispatch_command "$@") \
 			    > "${ipc_out_tmp}" 2> "${ipc_err_tmp}"; then
 				ipc_rc=0
 			else
 				ipc_rc=$?
 			fi
-		elif (dispatch_command "$@") > "${ipc_out_tmp}" 2> "${ipc_err_tmp}"; then
+		elif (export CELLMGR_CALL_CONTEXT=ipc; dispatch_command "$@") > "${ipc_out_tmp}" 2> "${ipc_err_tmp}"; then
 			ipc_rc=0
 		else
 			ipc_rc=$?
@@ -142,13 +142,13 @@ ipc_execute_call() {
 			ipc_rc=1
 		else
 			if [ "${ipc_env_enabled}" -eq 1 ]; then
-				if (export "${ipc_env_key}=${ipc_env_val}"; dispatch_command "$@") \
+				if (export "${ipc_env_key}=${ipc_env_val}" CELLMGR_CALL_CONTEXT=ipc; dispatch_command "$@") \
 				    < /dev/tty > /dev/tty 2> /dev/tty; then
 					ipc_rc=0
 				else
 					ipc_rc=$?
 				fi
-			elif (dispatch_command "$@") < /dev/tty > /dev/tty 2> /dev/tty; then
+			elif (export CELLMGR_CALL_CONTEXT=ipc; dispatch_command "$@") < /dev/tty > /dev/tty 2> /dev/tty; then
 				ipc_rc=0
 			else
 				ipc_rc=$?

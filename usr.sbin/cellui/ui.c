@@ -56,6 +56,81 @@ static void format_age_human(const char *src, char *out, size_t outsz) {
   (void)snprintf(out, outsz, "%lluw%llud", w, d);
 }
 
+static bool parse_u64_strict(const char *src, unsigned long long *out) {
+  char *endp;
+  unsigned long long v;
+
+  if (src == NULL || *src == '\0') {
+    return false;
+  }
+  v = strtoull(src, &endp, 10);
+  if (endp == src || *endp != '\0') {
+    return false;
+  }
+  *out = v;
+  return true;
+}
+
+static void format_bytes_human(const char *src, char *out, size_t outsz) {
+  static const char *units[] = {"KiB", "MiB", "GiB", "TiB"};
+  unsigned long long bytes;
+  double value;
+  int unit_idx = 0;
+
+  if (outsz == 0) {
+    return;
+  }
+  if (is_blank(src) || strcmp(src, "-") == 0) {
+    (void)snprintf(out, outsz, "-");
+    return;
+  }
+  if (!parse_u64_strict(src, &bytes)) {
+    (void)snprintf(out, outsz, "%s", src);
+    return;
+  }
+
+  if (bytes < 1024ULL) {
+    (void)snprintf(out, outsz, "%llu B", bytes);
+    return;
+  }
+
+  value = (double)bytes / 1024.0;
+  while (value >= 1024.0 && unit_idx < 3) {
+    value /= 1024.0;
+    unit_idx++;
+  }
+  (void)snprintf(out, outsz, "%.1f %s", value, units[unit_idx]);
+}
+
+static void format_backup_timestamp_iso(const char *src, char *out,
+                                        size_t outsz) {
+  const char *s;
+  size_t i;
+
+  if (outsz == 0) {
+    return;
+  }
+  s = blank_if(src, "");
+  if (*s == '\0' || strcmp(s, "-") == 0) {
+    (void)snprintf(out, outsz, "-");
+    return;
+  }
+
+  if (strlen(s) == 14) {
+    for (i = 0; i < 14; i++) {
+      if (s[i] < '0' || s[i] > '9') {
+        (void)snprintf(out, outsz, "%s", s);
+        return;
+      }
+    }
+    (void)snprintf(out, outsz, "%.4s-%.2s-%.2sT%.2s:%.2s:%.2s", s, s + 4,
+                   s + 6, s + 8, s + 10, s + 12);
+    return;
+  }
+
+  (void)snprintf(out, outsz, "%s", s);
+}
+
 static void draw_box(int y, int x, int h, int w) {
   int i;
 
@@ -170,7 +245,7 @@ static void table_row_string(const CellRow *row, int name_width, char *out,
   shorten_to(blank_if(row->procs, "0"), 6, procs, sizeof(procs));
   shorten_to(blank_if(row->cpu1s, "-"), 8, cpu1s, sizeof(cpu1s));
   shorten_to(blank_if(row->cpu10s, "-"), 8, cpu10s, sizeof(cpu10s));
-  format_age_human(blank_if(row->age, "0"), age, sizeof(age));
+  format_age_human(blank_if(row->age, ""), age, sizeof(age));
   shorten_to(blank_if(age, "-"), 8, age, sizeof(age));
   shorten_to(blank_if(row->autostart, "NO"), 6, autostart, sizeof(autostart));
   shorten_to(blank_if(row->refs, "-"), 7, refs, sizeof(refs));
@@ -834,6 +909,8 @@ void draw_ui(Model *m) {
       CellRow *row = selected_cell(m);
       char tmp[1024];
       char policy[1024];
+      char as_human[64];
+      char memory_human[64];
 
       if (row == NULL) {
         (void)snprintf(lines[0], sizeof(lines[0]), "No cell selected");
@@ -856,10 +933,12 @@ void draw_ui(Model *m) {
                        blank_if(row->autostart, "NO"));
         (void)snprintf(lines[6], sizeof(lines[6]), "Profile     : %s",
                        blank_if(row->create_profile, "-"));
+        format_bytes_human(blank_if(row->create_rlimit_as, ""), as_human,
+                           sizeof(as_human));
         (void)snprintf(policy, sizeof(policy), "ports=%s nofile=%s as=%s core=%s",
                        blank_if(row->create_reserved_ports, "-"),
                        blank_if(row->create_rlimit_nofile, "unlimited"),
-                       blank_if(row->create_rlimit_as, "unlimited"),
+                       blank_if(as_human, "unlimited"),
                        blank_if(row->create_rlimit_core, "unlimited"));
         shorten_to(policy, value_width, tmp, sizeof(tmp));
         format_prefixed(lines[7], sizeof(lines[7]), "Policy      : ", tmp);
@@ -867,9 +946,11 @@ void draw_ui(Model *m) {
                        blank_if(row->procs, "0"), blank_if(row->refs, "-"));
         (void)snprintf(lines[9], sizeof(lines[9]), "CPU1S/10S   : %s / %s",
                        blank_if(row->cpu1s, "-"), blank_if(row->cpu10s, "-"));
-        format_age_human(blank_if(row->age, "0"), tmp, sizeof(tmp));
+        format_age_human(blank_if(row->age, ""), tmp, sizeof(tmp));
+        format_bytes_human(blank_if(row->memory, ""), memory_human,
+                           sizeof(memory_human));
         (void)snprintf(lines[10], sizeof(lines[10]), "Age/Memory  : %s / %s",
-                       blank_if(tmp, "-"), blank_if(row->memory, "-"));
+                       blank_if(tmp, "-"), blank_if(memory_human, "-"));
         shorten_to(blank_if(row->supervise_cmd, "-"), value_width, tmp,
                    sizeof(tmp));
         format_prefixed(lines[11], sizeof(lines[11]), "Supervise   : ", tmp);
@@ -928,16 +1009,28 @@ void draw_ui(Model *m) {
             const char *base;
             char backup_line[1024];
             char short_name[768];
+            char ts_human[32];
+            char size_human[64];
+            int fixed_w;
+            int name_w;
 
             if ((size_t)idx >= m->backup_row_count || backup_start + i >= DETAIL_CONTENT_LINES) {
               break;
             }
             backup = &m->backup_rows[idx];
             base = archive_basename(backup->archive);
-            shorten_to(base, value_width - 26, short_name, sizeof(short_name));
-            (void)snprintf(backup_line, sizeof(backup_line), "  %s  %sB  %s",
-                           blank_if(backup->timestamp, "-"),
-                           blank_if(backup->size, "0"), short_name);
+            format_backup_timestamp_iso(blank_if(backup->timestamp, ""), ts_human,
+                                        sizeof(ts_human));
+            format_bytes_human(blank_if(backup->size, ""), size_human,
+                               sizeof(size_human));
+            fixed_w = (int)strlen(ts_human) + (int)strlen(size_human) + 6;
+            name_w = value_width - fixed_w;
+            if (name_w < 8) {
+              name_w = 8;
+            }
+            shorten_to(base, name_w, short_name, sizeof(short_name));
+            (void)snprintf(backup_line, sizeof(backup_line), "  %s  %s  %s",
+                           ts_human, size_human, short_name);
             (void)snprintf(lines[backup_start + i], sizeof(lines[backup_start + i]),
                            "%s", backup_line);
             if (idx == m->backup_cursor) {
