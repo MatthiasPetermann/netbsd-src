@@ -3425,9 +3425,18 @@ runtime_project_fields() {
 	' "${in_file}"
 }
 
+runtime_age_render_mode() {
+	if [ "${CELLMGR_CALL_CONTEXT:-}" = "ipc" ]; then
+		printf 'raw\n'
+		return
+	fi
+	printf 'human\n'
+}
+
 runtime_print_human_table() {
 	in_file=$1
-	awk -F '\t' -v cols="${RUNTIME_OUTPUT_FIELDS}" '
+	runtime_age_mode=$(runtime_age_render_mode)
+	awk -F '\t' -v cols="${RUNTIME_OUTPUT_FIELDS}" -v age_mode="${runtime_age_mode}" '
 		function is_bool_field(f) {
 			return (f == "running" || f == "desired_state" || f == "manifest" ||
 			    f == "rendered" || f == "apply_present")
@@ -3457,7 +3466,7 @@ runtime_print_human_table() {
 			return w "w" d "d"
 		}
 		function humanize(f, v) {
-			if (f == "age")
+			if (f == "age" && age_mode == "human")
 				return humanize_age(v)
 			if (is_bool_field(f)) {
 				if (v == "1")

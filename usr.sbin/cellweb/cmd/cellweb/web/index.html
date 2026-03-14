@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cellweb</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" width="0" height="0" hidden>
+    <symbol id="i-sun" viewBox="0 0 24 24">
+      <path d="M12 4V2m0 20v-2m8-8h2M2 12h2m12.95 4.95 1.41 1.41M3.64 3.64l1.41 1.41m11.9-1.41-1.41 1.41M5.05 16.95l-1.41 1.41M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24">
+      <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4 7 7 0 0 0 20 14.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-retro" viewBox="0 0 24 24">
+      <rect x="3" y="6" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M7 10h.01M10 10h.01M13 10h.01M16 10h.01M19 10h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M8 14h8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-server" viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <rect x="3" y="14" width="18" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M7 7h.01M7 17h.01" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <rect x="13" y="3" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <rect x="3" y="13" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <rect x="13" y="13" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    </symbol>
+    <symbol id="i-storage" viewBox="0 0 24 24">
+      <ellipse cx="12" cy="5" rx="8" ry="3" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    </symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24">
+      <path d="M20 11a8 8 0 1 0 2 5.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      <path d="M20 4v7h-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24">
+      <path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M14 16l4-4-4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M18 12H8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-play" viewBox="0 0 24 24">
+      <path d="M8 6v12l10-6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24">
+      <rect x="7" y="7" width="10" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    </symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24">
+      <path d="M14.2 4.9a4.4 4.4 0 0 0 4.9 5.9l-8.2 8.2a1.9 1.9 0 0 1-2.7 0l-.2-.2a1.9 1.9 0 0 1 0-2.7l8.2-8.2a4.4 4.4 0 0 0-2-3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M9 19l-4 1 1-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24">
+      <rect x="4" y="4" width="16" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M5 8h14v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8Z" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M10 12h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-download" viewBox="0 0 24 24">
+      <path d="M12 4v10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      <path d="m8.5 10.5 3.5 3.5 3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <path d="M4 7h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      <path d="M9 4h6l1 3H8l1-3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+      <path d="M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+      <path d="M10 11v5M14 11v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="m7 10 3 2-3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M12 15h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+  </svg>
+
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+  <div class="bg-grid"></div>
+
+  <main class="layout">
+    <section id="loginCard" class="card login-card reveal">
+      <div class="card-header">
+        <div class="brand"><svg class="icon" aria-hidden="true"><use href="#i-server"></use></svg>cellweb</div>
+        <button type="button" class="btn ghost theme-toggle icon-only" data-theme-toggle>
+          <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>
+          <span class="sr-only theme-toggle-label">Light mode</span>
+        </button>
+      </div>
+      <h1>NetBSD Cells in your browser</h1>
+      <p>Sign in with your local system user.</p>
+      <form id="loginForm" autocomplete="off">
+        <label>
+          Username
+          <input name="username" type="text" required>
+        </label>
+        <label>
+          Password
+          <input name="password" type="password" required>
+        </label>
+        <button id="loginButton" class="btn action-default" type="submit">Sign in</button>
+      </form>
+      <div id="loginStatus" class="status"></div>
+    </section>
+
+    <section id="app" class="app hidden">
+      <section class="commandbar reveal">
+        <div class="commandbar-primary">
+          <div class="identity-block">
+            <div class="brand"><svg class="icon" aria-hidden="true"><use href="#i-server"></use></svg>cellweb</div>
+            <div class="subtitle">Web Operations Surface for cellmgr</div>
+          </div>
+          <div id="sessionInfo" class="session-inline"></div>
+          <div class="commandbar-icons">
+            <button id="refreshBtn" class="btn ghost icon-btn chrome-btn" type="button" aria-label="Refresh" title="Refresh">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+              <span class="sr-only">Refresh</span>
+            </button>
+            <button type="button" class="btn ghost icon-btn chrome-btn theme-toggle icon-only" data-theme-toggle>
+              <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>
+              <span class="sr-only theme-toggle-label">Light mode</span>
+            </button>
+            <button id="logoutBtn" class="btn ghost icon-btn chrome-btn" type="button" aria-label="Logout" title="Logout">
+              <svg class="icon" aria-hidden="true"><use href="#i-logout"></use></svg>
+              <span class="sr-only">Logout</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="commandbar-secondary">
+          <div class="segmented">
+            <button id="modeSystem" class="seg"><svg class="icon" aria-hidden="true"><use href="#i-server"></use></svg>System</button>
+            <button id="modeCells" class="seg active"><svg class="icon" aria-hidden="true"><use href="#i-grid"></use></svg>Cells</button>
+            <button id="modeStorage" class="seg"><svg class="icon" aria-hidden="true"><use href="#i-storage"></use></svg>Storage</button>
+          </div>
+
+          <div id="cellFilterGroup" class="segmented">
+            <button data-filter="all" class="seg filter active">All</button>
+            <button data-filter="running" class="seg filter">Running</button>
+            <button data-filter="stopped" class="seg filter">Stopped</button>
+          </div>
+
+          <div class="push-right toolbar-right">
+            <section id="metaPanel" class="metrics" aria-live="polite"></section>
+          </div>
+        </div>
+      </section>
+
+      <section id="systemView" class="view hidden reveal">
+        <div class="pane table-pane">
+          <div class="pane-title">Server Overview</div>
+          <div id="systemSummary" class="summary-grid"></div>
+
+          <div id="systemTrendGrid" class="trend-grid" aria-label="System trends">
+            <section class="trend-card" aria-live="polite">
+              <div class="trend-head">
+                <div class="trend-title">CPU user/system</div>
+                <div id="cpuTrendLegend" class="trend-legend">Waiting for samples ...</div>
+              </div>
+              <div class="trend-canvas">
+                <svg class="trend-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <path id="cpuTrendUserPath" class="trend-line trend-line-user" d=""></path>
+                  <path id="cpuTrendSystemPath" class="trend-line trend-line-system" d=""></path>
+                </svg>
+              </div>
+            </section>
+
+            <section class="trend-card" aria-live="polite">
+              <div class="trend-head">
+                <div class="trend-title">Memory used</div>
+                <div id="memoryTrendLegend" class="trend-legend">Waiting for samples ...</div>
+              </div>
+              <div class="trend-canvas">
+                <svg class="trend-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <path id="memoryTrendAreaPath" class="trend-area" d=""></path>
+                  <path id="memoryTrendLinePath" class="trend-line trend-line-memory" d=""></path>
+                </svg>
+              </div>
+            </section>
+          </div>
+
+          <div class="sub-title">FFS Filesystems</div>
+          <div class="table-wrap slim">
+            <table>
+              <thead>
+                <tr>
+                  <th>Filesystem</th>
+                  <th>Mountpoint</th>
+                  <th>Size</th>
+                  <th>Used</th>
+                  <th>Avail</th>
+                  <th>Use%</th>
+                </tr>
+              </thead>
+              <tbody id="fsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="pane detail-pane">
+          <div class="pane-title">Network & I/O</div>
+
+          <div class="sub-title">Interfaces</div>
+          <div class="table-wrap slim">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>MTU</th>
+                  <th>Addresses</th>
+                  <th>In</th>
+                  <th>Out</th>
+                </tr>
+              </thead>
+              <tbody id="ifaceBody"></tbody>
+            </table>
+          </div>
+
+          <div class="sub-title">Disk I/O</div>
+          <div class="table-wrap slim">
+            <table>
+              <thead>
+                <tr id="ioHead"></tr>
+              </thead>
+              <tbody id="ioBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="cellsView" class="view reveal">
+        <div class="pane table-pane">
+          <div class="pane-header">
+            <div class="pane-title">Cell List</div>
+            <div class="bulk-actions" aria-label="All cells actions">
+              <div class="bulk-label">All Cells</div>
+              <button id="startAllBtn" class="btn icon-btn action-start" type="button" aria-label="Start all cells" title="Start all cells"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></button>
+              <button id="stopAllBtn" class="btn icon-btn action-stop" type="button" aria-label="Stop all cells" title="Stop all cells"><svg class="icon" aria-hidden="true"><use href="#i-stop"></use></svg></button>
+              <button id="restartAllBtn" class="btn icon-btn action-restart" type="button" aria-label="Restart all cells" title="Restart all cells"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg></button>
+              <button id="applyAllBtn" class="btn icon-btn action-default" type="button" aria-label="Apply to all cells" title="Apply to all cells"><svg class="icon" aria-hidden="true"><use href="#i-wrench"></use></svg></button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="cells-table">
+              <colgroup>
+                <col class="col-name" />
+                <col class="col-status" />
+                <col class="col-cid" />
+                <col class="col-cpu10s" />
+                <col class="col-age" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>CID</th>
+                  <th>CPU10s</th>
+                  <th>Age</th>
+                </tr>
+              </thead>
+              <tbody id="cellsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="pane detail-pane">
+          <div class="pane-title">Cell Details</div>
+          <div id="cellDetails" class="detail-grid"></div>
+          <div class="action-bar">
+            <button id="startBtn" class="btn icon-btn action-start" type="button" aria-label="Start selected cell" title="Start selected cell"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></button>
+            <button id="stopBtn" class="btn icon-btn action-stop" type="button" aria-label="Stop selected cell" title="Stop selected cell"><svg class="icon" aria-hidden="true"><use href="#i-stop"></use></svg></button>
+            <button id="restartBtn" class="btn icon-btn action-restart" type="button" aria-label="Restart selected cell" title="Restart selected cell"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg></button>
+          </div>
+        </div>
+      </section>
+
+      <section id="storageView" class="view hidden reveal">
+        <div class="pane table-pane">
+          <div class="pane-title">Volumes & Overlays</div>
+          <div class="table-wrap">
+            <table class="storage-table">
+              <colgroup>
+                <col class="col-kind" />
+                <col class="col-name" />
+                <col class="col-runtime" />
+                <col class="col-mounted" />
+                <col class="col-refs" />
+                <col class="col-mode" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Kind</th>
+                  <th>Name</th>
+                  <th>Runtime</th>
+                  <th>Mounted</th>
+                  <th>Refs</th>
+                  <th>Mode</th>
+                </tr>
+              </thead>
+              <tbody id="storageBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="pane detail-pane">
+          <div class="pane-title">Backups</div>
+          <div id="storageDetails" class="detail-grid"></div>
+          <div class="table-wrap slim">
+            <table class="backups-table">
+              <colgroup>
+                <col class="col-timestamp" />
+                <col class="col-size" />
+                <col class="col-archive" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Size</th>
+                  <th>Archive</th>
+                </tr>
+              </thead>
+              <tbody id="backupsBody"></tbody>
+            </table>
+          </div>
+          <div class="action-bar">
+            <button id="backupCreateBtn" class="btn icon-btn action-backup-create" type="button" aria-label="Create backup" title="Create backup"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg></button>
+            <button id="backupRestoreBtn" class="btn icon-btn action-backup-restore" type="button" aria-label="Restore backup" title="Restore backup"><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg></button>
+            <button id="backupRestoreManifestBtn" class="btn icon-btn action-backup-restore" type="button" aria-label="Restore backup and manifest" title="Restore backup and manifest"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg></button>
+            <button id="backupDeleteBtn" class="btn danger icon-btn" type="button" aria-label="Delete backup" title="Delete backup"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="pane status-pane reveal">
+        <div class="pane-title">Console</div>
+        <pre id="statusBox">Ready.</pre>
+      </section>
+    </section>
+  </main>
+
+  <button id="statusToggleBtn" class="status-ribbon" type="button" aria-label="Show console" title="Show console" aria-pressed="false">
+    <svg class="icon" aria-hidden="true"><use href="#i-terminal"></use></svg>
+  </button>
+
+  <div id="actionModal" class="action-modal" role="status" aria-live="polite" aria-modal="true" aria-hidden="true">
+    <div class="action-modal-card">
+      <div class="action-modal-spinner" aria-hidden="true"></div>
+      <div id="actionModalText" class="action-modal-text">Action in progress ...</div>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="confirm-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="confirmModalTitle" aria-describedby="confirmModalMessage">
+    <div class="confirm-modal-card" role="document">
+      <div id="confirmModalTitle" class="confirm-modal-title">Confirm action</div>
+      <div id="confirmModalMessage" class="confirm-modal-message">Are you sure?</div>
+      <pre id="confirmModalMeta" class="confirm-modal-meta hidden"></pre>
+      <div class="confirm-modal-actions">
+        <button id="confirmModalCancelBtn" class="btn ghost" type="button">Cancel</button>
+        <button id="confirmModalConfirmBtn" class="btn danger" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

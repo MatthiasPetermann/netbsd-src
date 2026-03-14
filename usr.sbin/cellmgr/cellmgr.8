@@ -223,14 +223,14 @@ as
 Cell runtime and merged views include an
 .Dq age
 field derived from kernel cell creation time.
-In human-readable output,
+For direct CLI human-readable output,
 .Dq age
 is rendered using compact units (for example
 .Dq 42s ,
 .Dq 7m12s ,
 or
 .Dq 3h05m )
-while TSV output emits raw seconds.
+while TSV output and IPC-routed output emit raw seconds for client-side rendering.
 .Pp
 Optional create-time rlimits for supervise workloads can be configured per cell
 using

@@ -1,0 +1,213 @@
+." $NetBSD$
+.Dd March 16, 2026
+.Dt CELLWEB 8
+.Os
+.Sh NAME
+.Nm cellweb
+.Nd web control UI for NetBSD Cells managed by cellmgr
+.Sh SYNOPSIS
+.Nm
+.Op Fl tls Ar true|false
+.Op Fl https-listen Ar addr
+.Op Fl http-listen Ar addr
+.Op Fl pki-dir Ar path
+.Op Fl tls-san Ar list
+.Op Fl tls-cert Ar path
+.Op Fl tls-key Ar path
+.Op Fl tls-export-ca Ar path
+.Op Fl secure-cookies-mode Ar mode
+.Op Fl pam-service Ar service
+.Op Fl admin-user Ar name
+.Op Fl admin-pass Ar secret
+.Op Fl command-timeout Ar duration
+.Op Fl refresh-seconds Ar seconds
+.Sh DESCRIPTION
+The
+.Nm
+utility provides a standalone HTTP/HTTPS web interface for operating NetBSD
+Cells through
+.Xr cellmgr 8 .
+It authenticates local users via PAM (when available), keeps per-session
+state, and executes runtime actions through
+.Cm "cellmgr ipc serve --stdio" .
+.Pp
+By default,
+.Nm
+starts with TLS enabled
+.Pq Fl tls=true .
+The main HTTPS listener binds to
+.Pa 0.0.0.0:18443
+.Pq Fl https-listen
+and the HTTP bootstrap/redirect listener binds to
+.Pa 0.0.0.0:18088
+.Pq Fl http-listen .
+When TLS is enabled and no certificate/key paths are provided,
+.Nm
+uses managed self-signed PKI material under
+.Pa /var/db/cellweb/pki .
+In self-signed mode, the HTTP listener serves a bootstrap page on
+.Pa /bootstrap
+.Pq and also .Pa /
+with trust instructions, Root CA download button, and HTTPS login link.
+The Root CA download endpoint is
+.Pa /.well-known/ca.crt .
+Other HTTP requests are redirected to HTTPS.
+.Pp
+In self-signed mode,
+.Nm
+prints compact trust bootstrap output to standard output with the root CA
+fingerprint and HTTP bootstrap URL.
+Operational logs are written to standard error.
+.Sh OPTIONS
+.Bl -tag -width "-secure-cookies-mode mode"
+.It Fl tls Ar true|false
+Enable or disable TLS for the main UI listener.
+Default is
+.Dq true .
+.It Fl https-listen Ar addr
+HTTPS listen address for the main UI when
+.Fl tls=true .
+Default is
+.Pa 0.0.0.0:18443 .
+.It Fl http-listen Ar addr
+HTTP listen address.
+When
+.Fl tls=true ,
+this listener serves bootstrap/redirect traffic.
+When
+.Fl tls=false ,
+this listener is used as the main UI listener.
+Default is
+.Pa 0.0.0.0:18088 .
+.It Fl pki-dir Ar path
+Directory for managed PKI material in
+.Dq selfsigned
+mode (selected automatically when
+.Fl tls=true
+and neither
+.Fl tls-cert
+nor
+.Fl tls-key
+is provided).
+Default is
+.Pa /var/db/cellweb/pki .
+.It Fl tls-san Ar list
+Comma-separated DNS/IP SAN entries for the server certificate.
+If omitted,
+.Nm
+adds
+.Dq localhost
+and, when available,
+.Dq <short-hostname>.local .
+.It Fl tls-cert Ar path
+Certificate file for manual TLS.
+.It Fl tls-key Ar path
+Private key file for manual TLS.
+.It Fl tls-export-ca Ar path
+Export managed root CA certificate to the given path.
+.It Fl secure-cookies-mode Ar auto|on|off
+Session cookie
+.Dq Secure
+policy.
+Default is
+.Dq auto .
+.It Fl pam-service Ar service
+PAM service name for login validation.
+Default is
+.Dq login .
+.It Fl admin-user Ar name
+Optional static fallback username.
+Must be combined with
+.Fl admin-pass .
+.It Fl admin-pass Ar secret
+Optional static fallback password.
+Must be combined with
+.Fl admin-user .
+.It Fl command-timeout Ar duration
+Timeout per
+.Xr cellmgr 8
+command.
+Default is
+.Dq 35s .
+.It Fl refresh-seconds Ar seconds
+Recommended UI refresh interval.
+Default is
+.Dq 4 .
+.El
+.Sh ENVIRONMENT
+The following variables are supported:
+.Bl -tag -width "CELLWEB_SECURE_COOKIES_MODE"
+.It Ev CELLWEB_TLS
+Default value for
+.Fl tls .
+.It Ev CELLWEB_HTTPS_LISTEN
+Default value for
+.Fl https-listen .
+.It Ev CELLWEB_HTTP_LISTEN
+Default value for
+.Fl http-listen .
+.It Ev CELLWEB_PKI_DIR
+Default value for
+.Fl pki-dir .
+.It Ev CELLWEB_TLS_CERT
+Default value for
+.Fl tls-cert .
+.It Ev CELLWEB_TLS_KEY
+Default value for
+.Fl tls-key .
+.It Ev CELLWEB_TLS_SAN
+Default value for
+.Fl tls-san .
+.It Ev CELLWEB_TLS_EXPORT_CA
+Default value for
+.Fl tls-export-ca .
+.It Ev CELLWEB_SECURE_COOKIES_MODE
+Default value for
+.Fl secure-cookies-mode .
+.It Ev CELLWEB_PAM_SERVICE
+Default value for
+.Fl pam-service .
+.It Ev CELLWEB_ADMIN_USER
+Default value for
+.Fl admin-user .
+.It Ev CELLWEB_ADMIN_PASS
+Default value for
+.Fl admin-pass .
+.El
+.Sh FILES
+.Bl -tag -width "/var/db/cellweb/pki/server.crt"
+.It Pa /var/db/cellweb/pki/ca.crt
+Managed root CA certificate.
+.It Pa /var/db/cellweb/pki/ca.key
+Managed root CA private key.
+.It Pa /var/db/cellweb/pki/server.crt
+Managed HTTPS server certificate.
+.It Pa /var/db/cellweb/pki/server.key
+Managed HTTPS server private key.
+.El
+.Sh EXAMPLES
+Default appliance-style startup:
+.Pp
+.Dl CELLWEB_ADMIN_USER=root CELLWEB_ADMIN_PASS=secret cellweb
+.Pp
+Manual TLS mode:
+.Pp
+.Dl cellweb -tls=true -https-listen 0.0.0.0:18443 -http-listen 0.0.0.0:18088 -tls-cert /etc/certs/cellweb.crt -tls-key /etc/certs/cellweb.key
+.Pp
+Plain HTTP mode:
+.Pp
+.Dl cellweb -tls=false -http-listen 127.0.0.1:18088
+.Sh EXIT STATUS
+.Ex -std
+.Sh SEE ALSO
+.Xr cellmgr 8 ,
+.Xr cellui 8 ,
+.Xr httpd 8
+.Sh HISTORY
+The
+.Nm
+utility first appeared in an unofficial patch set for
+.Nx
+11.0 .
+.Sh AUTHORS
+.An Matthias Petermann Aq Mt mp@petermann-digital.de
