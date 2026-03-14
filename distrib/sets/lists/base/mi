@@ -2588,6 +2588,7 @@
 ./usr/share/examples/cellmgr/mantisbt/mantisbt-data-postgresql.cell	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/mantisbt/mantisbt-edge-nginx.apply	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/mantisbt/mantisbt-edge-nginx.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/mantisbt/mantisbt-postgres.volume	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/mantisbt/mantisbt-secrets.volume	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/mantisbt/mantisbt-webroot.volume	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/php-api		base-sysutil-examples
