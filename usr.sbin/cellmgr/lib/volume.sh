@@ -3,15 +3,15 @@ run_volume_create() {
 		usage
 		return 1
 	}
-	name=$1
+	volume_name=$1
 	shift
-	mode=
+	volume_mode=
 	scope=desired
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		-m|--mode)
 			[ $# -ge 2 ] || return 1
-			mode=$2
+			volume_mode=$2
 			shift 2
 			;;
 		--scope)
@@ -37,9 +37,9 @@ run_volume_create() {
 		return 1
 		;;
 	esac
-	create_manifest_volume "${name}" "${mode}"
+	create_manifest_volume "${volume_name}" "${volume_mode}"
 	if [ "${scope}" = "both" ]; then
-		ensure_volume_runtime_from_manifest "${name}"
+		ensure_volume_runtime_from_manifest "${volume_name}"
 	fi
 }
 
@@ -48,15 +48,15 @@ run_volume_set() {
 		usage
 		return 1
 	}
-	name=$1
+	volume_name=$1
 	shift
-	mode=
+	volume_mode=
 	scope=desired
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		-m|--mode)
 			[ $# -ge 2 ] || return 1
-			mode=$2
+			volume_mode=$2
 			shift 2
 			;;
 		--scope)
@@ -82,9 +82,9 @@ run_volume_set() {
 		return 1
 		;;
 	esac
-	set_manifest_volume "${name}" "${mode}"
+	set_manifest_volume "${volume_name}" "${volume_mode}"
 	if [ "${scope}" = "both" ]; then
-		ensure_volume_runtime_from_manifest "${name}"
+		ensure_volume_runtime_from_manifest "${volume_name}"
 	fi
 }
 
@@ -101,7 +101,7 @@ run_volume_backup_list() {
 		echo "volume backup list: expected volume name" >&2
 		return 1
 	}
-	name=$1
+	volume_name=$1
 	shift
 	tsv=NO
 	header=YES
@@ -132,7 +132,7 @@ run_volume_backup_list() {
 		return 1
 	fi
 
-	list_volume_backups "${name}" "${tsv}" "${header}"
+	list_volume_backups "${volume_name}" "${tsv}" "${header}"
 }
 
 run_volume_backup_restore() {
@@ -140,7 +140,7 @@ run_volume_backup_restore() {
 		echo "volume backup restore: expected volume name" >&2
 		return 1
 	}
-	name=$1
+	volume_name=$1
 	shift
 	archive=
 	latest=NO
@@ -183,7 +183,7 @@ run_volume_backup_restore() {
 		esac
 	done
 
-	restore_volume "${name}" "${archive}" "${latest}" "${restore_manifest}"
+	restore_volume "${volume_name}" "${archive}" "${latest}" "${restore_manifest}"
 }
 
 run_volume_backup_delete() {
@@ -191,7 +191,7 @@ run_volume_backup_delete() {
 		echo "volume backup delete: expected volume name" >&2
 		return 1
 	}
-	name=$1
+	volume_name=$1
 	shift
 	archive=
 	latest=NO
@@ -229,7 +229,7 @@ run_volume_backup_delete() {
 		esac
 	done
 
-	delete_volume_backup "${name}" "${archive}" "${latest}"
+	delete_volume_backup "${volume_name}" "${archive}" "${latest}"
 }
 
 run_volume_backup_resource_command() {
@@ -237,9 +237,9 @@ run_volume_backup_resource_command() {
 		echo "volume backup: expected subcommand create|list|restore|delete" >&2
 		return 1
 	}
-	sub=$1
+	backup_sub=$1
 	shift
-	case "${sub}" in
+	case "${backup_sub}" in
 	create)
 		run_volume_backup_create "$@"
 		;;
@@ -253,7 +253,7 @@ run_volume_backup_resource_command() {
 		run_volume_backup_delete "$@"
 		;;
 	*)
-		echo "unknown volume backup command: ${sub}" >&2
+		echo "unknown volume backup command: ${backup_sub}" >&2
 		usage
 		return 1
 		;;
@@ -265,7 +265,7 @@ run_volume_remove() {
 		usage
 		return 1
 	}
-	target=$1
+	volume_target=$1
 	shift
 	scope=desired
 	while [ $# -gt 0 ]; do
@@ -298,7 +298,7 @@ run_volume_remove() {
 		;;
 	esac
 
-	case "${target}" in
+	case "${volume_target}" in
 	--all)
 		if [ "${scope}" = "desired" ] || [ "${scope}" = "both" ]; then
 			remove_manifest_volumes_all
@@ -318,8 +318,8 @@ run_volume_remove() {
 		;;
 	esac
 
-	assert_valid_volume_name "${target}"
-	volume_manifest_paths "${target}"
+	assert_valid_volume_name "${volume_target}"
+	volume_manifest_paths "${volume_target}"
 	manifest_present=NO
 	runtime_present=NO
 	if [ -f "${VOLUME_CONF}" ]; then
@@ -329,23 +329,23 @@ run_volume_remove() {
 		runtime_present=YES
 	fi
 	if [ "${manifest_present}" = "NO" ] && [ "${runtime_present}" = "NO" ]; then
-		echo "volume remove: not found: ${target}" >&2
+		echo "volume remove: not found: ${volume_target}" >&2
 		return 1
 	fi
 
 	if [ "${scope}" = "runtime" ] || [ "${scope}" = "both" ]; then
 		if [ "${runtime_present}" = "YES" ]; then
-			prune_runtime_volume "${target}"
+			prune_runtime_volume "${volume_target}"
 		elif [ "${scope}" = "runtime" ]; then
-			echo "volume remove: runtime state not found: ${target}" >&2
+			echo "volume remove: runtime state not found: ${volume_target}" >&2
 			return 1
 		fi
 	fi
 	if [ "${scope}" = "desired" ] || [ "${scope}" = "both" ]; then
 		if [ "${manifest_present}" = "YES" ]; then
-			remove_manifest_volume "${target}"
+			remove_manifest_volume "${volume_target}"
 		elif [ "${scope}" = "desired" ]; then
-			echo "volume remove: desired state not found: ${target}" >&2
+			echo "volume remove: desired state not found: ${volume_target}" >&2
 			return 1
 		fi
 	fi
@@ -356,9 +356,9 @@ run_volume_resource_command() {
 		usage
 		return 1
 	}
-	sub=$1
+	volume_sub=$1
 	shift
-	case "${sub}" in
+	case "${volume_sub}" in
 	list)
 		volume_list_view "$@"
 		;;
@@ -381,7 +381,7 @@ run_volume_resource_command() {
 		run_volume_remove "$@"
 		;;
 	*)
-		echo "unknown volume command: ${sub}" >&2
+		echo "unknown volume command: ${volume_sub}" >&2
 		usage
 		return 1
 		;;
