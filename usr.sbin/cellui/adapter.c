@@ -343,9 +343,9 @@ static bool parse_ipc_header(const char *line, IpcHeader *hdr) {
   int scanned;
 
   memset(hdr, 0, sizeof(*hdr));
-  scanned = sscanf(line, "M %d %15s %llu %llu %llu %llu %llu", &hdr->version,
-                   hdr->type, &hdr->id, &hdr->p1, &hdr->p2, &hdr->p3,
-                   &hdr->len);
+  scanned =
+      sscanf(line, "M %d %15s %llu %llu %llu %llu %llu", &hdr->version,
+             hdr->type, &hdr->id, &hdr->p1, &hdr->p2, &hdr->p3, &hdr->len);
   if (scanned != 7) {
     return false;
   }
@@ -382,9 +382,7 @@ void shutdown_command_bridge(void) {
   ipc_mark_down();
 }
 
-bool command_bridge_is_disconnected(void) {
-  return ipc_bridge.disconnected;
-}
+bool command_bridge_is_disconnected(void) { return ipc_bridge.disconnected; }
 
 const char *command_bridge_disconnect_reason(void) {
   return blank_if(ipc_bridge.disconnect_reason, "cellmgr bridge disconnected");
@@ -541,13 +539,15 @@ static bool ipc_start(char **err_out) {
   ipc_bridge.next_id = 1;
 
   if (!ipc_send_frame("HELLO", 0, 0, 0, 0, NULL, 0, &ipc_err)) {
-    *err_out = xasprintf("ipc hello send failed: %s", blank_if(ipc_err, "error"));
+    *err_out =
+        xasprintf("ipc hello send failed: %s", blank_if(ipc_err, "error"));
     free(ipc_err);
     ipc_mark_down();
     return false;
   }
   if (!ipc_read_frame(&hdr, &payload, &payload_len, &ipc_err)) {
-    *err_out = xasprintf("ipc hello read failed: %s", blank_if(ipc_err, "error"));
+    *err_out =
+        xasprintf("ipc hello read failed: %s", blank_if(ipc_err, "error"));
     free(ipc_err);
     free(payload);
     ipc_mark_down();
@@ -570,8 +570,7 @@ static bool build_call_payload(const char *prog, const char *const argv[],
                                const char *env_key, const char *env_val,
                                char **payload_out, size_t *payload_len_out,
                                unsigned long long *argc_out,
-                               unsigned long long *flags_out,
-                               char **err_out) {
+                               unsigned long long *flags_out, char **err_out) {
   size_t start = 0;
   size_t argc = 0;
   size_t payload_len = 0;
@@ -609,7 +608,8 @@ static bool build_call_payload(const char *prog, const char *const argv[],
   for (size_t i = start; argv[i] != NULL; i++) {
     const char *arg = argv[i];
     if (strchr(arg, '\n') != NULL) {
-      *err_out = xasprintf("argument contains newline and cannot be sent over ipc: %s", arg);
+      *err_out = xasprintf(
+          "argument contains newline and cannot be sent over ipc: %s", arg);
       return false;
     }
     payload_len += strlen(arg) + 1;
@@ -652,10 +652,11 @@ static bool build_call_payload(const char *prog, const char *const argv[],
   return true;
 }
 
-static int ipc_call_command(int mode, const char *prog, const char *const argv[],
-                            const char *env_key, const char *env_val,
-                            int *cmd_rc_out, char **stdout_out,
-                            char **stderr_out, char **transport_err_out) {
+static int ipc_call_command(int mode, const char *prog,
+                            const char *const argv[], const char *env_key,
+                            const char *env_val, int *cmd_rc_out,
+                            char **stdout_out, char **stderr_out,
+                            char **transport_err_out) {
   IpcHeader hdr;
   char *payload = NULL;
   size_t payload_len = 0;
@@ -672,13 +673,14 @@ static int ipc_call_command(int mode, const char *prog, const char *const argv[]
   *transport_err_out = NULL;
 
   if (!ipc_start(&ipc_err)) {
-    *transport_err_out = xasprintf("ipc start failed: %s", blank_if(ipc_err, "error"));
+    *transport_err_out =
+        xasprintf("ipc start failed: %s", blank_if(ipc_err, "error"));
     free(ipc_err);
     return -1;
   }
 
-  if (!build_call_payload(prog, argv, env_key, env_val, &payload,
-                          &payload_len, &argc, &flags, &ipc_err)) {
+  if (!build_call_payload(prog, argv, env_key, env_val, &payload, &payload_len,
+                          &argc, &flags, &ipc_err)) {
     free(*stderr_out);
     *stderr_out = xstrdup(blank_if(ipc_err, "invalid request"));
     *cmd_rc_out = 1;
@@ -688,9 +690,9 @@ static int ipc_call_command(int mode, const char *prog, const char *const argv[]
 
   id = ipc_bridge.next_id++;
   if (!ipc_send_frame("CALL", id, (unsigned long long)mode, argc, flags,
-                      payload,
-                      payload_len, &ipc_err)) {
-    *transport_err_out = xasprintf("ipc call send failed: %s", blank_if(ipc_err, "error"));
+                      payload, payload_len, &ipc_err)) {
+    *transport_err_out =
+        xasprintf("ipc call send failed: %s", blank_if(ipc_err, "error"));
     free(ipc_err);
     free(payload);
     return -1;
@@ -698,7 +700,8 @@ static int ipc_call_command(int mode, const char *prog, const char *const argv[]
   free(payload);
 
   if (!ipc_read_frame(&hdr, &resp_payload, &resp_len, &ipc_err)) {
-    *transport_err_out = xasprintf("ipc call read failed: %s", blank_if(ipc_err, "error"));
+    *transport_err_out =
+        xasprintf("ipc call read failed: %s", blank_if(ipc_err, "error"));
     free(ipc_err);
     free(resp_payload);
     return -1;
@@ -706,16 +709,17 @@ static int ipc_call_command(int mode, const char *prog, const char *const argv[]
 
   if (strcmp(hdr.type, "ERR") == 0) {
     free(*stderr_out);
-    *stderr_out = (resp_payload != NULL) ? trimmed_copy((const char *)resp_payload)
-                                         : xstrdup("ipc error");
+    *stderr_out = (resp_payload != NULL)
+                      ? trimmed_copy((const char *)resp_payload)
+                      : xstrdup("ipc error");
     *cmd_rc_out = (hdr.p1 == 0) ? 1 : (int)hdr.p1;
     free(resp_payload);
     return 0;
   }
 
   if (strcmp(hdr.type, "RET") != 0 || hdr.id != id) {
-    *transport_err_out = xasprintf("unexpected ipc response: type=%s id=%llu", hdr.type,
-                                   hdr.id);
+    *transport_err_out =
+        xasprintf("unexpected ipc response: type=%s id=%llu", hdr.type, hdr.id);
     free(resp_payload);
     return -1;
   }
@@ -1026,9 +1030,8 @@ int load_rows(CellRow **rows_out, size_t *count_out, char **err_out) {
   }
 
   if (malformed_lines > 0) {
-    *err_out =
-        xasprintf("ignored %zu malformed TSV line(s), first at line %zu",
-                  malformed_lines, first_bad_line);
+    *err_out = xasprintf("ignored %zu malformed TSV line(s), first at line %zu",
+                         malformed_lines, first_bad_line);
   }
 
   qsort(out.items, out.len, sizeof(out.items[0]), cmp_rows_by_name);
@@ -1055,9 +1058,9 @@ static void set_overlay_path_from_root_field(VolumeRow *row,
 
   len = strlen(root_path);
   if (len >= 5 && strcmp(root_path + len - 5, "/root") == 0) {
-    overlay_path = xasprintf("%.*s/.overlay", (int)(len - 5), root_path);
+    overlay_path = xasprintf("%.*s/overlay", (int)(len - 5), root_path);
   } else {
-    overlay_path = xasprintf("%s/.overlay", root_path);
+    overlay_path = xasprintf("%s/overlay", root_path);
   }
   set_string(&row->path, overlay_path);
   free(overlay_path);
@@ -1071,12 +1074,22 @@ int load_volume_rows(VolumeRow **rows_out, size_t *count_out, char **err_out) {
   char *line;
   char *saveptr;
   const char *volume_argv[] = {
-      "cellmgr", "volume", "list", "--view", "merged", "-T", "-H", "-o",
-      "name,manifest,runtime,mounted,refs,mode,path,used_by", NULL,
+      "cellmgr",
+      "volume",
+      "list",
+      "--view",
+      "merged",
+      "-T",
+      "-H",
+      "-o",
+      "name,manifest,runtime,mounted,refs,mode,path,used_by",
+      NULL,
   };
   const char *cell_argv[] = {
-      "cellmgr", "cell", "list", "--view", "merged", "-T", "-H", "-o",
-      "name,manifest,running,root", NULL,
+      "cellmgr", "cell",   "list",
+      "--view",  "merged", "-T",
+      "-H",      "-o",     "name,manifest,running,root",
+      NULL,
   };
 
   *rows_out = NULL;
@@ -1190,8 +1203,8 @@ int load_volume_rows(VolumeRow **rows_out, size_t *count_out, char **err_out) {
 }
 
 int load_storage_backups(const char *storage_kind, const char *storage_name,
-                        BackupRow **rows_out, size_t *count_out,
-                        char **err_out) {
+                         BackupRow **rows_out, size_t *count_out,
+                         char **err_out) {
   BackupVec out;
   char *output = NULL;
   char *cmd_err = NULL;
