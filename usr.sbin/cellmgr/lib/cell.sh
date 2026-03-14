@@ -604,6 +604,56 @@ run_cell_plan_command() {
 	apply_cell_script "$@"
 }
 
+run_cell_edit() {
+	[ $# -ge 1 ] || {
+		echo "cell edit: expected one cell name" >&2
+		return 1
+	}
+	cell_name=$1
+	shift
+	target=cell
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--target)
+			[ $# -ge 2 ] || {
+				echo "cell edit: --target requires cell|apply" >&2
+				return 1
+			}
+			target=$2
+			shift 2
+			;;
+		--cell)
+			target=cell
+			shift
+			;;
+		--apply)
+			target=apply
+			shift
+			;;
+		-*)
+			echo "cell edit: unknown option $1" >&2
+			return 1
+			;;
+		*)
+			echo "cell edit: unexpected argument $1" >&2
+			return 1
+			;;
+		esac
+	done
+
+	case "${target}" in
+	cell|apply)
+		;;
+	*)
+		echo "cell edit: invalid target '${target}' (expected cell|apply)" >&2
+		return 1
+		;;
+	esac
+
+	edit_cell_config "${cell_name}" "${target}"
+}
+
 run_cell_backup_create() {
 	[ $# -eq 1 ] || {
 		echo "cell backup create: expected one cell name" >&2
@@ -825,11 +875,7 @@ run_cell_resource_command() {
 		run_cell_backup_resource_command "$@"
 		;;
 	edit)
-		[ $# -eq 1 ] || {
-			echo "cell edit: expected one cell name" >&2
-			return 1
-		}
-		edit_cell_config "$1"
+		run_cell_edit "$@"
 		;;
 	*)
 		echo "unknown cell command: ${cell_sub}" >&2

@@ -88,6 +88,14 @@ run_volume_set() {
 	fi
 }
 
+run_volume_edit() {
+	[ $# -eq 1 ] || {
+		echo "volume edit: expected one volume name" >&2
+		return 1
+	}
+	edit_volume_config "$1"
+}
+
 run_volume_backup_create() {
 	[ $# -eq 1 ] || {
 		echo "volume backup create: expected one volume name" >&2
@@ -373,6 +381,9 @@ run_volume_resource_command() {
 		;;
 	set)
 		run_volume_set "$@"
+		;;
+	edit)
+		run_volume_edit "$@"
 		;;
 	backup)
 		run_volume_backup_resource_command "$@"
