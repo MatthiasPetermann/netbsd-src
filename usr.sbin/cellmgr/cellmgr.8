@@ -99,6 +99,13 @@
 .Ar name
 .Nm
 .Cm cell
+.Cm edit
+.Ar name
+.Op Cm --target Ar cell|apply
+.Op Cm --cell
+.Op Cm --apply
+.Nm
+.Cm cell
 .Cm backup
 .Cm create
 .Ar name
@@ -149,6 +156,10 @@
 .Ar name|--all|--orphans
 .Op Cm --scope Ar desired|runtime|both
 .Op Cm --yes
+.Nm
+.Cm volume
+.Cm edit
+.Ar name
 .Nm
 .Cm volume
 .Cm backup
@@ -332,6 +343,16 @@ and
 desired autostart is updated to match intent.
 .It Cm cell Cm shell Ar name
 Open an interactive shell in a running cell.
+.It Cm cell Cm edit Ar name Op Cm --target Ar cell|apply Op Cm --cell Op Cm --apply
+Open one declarative cell file in an editor.
+By default, edits
+.Pa /etc/cellmgr/<name>.cell .
+Use
+.Cm --target apply
+or
+.Cm --apply
+to edit
+.Pa /etc/cellmgr/<name>.apply .
 .It Cm cell Cm backup Cm create Ar name
 Create a compressed backup archive of a cell runtime overlay.
 The cell must be stopped.
@@ -365,6 +386,10 @@ Create or update desired volume manifest values.
 With
 .Cm --scope both ,
 materialize runtime volume path from desired state.
+.It Cm volume Cm edit Ar name
+Open
+.Pa /etc/cellmgr/<name>.volume
+in an editor.
 .It Cm volume Cm remove Ar name|--all|--orphans Op Ar remove-options
 Remove desired and/or runtime volume state according to
 .Cm --scope .

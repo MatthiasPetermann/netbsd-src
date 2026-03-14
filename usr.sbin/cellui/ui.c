@@ -1001,7 +1001,7 @@ void draw_ui(Model *m) {
           {"t", "restart"},
           {"a/z/y", "all"},
           {"A", "apply"},
-          {"e", "edit"},
+          {"e/E", "edit"},
           {"m", "theme"},
           {"q", "quit"},
       };
@@ -1012,6 +1012,7 @@ void draw_ui(Model *m) {
           {"r", "restore"},
           {"M", "restore+manifest"},
           {"d", "delete"},
+          {"e", "edit"},
           {"m", "theme"},
       };
       draw_help_line(help_y + 1, w, line2, sizeof(line2) / sizeof(line2[0]));
@@ -1151,10 +1152,21 @@ static void handle_cell_mode_key(Model *m, int ch) {
       set_status(m, true, "Cannot edit %s: manifest missing", name);
       break;
     }
-    const char *argv[] = {"cellmgr", "cell", "edit", name, NULL};
+    const char *argv[] = {"cellmgr", "cell", "edit", name, "--cell", NULL};
     m->loading = true;
-    set_status(m, false, "Opening manifest for %s", name);
-    run_interactive_action(m, "Config", true, argv, NULL, NULL);
+    set_status(m, false, "Opening cell manifest for %s", name);
+    run_interactive_action(m, "Edit manifest", true, argv, NULL, NULL);
+    break;
+  }
+  case 'E': {
+    if (!row->manifest_present) {
+      set_status(m, true, "Cannot edit plan for %s: manifest missing", name);
+      break;
+    }
+    const char *argv[] = {"cellmgr", "cell", "edit", name, "--apply", NULL};
+    m->loading = true;
+    set_status(m, false, "Opening apply plan for %s", name);
+    run_interactive_action(m, "Edit apply plan", true, argv, NULL, NULL);
     break;
   }
   default:
@@ -1354,6 +1366,25 @@ static void handle_volume_mode_key(Model *m, int ch) {
                "Selected delete: %s for %s:%s (Enter confirms, other key cancels)",
                blank_if(archive_basename(backup->archive), "backup"), kind,
                row->name);
+    return;
+  }
+
+  if (ch == 'e') {
+    const char *kind = blank_if(row->kind, "storage");
+    if (strcmp(kind, "volume") != 0) {
+      set_status(m, true, "Cannot edit %s:%s: only volumes are editable",
+                 kind, row->name);
+      return;
+    }
+    if (!row->manifest_present) {
+      set_status(m, true, "Cannot edit volume %s: manifest missing", row->name);
+      return;
+    }
+
+    const char *argv[] = {"cellmgr", "volume", "edit", row->name, NULL};
+    m->loading = true;
+    set_status(m, false, "Opening volume manifest for %s", row->name);
+    run_interactive_action(m, "Edit volume", true, argv, NULL, NULL);
     return;
   }
 }

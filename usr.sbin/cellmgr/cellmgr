@@ -240,7 +240,7 @@ Usage:
   $0 system <bootstrap|reset> ...
   $0 ipc serve [--stdio]
   $0 cell <list|show|fields|create|set|remove|start|stop|restart|shell|plan|edit|backup> ...
-  $0 volume <list|show|fields|create|set|remove|backup> ...
+  $0 volume <list|show|fields|create|set|remove|edit|backup> ...
   $0 apply [--all|<name>...] [--dry-run] [--reapply] [--restart-changed] [--silent|-v]
   $0 help
 
@@ -275,7 +275,7 @@ Cell commands:
   cell restart <name|--all> [--scope runtime|both]
   cell shell <name>
   cell plan run <name> [--file path] [--ephemeral]
-  cell edit <name>
+  cell edit <name> [--target cell|apply] [--cell|--apply]
   cell backup create <name>
   cell backup list <name> [-T] [-H]
   cell backup restore <name> [--from archive.tar.gz|--latest] [--manifest] [--yes]
@@ -288,6 +288,7 @@ Volume commands:
   volume create <name> [-m mode] [--scope desired|both]
   volume set <name> [-m mode] [--scope desired|both]
   volume remove <name|--all|--orphans> [--scope desired|runtime|both] [--yes]
+  volume edit <name>
   volume backup create <name>
   volume backup list <name> [-T] [-H]
   volume backup restore <name> [--from archive.tar.gz|--latest] [--manifest] [--yes]
@@ -3085,15 +3086,50 @@ restart_all() {
 	start_all
 }
 
-edit_cell_config() {
-	name=$1
-	manifest_cell_paths "${name}"
-	if [ ! -r "${MANIFEST_CELL_CONF}" ]; then
-		echo "missing manifest ${MANIFEST_CELL_CONF}" >&2
+edit_with_editor() {
+	target_path=$1
+	label=$2
+
+	if [ ! -r "${target_path}" ]; then
+		echo "missing ${label} ${target_path}" >&2
 		exit 1
 	fi
+
 	editor=${VISUAL:-${EDITOR:-vi}}
-	"${editor}" "${MANIFEST_CELL_CONF}"
+	"${editor}" "${target_path}"
+}
+
+edit_cell_config() {
+	name=$1
+	target=${2:-cell}
+
+	assert_valid_cell_name "${name}"
+	manifest_cell_paths "${name}"
+
+	case "${target}" in
+	cell)
+		target_path=${MANIFEST_CELL_CONF}
+		label="cell manifest"
+		;;
+	apply)
+		target_path=${MANIFEST_APPLY_FILE}
+		label="cell apply plan"
+		;;
+	*)
+		echo "cell edit: invalid target '${target}' (expected cell|apply)" >&2
+		exit 1
+		;;
+	esac
+
+	edit_with_editor "${target_path}" "${label}"
+}
+
+edit_volume_config() {
+	name=$1
+
+	assert_valid_volume_name "${name}"
+	volume_manifest_paths "${name}"
+	edit_with_editor "${VOLUME_CONF}" "volume manifest"
 }
 
 show_manifest_cell() {

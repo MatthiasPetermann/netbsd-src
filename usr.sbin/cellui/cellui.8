@@ -69,11 +69,6 @@ Cells without a declarative manifest are marked with
 in the table and as
 .Dq missing (ORPHAN)
 in the detail panel.
-For those cells,
-.Cm e
-is refused because
-.Cm "cell edit"
-requires an existing manifest file.
 .Pp
 The selected theme is persisted per user in
 .Pa ~/.celluirc
@@ -130,9 +125,16 @@ Start all, stop all, or restart all configured cells using
 Run
 .Cm "cellmgr apply --all"
 to apply declarative manifests to runtime state.
-.It Cm e
-Open the selected cell configuration via
+.It Cm e , Cm E
+Open the selected cell files using
 .Cm "cellmgr cell edit" .
+.Cm e
+opens
+.Pa /etc/cellmgr/<name>.cell
+and
+.Cm E
+opens
+.Pa /etc/cellmgr/<name>.apply .
 This is only available when a manifest exists.
 .El
 .Pp
@@ -153,6 +155,12 @@ Prepare restore of the selected backup.
 Prepare restore of the selected backup and the associated manifest snapshot.
 .It Cm d
 Prepare deletion of the selected backup.
+.It Cm e
+Open the selected volume manifest using
+.Cm "cellmgr volume edit" .
+This applies only to
+.Dq volume
+rows, not overlay rows.
 Press
 .Cm enter
 to confirm restore or deletion.
