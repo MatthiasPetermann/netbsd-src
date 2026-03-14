@@ -23,7 +23,7 @@ Userland components:
 - `usr.sbin/cellmgr/lib/volume.sh`
 - `usr.sbin/cellmgr/lib/system.sh`
 - `usr.sbin/cellmgr/lib/ipc.sh`
-- `usr.sbin/cellmgr/lib/legacy.sh`
+- `usr.sbin/cellmgr/lib/common.sh`
 - `usr.sbin/cellui/adapter.c`
 - `usr.sbin/cellui/ui.c`
 
