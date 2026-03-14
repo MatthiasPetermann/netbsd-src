@@ -13,7 +13,7 @@ SCRIPTS=	cellmgr
 	${.CURDIR}/examples/luanti
 
 FILES+=	README cellmgr.conf.sample manifest.cell.sample manifest.apply.sample \
-	legacy.sh cell.sh volume.sh system.sh ipc.sh dispatch.sh \
+	common.sh cell.sh volume.sh system.sh ipc.sh dispatch.sh \
 	manifest.volume.sample \
 	mantisbt-webroot.volume mantisbt-secrets.volume mantisbt-postgres.volume \
 	mantisbt-data-postgresql.cell mantisbt-data-postgresql.apply \
@@ -35,7 +35,7 @@ FILES+=	README cellmgr.conf.sample manifest.cell.sample manifest.apply.sample \
 FILESDIR=	/usr/share/examples/cellmgr
 
 FILESDIR_mantisbt-data-postgresql.cell=	/usr/share/examples/cellmgr/mantisbt
-FILESDIR_legacy.sh=	/usr/libexec/cellmgr
+FILESDIR_common.sh=	/usr/libexec/cellmgr
 FILESDIR_cell.sh=	/usr/libexec/cellmgr
 FILESDIR_volume.sh=	/usr/libexec/cellmgr
 FILESDIR_system.sh=	/usr/libexec/cellmgr

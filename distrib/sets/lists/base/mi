@@ -1309,9 +1309,9 @@
 ./usr/libexec/bozohttpd				base-netutil-bin
 ./usr/libexec/cellmgr				base-sysutil-bin
 ./usr/libexec/cellmgr/cell.sh			base-sysutil-bin
+./usr/libexec/cellmgr/common.sh			base-sysutil-bin
 ./usr/libexec/cellmgr/dispatch.sh			base-sysutil-bin
 ./usr/libexec/cellmgr/ipc.sh			base-sysutil-bin
-./usr/libexec/cellmgr/legacy.sh			base-sysutil-bin
 ./usr/libexec/cellmgr/system.sh			base-sysutil-bin
 ./usr/libexec/cellmgr/volume.sh			base-sysutil-bin
 ./usr/libexec/ching				base-games-usr

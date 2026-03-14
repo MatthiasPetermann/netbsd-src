@@ -5195,7 +5195,7 @@ load_cellmgr_modules() {
 	fi
 
 	for module in \
-	    legacy.sh \
+	    common.sh \
 	    cell.sh \
 	    volume.sh \
 	    system.sh \
