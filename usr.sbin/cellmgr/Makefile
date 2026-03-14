@@ -15,7 +15,7 @@ SCRIPTS=	cellmgr
 FILES+=	README cellmgr.conf.sample manifest.cell.sample manifest.apply.sample \
 	legacy.sh cell.sh volume.sh system.sh ipc.sh dispatch.sh \
 	manifest.volume.sample \
-	mantisbt-webroot.volume mantisbt-secrets.volume \
+	mantisbt-webroot.volume mantisbt-secrets.volume mantisbt-postgres.volume \
 	mantisbt-data-postgresql.cell mantisbt-data-postgresql.apply \
 	mantisbt-app-phpfpm.cell mantisbt-app-phpfpm.apply \
 	mantisbt-edge-nginx.cell mantisbt-edge-nginx.apply \
@@ -44,6 +44,7 @@ FILESDIR_dispatch.sh=	/usr/libexec/cellmgr
 FILESDIR_mantisbt-data-postgresql.apply=	/usr/share/examples/cellmgr/mantisbt
 FILESDIR_mantisbt-webroot.volume=	/usr/share/examples/cellmgr/mantisbt
 FILESDIR_mantisbt-secrets.volume=	/usr/share/examples/cellmgr/mantisbt
+FILESDIR_mantisbt-postgres.volume=	/usr/share/examples/cellmgr/mantisbt
 FILESDIR_mantisbt-app-phpfpm.cell=	/usr/share/examples/cellmgr/mantisbt
 FILESDIR_mantisbt-app-phpfpm.apply=	/usr/share/examples/cellmgr/mantisbt
 FILESDIR_mantisbt-edge-nginx.cell=	/usr/share/examples/cellmgr/mantisbt
