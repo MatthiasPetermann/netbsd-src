@@ -2571,6 +2571,10 @@
 ./usr/share/examples/cellmgr/blue-green/bluegreen-edge-nginx.apply	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/blue-green/bluegreen-edge-nginx.cell	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/cellmgr.conf.sample	base-sysutil-examples	share
+./usr/share/examples/cellmgr/forgejo		base-sysutil-examples
+./usr/share/examples/cellmgr/forgejo/forgejo-app-server.apply	base-sysutil-examples	share
+./usr/share/examples/cellmgr/forgejo/forgejo-app-server.cell	base-sysutil-examples	share
+./usr/share/examples/cellmgr/forgejo/forgejo-data.volume	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/httpd			base-sysutil-examples
 ./usr/share/examples/cellmgr/httpd/mysite-edge-httpd.apply	base-sysutil-examples	share
 ./usr/share/examples/cellmgr/httpd/mysite-edge-httpd.cell	base-sysutil-examples	share
