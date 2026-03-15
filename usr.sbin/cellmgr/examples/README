@@ -115,6 +115,7 @@ The following example trees are shipped:
 - `blue-green/`
 - `php-api/`
 - `luanti/`
+- `forgejo/`
 
 Copy example manifests into `/etc/cellmgr` and run:
 
