@@ -1,0 +1,18 @@
+CELL_NAME=forgejo-app-server
+CELL_AUTOSTART=YES
+
+CELL_CREATE_PROFILE="medium"
+CELL_CREATE_RESERVED_PORTS="3000"
+CELL_CREATE_RLIMIT_NOFILE="8192"
+CELL_CREATE_RLIMIT_AS="2147483648"
+CELL_CREATE_RLIMIT_CORE="0"
+
+CELL_SUPERVISE_FACILITY="local4"
+CELL_SUPERVISE_STDOUT_LEVEL="info"
+CELL_SUPERVISE_STDERR_LEVEL="err"
+CELL_SUPERVISE_TAG="cell-forgejo-app-server"
+CELL_SUPERVISE_CMD="env HOME=/var/lib/forgejo FORGEJO_WORK_DIR=/var/lib/forgejo /usr/pkg/bin/forgejo web --config /var/lib/forgejo/custom/conf/app.ini"
+
+CELL_DEPENDS_ON=""
+CELL_HEALTHCHECK_CMD="test -f /var/lib/forgejo/custom/conf/app.ini"
+CELL_VOLUME_MOUNTS="forgejo-data:/var/lib/forgejo:rw"

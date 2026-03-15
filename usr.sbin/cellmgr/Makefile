@@ -10,7 +10,8 @@ SCRIPTS=	cellmgr
 	${.CURDIR}/examples/api-gateway \
 	${.CURDIR}/examples/blue-green \
 	${.CURDIR}/examples/php-api \
-	${.CURDIR}/examples/luanti
+	${.CURDIR}/examples/luanti \
+	${.CURDIR}/examples/forgejo
 
 FILES+=	README cellmgr.conf.sample manifest.cell.sample manifest.apply.sample \
 	common.sh cell.sh volume.sh system.sh ipc.sh dispatch.sh \
@@ -31,7 +32,9 @@ FILES+=	README cellmgr.conf.sample manifest.cell.sample manifest.apply.sample \
 	php-api-app-phpfpm.cell php-api-app-phpfpm.apply \
 	php-api-edge-nginx.cell php-api-edge-nginx.apply \
 	luanti-worlddata.volume \
-	luanti-app-server.cell luanti-app-server.apply
+	luanti-app-server.cell luanti-app-server.apply \
+	forgejo-data.volume \
+	forgejo-app-server.cell forgejo-app-server.apply
 FILESDIR=	/usr/share/examples/cellmgr
 
 FILESDIR_mantisbt-data-postgresql.cell=	/usr/share/examples/cellmgr/mantisbt
@@ -73,8 +76,11 @@ FILESDIR_php-api-edge-nginx.apply=	/usr/share/examples/cellmgr/php-api
 FILESDIR_luanti-worlddata.volume=	/usr/share/examples/cellmgr/luanti
 FILESDIR_luanti-app-server.cell=	/usr/share/examples/cellmgr/luanti
 FILESDIR_luanti-app-server.apply=	/usr/share/examples/cellmgr/luanti
+FILESDIR_forgejo-data.volume=	/usr/share/examples/cellmgr/forgejo
+FILESDIR_forgejo-app-server.cell=	/usr/share/examples/cellmgr/forgejo
+FILESDIR_forgejo-app-server.apply=	/usr/share/examples/cellmgr/forgejo
 
-EXAMPLE_SUBDIRS=	mantisbt httpd api-gateway blue-green php-api luanti
+EXAMPLE_SUBDIRS=	mantisbt httpd api-gateway blue-green php-api luanti forgejo
 
 beforeinstall: cellmgr-example-dirs
 

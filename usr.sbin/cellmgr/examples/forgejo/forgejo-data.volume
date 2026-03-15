@@ -1,0 +1,2 @@
+VOLUME_NAME=forgejo-data
+VOLUME_MODE="0755"

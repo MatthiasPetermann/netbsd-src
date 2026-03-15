@@ -1,0 +1,32 @@
+PKG forgejo
+DIR /var/lib/forgejo mode=0755
+DIR /var/lib/forgejo/custom mode=0755
+DIR /var/lib/forgejo/custom/conf mode=0755
+DIR /var/lib/forgejo/data mode=0755
+DIR /var/lib/forgejo/data/git mode=0755
+DIR /var/lib/forgejo/data/git/repositories mode=0755
+
+FILE_BEGIN /var/lib/forgejo/custom/conf/app.ini mode=0644
+APP_NAME = cellmgr forgejo example
+RUN_MODE = prod
+RUN_USER = root
+
+[server]
+PROTOCOL = http
+HTTP_ADDR = 0.0.0.0
+HTTP_PORT = 3000
+DOMAIN = forgejo.local
+ROOT_URL = http://forgejo.local:3000/
+DISABLE_SSH = true
+START_SSH_SERVER = false
+
+[database]
+DB_TYPE = sqlite3
+PATH = /var/lib/forgejo/data/forgejo.db
+
+[repository]
+ROOT = /var/lib/forgejo/data/git/repositories
+
+[security]
+INSTALL_LOCK = false
+FILE_END
