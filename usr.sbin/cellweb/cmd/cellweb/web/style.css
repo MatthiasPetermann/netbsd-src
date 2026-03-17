@@ -879,8 +879,19 @@ tbody tr:hover {
   background: var(--row-hover);
 }
 
-tbody tr.selected {
+tbody tr.selected,
+tbody tr.active {
   background: var(--row-selected);
+}
+
+tbody tr.selected td,
+tbody tr.active td {
+  background: color-mix(in srgb, var(--row-selected) 88%, transparent);
+}
+
+tbody tr.selected td:first-child,
+tbody tr.active td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 th {
