@@ -78,9 +78,10 @@
 #define RTK_EECMD	0x0050		/* EEPROM command register */
 #define RTK_CFG0	0x0051		/* config register #0 */
 #define RTK_CFG1	0x0052		/* config register #1 */
-					/* 0053-0057 reserved */
+#define RTK_CFG3	0x0054		/* config register #3 */
+#define RTK_CFG5	0x0056		/* config register #5 */
 #define RTK_MEDIASTAT	0x0058		/* media status register (8139) */
-					/* 0059-005A reserved */
+#define RTK_8139_CFG3	0x0059		/* 8139C+ config register #3 */
 #define RTK_MII		0x005A		/* 8129 chip only */
 #define RTK_HALTCLK	0x005B
 #define RTK_MULTIINTR	0x005C		/* multiple interrupt */
@@ -134,6 +135,7 @@
 #define RTK_EPHYAR		0x0080
 #define RTK_LDPS		0x0082	/* Link Down Power Saving */
 #define RTK_DBG_REG		0x00D1
+#define RTK_8139_CFG5		0x00D8	/* 8139C+ config register #5 */
 #define RTK_MAXRXPKTLEN		0x00DA	/* 16 bits, chip multiplies by 8 */
 #define RTK_IM			0x00E2
 #define RTK_MISC		0x00F0
@@ -402,6 +404,7 @@
  * Config 1 register
  */
 #define RTK_CFG1_PWRDWN		0x01
+#define RTK_CFG1_PME		0x01
 #define RTK_CFG1_SLEEP		0x02
 #define RTK_CFG1_IOMAP		0x04
 #define RTK_CFG1_MEMMAP		0x08
@@ -410,6 +413,21 @@
 #define RTK_CFG1_LED0		0x40
 #define RTK_CFG1_FULLDUPLEX	0x40	/* 8129 only */
 #define RTK_CFG1_LED1		0x80
+
+/*
+ * Config 3 register bits.
+ */
+#define RTK_CFG3_WOL_LINK	0x10
+#define RTK_CFG3_WOL_MAGIC	0x20
+
+/*
+ * Config 5 register bits.
+ */
+#define RTK_CFG5_PME_STS	0x01
+#define RTK_CFG5_WOL_LANWAKE	0x02
+#define RTK_CFG5_WOL_UCAST	0x10
+#define RTK_CFG5_WOL_MCAST	0x20
+#define RTK_CFG5_WOL_BCAST	0x40
 
 /*
  * 8139C+ register definitions

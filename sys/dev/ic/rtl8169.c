@@ -121,6 +121,7 @@ __KERNEL_RCSID(0, "$NetBSD: rtl8169.c,v 1.179.2.1 2026/04/02 19:04:52 martin Exp
 #include <sys/kernel.h>
 #include <sys/socket.h>
 #include <sys/device.h>
+#include <sys/pmf.h>
 
 #include <net/if.h>
 #include <net/if_arp.h>
@@ -174,6 +175,10 @@ static int re_miibus_writereg(device_t, int, int, uint16_t);
 static void re_miibus_statchg(struct ifnet *);
 
 static void re_reset(struct rtk_softc *);
+static void re_set_wol(struct rtk_softc *, bool);
+static bool re_suspend(device_t, const pmf_qual_t *);
+static bool re_resume(device_t, const pmf_qual_t *);
+static bool re_shutdown(device_t, int);
 
 static const struct re_revision {
 	uint32_t		re_chipid;
@@ -966,11 +971,22 @@ re_attach(struct rtk_softc *sc)
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
 	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
-	if (pmf_device_register(sc->sc_dev, NULL, NULL))
-		pmf_class_network_register(sc->sc_dev, ifp);
-	else
-		aprint_error_dev(sc->sc_dev,
-		    "couldn't establish power handler\n");
+	if (sc->sc_set_pme != NULL) {
+		if (pmf_device_register1(sc->sc_dev, re_suspend, re_resume,
+		    re_shutdown)) {
+			pmf_class_network_register(sc->sc_dev, ifp);
+		} else {
+			aprint_error_dev(sc->sc_dev,
+			    "couldn't establish power handler\n");
+		}
+	} else {
+		if (pmf_device_register(sc->sc_dev, NULL, NULL)) {
+			pmf_class_network_register(sc->sc_dev, ifp);
+		} else {
+			aprint_error_dev(sc->sc_dev,
+			    "couldn't establish power handler\n");
+		}
+	}
 
 	return;
 
@@ -1095,6 +1111,102 @@ re_detach(struct rtk_softc *sc)
 	sc->sc_flags &= ~RTK_ATTACHED;
 
 	return 0;
+}
+
+static void
+re_set_wol(struct rtk_softc *sc, bool enable)
+{
+	int cfg3, cfg5;
+	uint8_t v;
+
+	cfg3 = (sc->sc_quirk & RTKQ_8139CPLUS) ? RTK_8139_CFG3 : RTK_CFG3;
+	cfg5 = (sc->sc_quirk & RTKQ_8139CPLUS) ? RTK_8139_CFG5 : RTK_CFG5;
+
+	if (enable && (sc->sc_quirk & RTKQ_RXDV_GATED) != 0) {
+		CSR_WRITE_4(sc, RTK_MISC,
+		    CSR_READ_4(sc, RTK_MISC) & ~RTK_MISC_RXDV_GATED_EN);
+	}
+
+	CSR_WRITE_1(sc, RTK_EECMD, RTK_EEMODE_WRITECFG);
+
+	v = CSR_READ_1(sc, RTK_CFG1);
+	v &= ~RTK_CFG1_PME;
+	if (enable)
+		v |= RTK_CFG1_PME;
+	CSR_WRITE_1(sc, RTK_CFG1, v);
+
+	v = CSR_READ_1(sc, cfg3);
+	v &= ~(RTK_CFG3_WOL_LINK | RTK_CFG3_WOL_MAGIC);
+	if (enable)
+		v |= RTK_CFG3_WOL_MAGIC;
+	CSR_WRITE_1(sc, cfg3, v);
+
+	v = CSR_READ_1(sc, cfg5);
+	v &= ~(RTK_CFG5_WOL_BCAST | RTK_CFG5_WOL_MCAST |
+	    RTK_CFG5_WOL_UCAST | RTK_CFG5_WOL_LANWAKE);
+	v |= RTK_CFG5_PME_STS;
+	if (enable)
+		v |= RTK_CFG5_WOL_LANWAKE;
+	CSR_WRITE_1(sc, cfg5, v);
+
+	CSR_WRITE_1(sc, RTK_EECMD, RTK_EEMODE_OFF);
+
+	if (enable)
+		CSR_WRITE_1(sc, RTK_COMMAND, RTK_CMD_RX_ENB);
+
+	if (sc->sc_set_pme != NULL)
+		sc->sc_set_pme(sc, enable);
+}
+
+static bool
+re_suspend(device_t self, const pmf_qual_t *qual __unused)
+{
+	struct rtk_softc *sc = device_private(self);
+	struct ifnet *ifp = &sc->ethercom.ec_if;
+
+	if (sc->sc_set_pme == NULL)
+		return true;
+
+	if ((ifp->if_flags & IFF_UP) == 0) {
+		re_set_wol(sc, false);
+		return true;
+	}
+
+	re_set_wol(sc, true);
+	return true;
+}
+
+static bool
+re_resume(device_t self, const pmf_qual_t *qual __unused)
+{
+	struct rtk_softc *sc = device_private(self);
+
+	if (sc->sc_set_pme == NULL)
+		return true;
+
+	re_set_wol(sc, false);
+	return true;
+}
+
+static bool
+re_shutdown(device_t self, int howto __unused)
+{
+	struct rtk_softc *sc = device_private(self);
+	struct ifnet *ifp = &sc->ethercom.ec_if;
+
+	if (sc->sc_set_pme == NULL)
+		return true;
+
+	if ((ifp->if_flags & IFF_RUNNING) != 0)
+		ifp->if_stop(ifp, 0);
+
+	/*
+	 * At shutdown the interface is often administratively brought down by
+	 * userland scripts before PMF callbacks run. Arm WoL unconditionally
+	 * here so S5 wake still works.
+	 */
+	re_set_wol(sc, true);
+	return true;
 }
 
 /*

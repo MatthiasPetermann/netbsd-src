@@ -77,11 +77,15 @@ struct re_pci_softc {
 	void *sc_ih;
 	pci_intr_handle_t *sc_pihp;
 	pci_chipset_tag_t sc_pc;
+	pcitag_t sc_tag;
+	int sc_pmreg;
+	bool sc_has_pm;
 };
 
 static int	re_pci_match(device_t, cfdata_t, void *);
 static void	re_pci_attach(device_t, device_t, void *);
 static int	re_pci_detach(device_t, int);
+static void	re_pci_set_pme(struct rtk_softc *, bool);
 
 CFATTACH_DECL_NEW(re_pci, sizeof(struct re_pci_softc),
     re_pci_match, re_pci_attach, re_pci_detach, NULL);
@@ -197,6 +201,10 @@ re_pci_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_dev = self;
 	psc->sc_pc = pa->pa_pc;
+	psc->sc_tag = pa->pa_tag;
+	psc->sc_has_pm = pci_get_capability(pa->pa_pc, pa->pa_tag,
+	    PCI_CAP_PWRMGMT, &psc->sc_pmreg, NULL);
+	sc->sc_set_pme = re_pci_set_pme;
 
 	command = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
 	command |= PCI_COMMAND_MASTER_ENABLE;
@@ -353,4 +361,24 @@ re_pci_detach(device_t self, int flags)
 	}
 
 	return 0;
+}
+
+static void
+re_pci_set_pme(struct rtk_softc *sc, bool enable)
+{
+	struct re_pci_softc *psc = (struct re_pci_softc *)sc;
+	pcireg_t pmcsr;
+
+	if (!psc->sc_has_pm)
+		return;
+
+	pmcsr = pci_conf_read(psc->sc_pc, psc->sc_tag,
+	    psc->sc_pmreg + PCI_PMCSR);
+	pmcsr |= PCI_PMCSR_PME_STS;
+	if (enable)
+		pmcsr |= PCI_PMCSR_PME_EN;
+	else
+		pmcsr &= ~PCI_PMCSR_PME_EN;
+	pci_conf_write(psc->sc_pc, psc->sc_tag,
+	    psc->sc_pmreg + PCI_PMCSR, pmcsr);
 }

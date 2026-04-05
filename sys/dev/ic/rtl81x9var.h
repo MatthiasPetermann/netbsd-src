@@ -227,6 +227,7 @@ struct rtk_softc {
 	/* Power management hooks. */
 	int	(*sc_enable)	(struct rtk_softc *);
 	void	(*sc_disable)	(struct rtk_softc *);
+	void	(*sc_set_pme)	(struct rtk_softc *, bool);
 
 	krndsource_t     rnd_source;
 };
