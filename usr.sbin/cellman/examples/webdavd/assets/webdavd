@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" != "run" ]; then
+  echo "webdavd: expected 'run' subcommand" >&2
+  exit 1
+fi
+shift
+
+config=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -config)
+      shift
+      config="${1:-}"
+      ;;
+  esac
+  shift || true
+done
+
+if [ -z "$config" ] || [ ! -f "$config" ]; then
+  echo "webdavd: missing or unreadable config file" >&2
+  exit 1
+fi
+
+echo "webdavd: demo launcher running with config $config"
+trap 'exit 0' INT TERM
+while :; do
+  sleep 300
+done

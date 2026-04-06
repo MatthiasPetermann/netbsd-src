@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>blue release</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background: linear-gradient(160deg, #e9f4ff, #f5faff);
+      color: #11263b;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+
+    .card {
+      width: min(640px, 92vw);
+      background: #ffffff;
+      border: 1px solid #cfe2f8;
+      border-left: 8px solid #2f7fda;
+      border-radius: 12px;
+      padding: 1.2rem 1.3rem;
+      box-shadow: 0 10px 26px rgba(35, 87, 154, 0.1);
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>Blue release active</h1>
+    <p>This is the stable blue version on port <strong>8080</strong>.</p>
+    <p>Use this as default traffic target during rollout.</p>
+  </section>
+</body>
+</html>

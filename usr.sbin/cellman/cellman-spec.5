@@ -1,0 +1,396 @@
+.\" $NetBSD$
+.\"-
+.\" Copyright (c) 2026 Matthias Petermann
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+.\" ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+.\" TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+.\" PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+.\" BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.\"-
+.Dd April 25, 2026
+.Dt CELLMAN-SPEC 5
+.Os
+.Sh NAME
+.Nm cellman-spec
+.Nd Lua specification format for declarative cellman state
+.Sh SYNOPSIS
+.Pa /etc/cellman/*.lua
+.Sh DESCRIPTION
+The cellman specification format uses regular Lua syntax with a restricted
+set of top-level builders and action helpers.
+Each file defines one or more top-level documents:
+.Ic cell ,
+.Ic volume ,
+or
+.Ic apply .
+.Pp
+Typical layout uses one resource per file for readability:
+.Bd -literal -offset indent
+01-volume-data.lua
+02-cell-web.lua
+03-apply-web.lua
+.Ed
+.Pp
+Use
+.Cm cellman apply --dry-run --all
+to validate loaded specifications before converging runtime state.
+.Sh DOCUMENT TYPES
+.Ss Cell Document
+Defines desired lifecycle and runtime settings for one cell.
+.Bd -literal -offset indent
+cell("web", {
+  autostart = true,
+  create = {
+    profile = "medium",
+    reserved_ports = "80,443",
+    rlimit_nofile = "4096",
+    rlimit_as = "1073741824",
+    rlimit_core = "0",
+  },
+  supervise = {
+    cmd = "/usr/sbin/httpd -X -f /var/www/conf/httpd.conf",
+    run_as = "cell:www:www",
+    log = {
+      facility = "daemon",
+      stdout_level = "info",
+      stderr_level = "err",
+      tag = "web",
+    },
+  },
+  depends_on = { "db" },
+  healthcheck = "test -f /var/www/index.html",
+  mounts = {
+    volume("web-data", { target = "/var/www", mode = "rw" }),
+    host("/srv/shared", { target = "/shared", mode = "ro" }),
+  },
+})
+.Ed
+.Pp
+Supported keys:
+.Bl -tag -width "depends_on"
+.It Ic autostart
+Boolean desired run state.
+.It Ic create
+Optional table:
+.Ic profile , reserved_ports , rlimit_nofile , rlimit_as , rlimit_core .
+.It Ic supervise
+Optional table:
+.Ic cmd , run_as
+and optional
+.Ic log
+subtable
+.Pq facility/stdout_level/stderr_level/tag .
+.It Ic depends_on
+Optional array of cell names.
+.It Ic healthcheck
+Optional shell command executed in the cell after start.
+.It Ic mounts
+Optional array of mount specs built with
+.Ic volume(...)
+or
+.Ic host(...) .
+.El
+.Pp
+The
+.Ic supervise.run_as
+value accepts:
+.Bl -tag -width "host:user[:group]"
+.It Ic host:user[:group]
+Resolve user and optional group from host
+.Pa /etc/passwd
+and
+.Pa /etc/group .
+.It Ic cell:user[:group]
+Resolve user and optional group from the target cell root
+.Pq under Pa /var/cellman/cells/<name>/root .
+.It Ic uid:uid[:gid]
+Use explicit numeric identifiers.
+When
+.Ar gid
+is omitted, gid defaults to uid.
+.El
+.Ss Volume Document
+Defines one managed runtime volume.
+.Bd -literal -offset indent
+volume("web-data", {
+  mode = "0755",
+})
+.Ed
+.Pp
+Supported keys:
+.Bl -tag -width "mode"
+.It Ic mode
+Optional octal mode string.
+.El
+.Ss Apply Document
+Defines declarative actions for one cell target.
+.Bd -literal -offset indent
+apply("web", {
+  dir("/var/www", { mode = "0755" }),
+  copy("./assets/index.html", "/var/www/index.html", { mode = "0644" }),
+  exec("service apache onestart"),
+})
+.Ed
+.Pp
+The document name must match the cell name you want to configure.
+It is executed by
+.Cm cellman apply
+and
+.Cm cellman cell plan run .
+.Sh ACTION REFERENCE
+.Bl -tag -width "template(source, target, opts)"
+.It Ic pkg("pkgname", ...)
+Install packages with
+.Cm pkg_add
+inside the cell.
+Package source is controlled by
+.Ic PKG_PATH .
+.It Ic exec("command")
+Run one shell command in the cell.
+.It Ic dir(path, opts)
+Ensure directory exists.
+Options:
+.Ic mode , owner , group .
+.It Ic line(path, text)
+Ensure one line exists in a text file.
+.It Ic symlink(target, linkpath)
+Ensure symbolic link exists.
+.It Ic copy(source, target, opts)
+Copy one file from host manifest tree to cell path.
+Options:
+.Ic mode , owner , group .
+.It Ic untar(source, target, opts)
+Extract archive from host manifest tree into cell path.
+Option:
+.Ic strip
+.Pq integer .
+.It Ic file(path, content, opts)
+Write literal file content to target path.
+Options:
+.Ic mode , owner , group .
+.It Ic patch(path, content, opts)
+Apply patch content to target path.
+Option:
+.Ic strip
+.Pq integer .
+.It Ic template(source, target, opts)
+Render template file from host manifest tree.
+Options:
+.Ic mode , owner , group , tokens .
+Tokens accept string values and
+.Ic from_env("ENV")
+lookups.
+.It Ic script(path, opts)
+Execute a script file from host manifest tree.
+Defaults:
+.Ic timeout=0 , ignore_exit=false .
+Options:
+.Ic args , env , cwd , timeout , ignore_exit .
+Scripts always execute inside the target cell.
+.El
+.Sh MOUNT BUILDERS
+Within
+.Ic cell(..., { mounts = { ... } })
+use:
+.Bl -tag -width "host(source, opts)"
+.It Ic volume(source, opts)
+Build a named-volume mount spec.
+Required option:
+.Ic target
+absolute path.
+Optional:
+.Ic mode
+.Pq ro|rw, default rw .
+.It Ic host(source, opts)
+Build a host-path mount spec.
+Requires
+.Ic CELL_ALLOW_HOST_MOUNTS=YES
+in
+.Pa /etc/cellman.conf .
+.El
+.Sh TEMPLATE TOKENS
+Use
+.Ic {{token_name}}
+placeholders in apply action string values and in
+.Ic template
+file content.
+This includes command strings
+.Pq Ic exec ,
+file and directory metadata
+.Pq Ic mode , Ic owner , Ic group ,
+paths/content, and
+.Ic script
+args/env/cwd values.
+Provide values via:
+.Bd -literal -offset indent
+template("./app.env.tmpl", "/etc/app.env", {
+  tokens = {
+    app_name = "web",
+    pkg_path = from_env("PKG_PATH"),
+  },
+})
+.Ed
+.Pp
+Runtime-provided placeholders include:
+.Ic run_uid , run_gid , run_groups , cell_name , cell_root , manifest_dir , release , arch .
+.Pp
+For desired-state runs
+.Pq Cm cellman apply and Cm cellman cell plan run ,
+.Ic run_uid , run_gid ,
+and
+.Ic run_groups
+are derived from
+.Ic cell(..., { supervise = { run_as = ... } })
+when set.
+If
+.Ic supervise.run_as
+is unset, these values fall back to the effective uid/gid/groups of the
+.Cm cellman
+process
+.Pq typically root .
+.Pp
+Apply actions run with the privileges of the
+.Cm cellman
+process;
+.Ic run_as
+does not switch the apply process uid/gid.
+Instead, it provides identity values that can be used for rendering and
+ownership assignment.
+For
+.Ic owner
+and
+.Ic group
+fields in
+.Ic dir , copy , file ,
+and
+.Ic template
+actions, use
+.Ic {{run_uid}}
+and
+.Ic {{run_gid}}
+to chown files/directories to the resolved service identity.
+Non-numeric
+.Ic owner
+and
+.Ic group
+names are resolved against the target cell user/group databases
+.Pq Pa /etc/passwd or Pa /etc/master.passwd for users, and Pa /etc/group for groups .
+The shorthand literals
+.Ic @run_uid
+and
+.Ic @run_gid
+are also accepted for these fields.
+Because
+.Ic run_groups
+is a comma-separated supplementary gid list, it is suitable for templates,
+.Ic exec ,
+and
+.Ic script
+environments, but not as a single
+.Ic group
+value.
+.Pp
+For
+.Ic exec
+and
+.Ic script
+actions,
+.Cm cellman
+exports
+.Va CELLMAN_RUN_UID ,
+.Va CELLMAN_RUN_GID ,
+and
+.Va CELLMAN_RUN_GROUPS
+to the command environment.
+.Bd -literal -offset indent
+cell("web", {
+  supervise = {
+    cmd = "/usr/sbin/httpd -X -f /var/www/conf/httpd.conf",
+    run_as = "cell:www:www",
+  },
+})
+
+apply("web", {
+  template("./app.env.tmpl", "/etc/app.env", {
+    mode = "0640",
+    owner = "{{run_uid}}",
+    group = "{{run_gid}}",
+  }),
+  exec("install -d -m 0750 -o ${CELLMAN_RUN_UID} -g ${CELLMAN_RUN_GID} /var/run/web"),
+  file("/etc/web.groups", "{{run_groups}}\n", { mode = "0644" }),
+})
+.Ed
+.Sh PATH RESOLUTION
+For
+.Ic copy , untar , template ,
+and
+.Ic script ,
+relative source paths are resolved against the directory of the current
+specification file.
+Absolute source paths are used as-is.
+.Sh VALIDATION NOTES
+.Bl -bullet
+.It
+Each file must define at least one top-level document.
+.It
+Action names and option value types are strictly validated.
+.It
+Cell mount targets must be absolute and cannot be
+.Pa / , /dev , /.overlay
+or their subpaths.
+.It
+Dependency cycles and missing dependency references are rejected when
+building execution order.
+.El
+.Sh END-TO-END EXAMPLE
+.Bl -enum
+.It
+Bootstrap host runtime:
+.Bd -literal -offset indent
+doas cellman system bootstrap
+.Ed
+.It
+Create
+.Pa volume
+and
+.Pa cell
+specification files plus one
+.Pa apply
+file.
+.It
+Validate specifications:
+.Bd -literal -offset indent
+cellman apply --dry-run --all
+.Ed
+.It
+Converge runtime:
+.Bd -literal -offset indent
+doas cellman apply --all
+.Ed
+.It
+Inspect and iterate:
+.Bd -literal -offset indent
+cellman cell list
+cellman volume list
+.Ed
+.El
+.Sh SEE ALSO
+.Xr cellctl 8 ,
+.Xr cellman 8

@@ -28,6 +28,7 @@
 ./etc/atf
 ./etc/autofs
 ./etc/bluetooth
+./etc/cellman
 ./etc/cgd			mode=0700
 ./etc/defaults
 ./etc/fonts

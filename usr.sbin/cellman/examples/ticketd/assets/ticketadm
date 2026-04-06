@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+echo "ticketadm: demo helper placeholder"
+echo "replace ./assets/ticketd and ./assets/ticketadm with real ticketd binaries"

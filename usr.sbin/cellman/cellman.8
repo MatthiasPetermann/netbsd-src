@@ -1,0 +1,438 @@
+.\" $NetBSD$
+.\"-
+.\" Copyright (c) 2026 Matthias Petermann
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+.\" ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+.\" TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+.\" PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+.\" BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.\"-
+.Dd April 25, 2026
+.Dt CELLMAN 8
+.Os
+.Sh NAME
+.Nm cellman
+.Nd declarative manager for NetBSD cells using Lua specification files
+.Sh SYNOPSIS
+.Nm
+.Cm apply
+.Op Cm --all
+.Op Ar name ...
+.Op Cm --dry-run
+.Op Cm --force
+.Op Cm --restart-changed
+.Op Cm --silent
+.Op Fl v
+.Op Fl vv
+.Nm
+.Cm cell
+.Ar list | show | fields | start | stop | restart | shell | remove | backup | plan
+.Nm
+.Cm list
+.Op Cm --view Ar compact|desired|runtime|merged
+.Op Fl o Ar fields
+.Op Fl T
+.Op Fl H
+.Nm
+.Cm start
+.Ar name | Cm --all
+.Nm
+.Cm stop
+.Ar name | Cm --all
+.Nm
+.Cm restart
+.Ar name | Cm --all
+.Nm
+.Cm shell
+.Ar name
+.Op Ar command ...
+.Nm
+.Cm volume
+.Ar list | show | fields | create | remove | backup
+.Nm
+.Cm system
+.Cm bootstrap
+.Op Cm --xbase
+.Nm
+.Cm system
+.Cm reset
+.Sh DESCRIPTION
+The
+.Nm
+utility manages desired state from Lua files under
+.Pa /etc/cellman
+.Pq or Ev CELLMAN_DSL_DIR
+and applies runtime changes via
+.Xr cellctl 8 .
+All desired-state edits happen in specification files
+.Pq Lua DSL documents .
+There are no CLI commands that mutate desired state directly.
+.Pp
+A practical workflow is:
+.Bl -enum
+.It
+Bootstrap host runtime once.
+.It
+Write
+.Ic volume ,
+.Ic cell ,
+and
+.Ic apply
+documents in
+.Pa /etc/cellman .
+.It
+Execute convergence with
+.Cm apply --dry-run --all
+for preview and then
+.Cm apply --all .
+.It
+Inspect with
+.Cm cell list
+and
+.Cm volume list .
+.El
+.Sh QUICK START
+.Bl -enum
+.It
+Bootstrap host runtime:
+.Bd -literal -offset indent
+doas cellman system bootstrap
+.Ed
+.It
+Create three specification files in
+.Pa /etc/cellman :
+.Bd -literal -offset indent
+# /etc/cellman/01-volume-web-data.lua
+volume("web-data", {
+  mode = "0755",
+})
+
+# /etc/cellman/02-cell-web.lua
+cell("web", {
+  autostart = true,
+  create = {
+    profile = "medium",
+  },
+  supervise = {
+    cmd = "/usr/sbin/httpd -X -f /var/www/conf/httpd.conf",
+    run_as = "cell:www:www",
+  },
+  mounts = {
+    volume("web-data", { target = "/var/www", mode = "rw" }),
+  },
+})
+
+# /etc/cellman/03-apply-web.lua
+apply("web", {
+  dir("/var/www", { mode = "0755" }),
+  file("/var/www/index.html", "hello from cellman\n", { mode = "0644" }),
+})
+.Ed
+.It
+Preview desired changes:
+.Bd -literal -offset indent
+cellman apply --dry-run --all
+.Ed
+.It
+Apply desired state:
+.Bd -literal -offset indent
+doas cellman apply --all
+.Ed
+.It
+Inspect status:
+.Bd -literal -offset indent
+cellman cell list
+cellman volume list
+.Ed
+.El
+.Pp
+For full specification syntax and all action options, see
+.Xr cellman-spec 5 .
+.Sh COMMANDS
+.Bl -tag -width "system reset --cells --volumes --yes"
+.It Cm apply Op Cm --all Op Ar name ... Op Cm --dry-run Op Cm --force Op Cm --restart-changed Op Cm --silent Op Fl v Op Fl vv
+Execute desired apply plans from
+.Pa /etc/cellman/*.lua .
+By default,
+.Cm apply
+prints an ASCII phase report with rows for volumes, cells, applies,
+and apply actions.
+If no targets are specified,
+.Cm --all
+is implied.
+.Cm --force
+always re-runs apply actions for target cells that define an
+.Ic apply
+document, even when the stored apply hash matches.
+Before executing apply actions,
+.Nm
+runs
+.Cm certctl rehash
+inside the target cell.
+.Cm --restart-changed
+restarts a running target cell after apply actions execute.
+.Fl v
+switches to log-style phase output with per-cell and per-action details.
+.Fl vv
+adds forwarded stdout/stderr from child commands executed by apply actions.
+Without
+.Fl vv ,
+child command output remains suppressed.
+.Cm --silent
+suppresses the phase report.
+.It Cm cell Cm list Op Cm --view Ar compact|desired|runtime|merged Op Fl o Ar fields Op Fl T Op Fl H
+List cells from desired and/or runtime views.
+Default view is
+.Cm compact .
+.It Cm cell Cm show Ar name Op Cm --view Ar compact|desired|runtime|merged Op Fl o Ar fields Op Fl T Op Fl H
+Show one cell in the selected view.
+Default view is
+.Cm merged .
+.It Cm cell Cm fields Op Cm --view Ar compact|desired|runtime|merged Op Fl T Op Fl H
+Print available cell fields for one view.
+.It Cm cell Cm start Ar name | Cm --all
+Create and start cells from desired state.
+.It Cm cell Cm stop Ar name | Cm --all
+Stop cells via
+.Xr cellctl 8
+destroy.
+.It Cm cell Cm restart Ar name | Cm --all
+Stop then start cells.
+.It Cm cell Cm shell Ar name Op Ar command ...
+Execute a command in a running cell.
+.It Cm list Op Cm --view Ar compact|desired|runtime|merged Op Fl o Ar fields Op Fl T Op Fl H
+Alias for
+.Cm cell list .
+.It Cm start Ar name | Cm --all
+Alias for
+.Cm cell start .
+.It Cm stop Ar name | Cm --all
+Alias for
+.Cm cell stop .
+.It Cm restart Ar name | Cm --all
+Alias for
+.Cm cell restart .
+.It Cm shell Ar name Op Ar command ...
+Alias for
+.Cm cell shell .
+.It Cm cell Cm remove Ar name|--all|--orphans Op Cm --yes Op Cm --force
+Remove runtime cell state.
+.Cm --yes
+is required for
+.Cm --all
+and
+.Cm --orphans .
+When the target is running,
+.Xr cellctl 8
+destroy is attempted first.
+.Cm --force
+ignores destroy failures.
+.It Cm cell Cm backup Cm create Ar name
+Create one runtime cell overlay backup under
+.Pa /var/backups/cellman/overlays .
+.It Cm cell Cm backup Cm list Ar name Op Fl T Op Fl H
+List cell backup archives.
+.It Cm cell Cm backup Cm restore Ar name Op Cm --from Ar archive Op Cm --latest Op Cm --yes
+Restore one cell backup archive filesystem.
+.Cm --yes
+is required.
+.It Cm cell Cm backup Cm delete Ar name Op Cm --from Ar archive Op Cm --latest Op Cm --yes
+Delete one cell backup archive.
+.Cm --yes
+is required.
+.It Cm cell Cm plan Cm run Ar name Op Cm --file Ar file.lua Op Cm --ephemeral
+Run one apply plan for a target cell.
+Without
+.Cm --file ,
+the apply document named
+.Ar name
+from
+.Pa /etc/cellman
+is used.
+With
+.Cm --file ,
+the file must include exactly one
+.Ic apply
+document matching
+.Ar name .
+With
+.Cm --ephemeral ,
+the command stops a cell that it had to start for plan execution.
+.It Cm volume Cm list Op Cm --view Ar desired|runtime|merged Op Fl o Ar fields Op Fl T Op Fl H
+List volumes with consolidated desired/runtime state.
+.It Cm volume Cm show Ar name Op Cm --view Ar desired|runtime|merged Op Fl o Ar fields Op Fl T Op Fl H
+Show one volume in the selected view.
+.It Cm volume Cm fields Op Cm --view Ar desired|runtime|merged Op Fl T Op Fl H
+Print available volume fields for one view.
+.It Cm volume Cm create Ar name Op Fl m Ar mode
+Create runtime volume state under
+.Pa /var/cellman/volumes .
+.It Cm volume Cm remove Ar name|--all|--orphans Op Cm --yes
+Remove runtime volume state.
+.Cm --yes
+is required for
+.Cm --all
+and
+.Cm --orphans .
+.It Cm volume Cm backup Cm create Ar name
+Create one runtime volume backup under
+.Pa /var/backups/cellman/volumes .
+.It Cm volume Cm backup Cm list Ar name Op Fl T Op Fl H
+List volume backup archives.
+.It Cm volume Cm backup Cm restore Ar name Op Cm --from Ar archive Op Cm --latest Op Cm --yes
+Restore one volume backup archive filesystem.
+.Cm --yes
+is required.
+.It Cm volume Cm backup Cm delete Ar name Op Cm --from Ar archive Op Cm --latest Op Cm --yes
+Delete one volume backup archive.
+.Cm --yes
+is required.
+.It Cm system Cm bootstrap Op Cm --xbase
+Initialize runtime directories, ensure
+.Cm secmodel_cell
+kernel support, fetch release sets, and build the shared base layer.
+With
+.Cm --xbase ,
+the
+.Pa xbase.tar.xz
+set is fetched and extracted in addition to
+.Pa base.tar.xz .
+.It Cm system Cm reset Op Cm --cells Op Cm --volumes Cm --yes
+Reset runtime state.
+This command does not remove specification files under
+.Pa /etc/cellman
+.Pq or Ev CELLMAN_DSL_DIR .
+.Cm --yes
+is required.
+.El
+.Sh CELL STATE FIELD
+The
+.Ic state
+field summarizes desired-vs-runtime presence for a cell:
+.Bl -tag -width "orphaned"
+.It Ic managed
+Cell is declared, runtime state exists, and desired state is running.
+.It Ic parked
+Cell is declared, runtime state exists, and desired state is stopped.
+.It Ic pending
+Cell is declared, desired state is running,
+but runtime state does not exist yet.
+.It Ic declared
+Cell is declared, desired state is stopped, and runtime state does not exist.
+.It Ic orphaned
+Runtime state exists but no matching specification
+.Ic cell
+document exists.
+.It Ic absent
+No declared cell and no runtime state.
+.El
+.Sh VOLUME STATE FIELD
+The
+.Ic state
+field summarizes desired-vs-runtime presence for a volume:
+.Bl -tag -width "orphaned"
+.It Ic managed
+Volume is declared and runtime volume state exists.
+.It Ic pending
+Volume is declared but runtime volume state does not exist yet.
+.It Ic orphaned
+Runtime volume state exists but no matching specification
+.Ic volume
+document exists.
+.It Ic absent
+No declared volume and no runtime volume state.
+.El
+.Sh CONFIGURATION FILE
+Global defaults are read from
+.Pa /etc/cellman.conf .
+When the file does not exist,
+.Cm system bootstrap
+creates it with baseline defaults.
+.Pp
+Useful keys include:
+.Bl -tag -width "CELL_ALLOW_HOST_MOUNTS"
+.It Ic NETBSD_MIRROR
+Optional URL base used by
+.Cm system bootstrap
+to fetch
+.Pa base.tar.xz ,
+.Pa etc.tar.xz ,
+and optional
+.Pa xbase.tar.xz .
+If empty, a release/arch specific cdn.netbsd.org URL is derived.
+.It Ic PKG_PATH
+Package source exported for in-cell
+.Cm apply
+execution
+.Pq pkg , exec , and script actions .
+.It Ic CELL_ALLOW_HOST_MOUNTS
+Set to
+.Ic YES
+to permit host-path mount sources in cell mount specs.
+.El
+.Sh EXIT STATUS
+.Bl -tag -width Ds
+.It 0
+Success.
+.It 1
+Failure.
+.It 2
+Dry-run drift detected
+.Pq only for Cm apply Cm --dry-run .
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width CELLMAN_DSL_DIR
+.It Ev CELLMAN_DSL_DIR
+Override the specification root directory.
+Default:
+.Pa /etc/cellman .
+.It Ev NETBSD_MIRROR
+Temporary override for bootstrap fetch URL base.
+Takes precedence over
+.Ic NETBSD_MIRROR
+from
+.Pa /etc/cellman.conf .
+.It Ev PKG_PATH
+Temporary override for in-cell package source during
+.Cm apply .
+Takes precedence over
+.Ic PKG_PATH
+from
+.Pa /etc/cellman.conf .
+.El
+.Sh EXAMPLES
+Apply one target with preview first:
+.Bd -literal -offset indent
+cellman apply web --dry-run
+doas cellman apply web
+.Ed
+.Pp
+Show concise runtime-oriented list:
+.Bd -literal -offset indent
+cellman cell list --view compact
+.Ed
+.Pp
+Show selected fields only:
+.Bd -literal -offset indent
+cellman cell list --view merged -o name,state,running,autostart -T
+.Ed
+.Sh SEE ALSO
+.Xr cellman-spec 5 ,
+.Xr cellctl 8
