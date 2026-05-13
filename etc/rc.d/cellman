@@ -1,0 +1,38 @@
+#!/bin/sh
+#	$NetBSD$
+#
+# PROVIDE: cellman
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+
+. /etc/rc.subr
+
+name="cellman"
+rcvar=$name
+command="/usr/sbin/cellman"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+: ${cellman:=NO}
+: ${cellman_dsl_dir:=/etc/cellman}
+
+cellman_start()
+{
+	CELLMAN_DSL_DIR="${cellman_dsl_dir}" ${command} apply --all --silent
+}
+
+cellman_stop()
+{
+	CELLMAN_DSL_DIR="${cellman_dsl_dir}" ${command} cell stop --all
+}
+
+cellman_status()
+{
+	CELLMAN_DSL_DIR="${cellman_dsl_dir}" ${command} cell list --view merged \
+	    -o name,running,cid,procs
+}
+
+load_rc_config $name
+run_rc_command "$1"

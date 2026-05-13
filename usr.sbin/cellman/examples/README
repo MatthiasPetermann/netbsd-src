@@ -1,0 +1,57 @@
+# cellman examples (Lua DSL)
+
+`cellman` reads every `/etc/cellman/*.lua` file and derives resource
+semantics from the DSL content (`cell(...)`, `volume(...)`, `apply(...)`).
+The Lua filename itself has no semantic meaning.
+One file may define one or many top-level documents.
+
+The directories in this tree provide scenario-oriented Lua DSL examples for
+native `cellman` workflows.
+
+## Suggested workflow
+
+```sh
+/usr/sbin/cellman apply --dry-run --all
+/usr/sbin/cellman apply --all
+```
+
+## File naming
+
+Examples now use a consistent, pragmatic layout:
+
+- `01-volumes.lua` (optional): all volumes for the scenario
+- `02-cells.lua`: all cells for the scenario
+- `NN-apply-<cell>.lua`: one apply document per cell
+
+Resource semantics still come only from DSL content, not from filenames, but
+this structure keeps scenarios easier to scan and compare.
+
+Cell and volume names are intentionally short (`nginx`, `phpfpm`, `postgresql`,
+`data`, `webroot`, ...), so examples stay readable and operationally direct.
+
+## External assets
+
+All example scenarios keep files, templates, and scripts in external asset
+files under `./assets/`. The Lua DSL manifests only reference those files via
+`copy(...)`, `template(...)`, or `script(...)` for better readability.
+
+## Scenario notes
+
+- `ticketd/` and `webdavd/` are converted from matching scenario
+  definitions into Lua DSL form.
+- Both ship demo launcher scripts in `./assets/` (`ticketd`, `ticketadm`,
+  `webdavd`) so the example trees are self-contained.
+- Replace those launcher scripts with your real service binaries when deploying
+  these scenarios.
+
+`samples/` is the generic action playground and has been expanded:
+
+- `samples/03-apply-web.lua` demonstrates `copy(...)`, `script(...)`,
+  `symlink(...)`, and `template(...)` in one small web workflow.
+- `samples/04-apply-script.lua` demonstrates `script(...)` with args/env plus
+  token rendering into generated files.
+- `samples/05-apply-template.lua` demonstrates owner/group placeholders and
+  tokenized template rendering via `samples/assets/example.env.tmpl` and
+  `samples/assets/runtime.txt.tmpl`.
+
+See `samples/README.md` for a focused walkthrough.

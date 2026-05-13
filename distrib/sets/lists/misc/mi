@@ -1367,6 +1367,95 @@
 ./usr/share/examples/atf/atf-run.hooks		misc-obsolete		share,kyua,obsolete
 ./usr/share/examples/atf/tests-results.css	misc-atf-examples	share,atf,!kyua
 ./usr/share/examples/atf/tests-results.css	misc-obsolete		share,kyua,obsolete
+./usr/share/examples/cellman			misc-sysutil-examples
+./usr/share/examples/cellman/api-gateway		misc-sysutil-examples
+./usr/share/examples/cellman/api-gateway/assets		misc-sysutil-examples
+./usr/share/examples/cellman/blue-green		misc-sysutil-examples
+./usr/share/examples/cellman/blue-green/assets		misc-sysutil-examples
+./usr/share/examples/cellman/forgejo			misc-sysutil-examples
+./usr/share/examples/cellman/forgejo/assets		misc-sysutil-examples
+./usr/share/examples/cellman/httpd			misc-sysutil-examples
+./usr/share/examples/cellman/httpd/assets		misc-sysutil-examples
+./usr/share/examples/cellman/luanti			misc-sysutil-examples
+./usr/share/examples/cellman/luanti/assets		misc-sysutil-examples
+./usr/share/examples/cellman/mantisbt		misc-sysutil-examples
+./usr/share/examples/cellman/mantisbt/assets		misc-sysutil-examples
+./usr/share/examples/cellman/php-api			misc-sysutil-examples
+./usr/share/examples/cellman/php-api/assets		misc-sysutil-examples
+./usr/share/examples/cellman/samples			misc-sysutil-examples
+./usr/share/examples/cellman/samples/assets		misc-sysutil-examples
+./usr/share/examples/cellman/ticketd			misc-sysutil-examples
+./usr/share/examples/cellman/ticketd/assets		misc-sysutil-examples
+./usr/share/examples/cellman/webdavd			misc-sysutil-examples
+./usr/share/examples/cellman/webdavd/assets		misc-sysutil-examples
+./usr/share/examples/cellman/README		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/01-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/02-apply-app-a.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/03-apply-app-b.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/04-apply-app-c.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/05-apply-nginx.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/assets/app-a-index.html		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/assets/app-b-index.html		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/assets/app-c-index.html		misc-sysutil-examples	share
+./usr/share/examples/cellman/api-gateway/assets/nginx.conf		misc-sysutil-examples	share
+./usr/share/examples/cellman/blue-green/01-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/blue-green/02-apply-blue.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/blue-green/03-apply-green.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/blue-green/04-apply-nginx.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/blue-green/assets/blue-index.html		misc-sysutil-examples	share
+./usr/share/examples/cellman/blue-green/assets/green-index.html		misc-sysutil-examples	share
+./usr/share/examples/cellman/blue-green/assets/nginx.conf		misc-sysutil-examples	share
+./usr/share/examples/cellman/forgejo/01-volumes.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/forgejo/02-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/forgejo/03-apply-forgejo.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/forgejo/assets/app.ini		misc-sysutil-examples	share
+./usr/share/examples/cellman/httpd/01-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/httpd/02-apply-httpd.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/httpd/assets/index.html		misc-sysutil-examples	share
+./usr/share/examples/cellman/luanti/01-volumes.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/luanti/02-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/luanti/03-apply-luanti.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/luanti/assets/install-mineclonia.sh		misc-sysutil-examples	share
+./usr/share/examples/cellman/luanti/assets/minetest.conf		misc-sysutil-examples	share
+./usr/share/examples/cellman/luanti/assets/world.mt		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/01-volumes.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/02-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/03-apply-postgresql.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/04-apply-phpfpm.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/05-apply-nginx.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/assets/app-configure.sh		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/assets/db-configure.sh		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/assets/nginx.conf		misc-sysutil-examples	share
+./usr/share/examples/cellman/mantisbt/assets/php-fpm.conf		misc-sysutil-examples	share
+./usr/share/examples/cellman/php-api/01-volumes.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/php-api/02-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/php-api/03-apply-phpfpm.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/php-api/04-apply-nginx.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/php-api/assets/index.php		misc-sysutil-examples	share
+./usr/share/examples/cellman/php-api/assets/nginx.conf		misc-sysutil-examples	share
+./usr/share/examples/cellman/php-api/assets/php-fpm.conf		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/01-volumes.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/02-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/03-apply-web.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/04-apply-script.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/05-apply-template.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/README.md		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/assets/bootstrap.sh		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/assets/ensure-bootstrapped.sh		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/assets/example.env.tmpl		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/assets/index.html		misc-sysutil-examples	share
+./usr/share/examples/cellman/samples/assets/runtime.txt.tmpl		misc-sysutil-examples	share
+./usr/share/examples/cellman/ticketd/01-volumes.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/ticketd/02-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/ticketd/03-apply-ticketd.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/ticketd/assets/ticketadm		misc-sysutil-examples	share
+./usr/share/examples/cellman/ticketd/assets/ticketd		misc-sysutil-examples	share
+./usr/share/examples/cellman/ticketd/assets/ticketd-logo.svg		misc-sysutil-examples	share
+./usr/share/examples/cellman/ticketd/assets/ticketd.conf		misc-sysutil-examples	share
+./usr/share/examples/cellman/webdavd/01-cells.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/webdavd/02-apply-webdavd.lua		misc-sysutil-examples	share
+./usr/share/examples/cellman/webdavd/assets/webdavd		misc-sysutil-examples	share
+./usr/share/examples/cellman/webdavd/assets/webdavd.conf		misc-sysutil-examples	share
 ./usr/share/examples/dhcp/dhcpd.conf		misc-dhcpd-examples	share
 ./usr/share/examples/dhcpcd/dhcpcd.conf		misc-dhcpcd-examples	share
 ./usr/share/examples/dhcpcd/hooks/10-wpa_supplicant	misc-dhcpcd-examples	share

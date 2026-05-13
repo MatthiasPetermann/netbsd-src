@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>api-gateway-a</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 25% 20%, #e8fff2, #f4fbff 60%);
+      color: #14212b;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+
+    .card {
+      width: min(640px, 92vw);
+      background: #ffffff;
+      border: 1px solid #c9e6d6;
+      border-radius: 14px;
+      padding: 1.2rem 1.3rem;
+      box-shadow: 0 10px 26px rgba(27, 74, 43, 0.08);
+    }
+
+    .tag {
+      display: inline-block;
+      background: #d8f5e6;
+      color: #17563a;
+      border-radius: 999px;
+      padding: .2rem .55rem;
+      font-size: .84rem;
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <span class="tag">service a</span>
+    <h1>API Gateway backend A</h1>
+    <p>This backend is healthy and listening on port <strong>8080</strong>.</p>
+    <p>Route this service through <code>/a/</code> on the edge gateway.</p>
+  </section>
+</body>
+</html>

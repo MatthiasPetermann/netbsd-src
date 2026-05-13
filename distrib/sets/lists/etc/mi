@@ -81,6 +81,8 @@
 ./etc/hosts.equiv				etc-netutil-etc
 ./etc/hosts.lpd					etc-lpr-etc
 ./etc/inetd.conf				etc-netutil-etc
+./etc/cellman					etc-sys-etc
+./etc/cellman.conf				etc-sys-etc
 ./etc/iscsi/auths				etc-iscsi-etc		iscsi
 ./etc/iscsi/targets				etc-iscsi-etc		iscsi
 ./etc/iscsi/volumes				etc-iscsi-etc
@@ -244,6 +246,7 @@
 ./etc/rc.d/iscsid_volumes			etc-iscsi-rc
 ./etc/rc.d/isdnd				etc-obsolete		obsolete
 ./etc/rc.d/isibootd				etc-bootserver-rc
+./etc/rc.d/cellman				etc-sys-rc
 ./etc/rc.d/kdc					etc-krb5-rc
 ./etc/rc.d/kerberos				etc-obsolete		obsolete
 ./etc/rc.d/ldconfig				etc-sys-rc

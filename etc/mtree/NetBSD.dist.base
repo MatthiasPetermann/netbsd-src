@@ -28,6 +28,7 @@
 ./etc/atf
 ./etc/autofs
 ./etc/bluetooth
+./etc/cellman
 ./etc/cgd			mode=0700
 ./etc/defaults
 ./etc/fonts
@@ -481,6 +482,27 @@
 ./usr/share/examples/atf
 ./usr/share/examples/blocklist
 ./usr/share/examples/certctl
+./usr/share/examples/cellman
+./usr/share/examples/cellman/api-gateway
+./usr/share/examples/cellman/api-gateway/assets
+./usr/share/examples/cellman/blue-green
+./usr/share/examples/cellman/blue-green/assets
+./usr/share/examples/cellman/forgejo
+./usr/share/examples/cellman/forgejo/assets
+./usr/share/examples/cellman/httpd
+./usr/share/examples/cellman/httpd/assets
+./usr/share/examples/cellman/luanti
+./usr/share/examples/cellman/luanti/assets
+./usr/share/examples/cellman/mantisbt
+./usr/share/examples/cellman/mantisbt/assets
+./usr/share/examples/cellman/php-api
+./usr/share/examples/cellman/php-api/assets
+./usr/share/examples/cellman/samples
+./usr/share/examples/cellman/samples/assets
+./usr/share/examples/cellman/ticketd
+./usr/share/examples/cellman/ticketd/assets
+./usr/share/examples/cellman/webdavd
+./usr/share/examples/cellman/webdavd/assets
 ./usr/share/examples/devpubd
 ./usr/share/examples/devpubd/hooks
 ./usr/share/examples/dhcp
