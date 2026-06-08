@@ -19,7 +19,7 @@ The existing stack introduces operational and maintenance complexity through:
 
 - Lua DSL parsing and apply planning (`/etc/cellman/*.lua`)
 - broad reconciliation semantics (`cellman apply --all`) that couple declaration, orchestration, and execution
-- `libcellman` API coupling into higher-level tools (`cellui`)
+- control-plane API coupling into higher-level tools that should not survive the cutover
 
 ### 2.2 Design goals
 
@@ -48,11 +48,7 @@ The existing stack introduces operational and maintenance complexity through:
 
 ### 3.3 Consequence
 
-Any consumer currently linked to `libcellman` (notably `cellui`) must either:
-
-- be migrated to `celladm` state/config interfaces, or
-- be retired, or
-- run through an explicit compatibility adapter during transition.
+Any consumer currently linked to `libcellman` (notably `cellui`) is out of scope for migration and must be removed from the shipped base system together with `cellman`.
 
 ## 4. Target architecture
 
@@ -88,7 +84,7 @@ admin edits /etc/cells/*.cell + optional hooks/assets
 | readonly/overlay materialization by backend | readonly/overlay setup in generated rc methods |
 | `cellman cell start/stop/restart` | `service cell_<name> start|stop|restart` |
 | system bootstrap in `cellman system bootstrap` | `celladm bootstrap` (shell-based host preparation) |
-| backup wrappers | staged: optional `celladm backup` subcommands, same filesystem assumptions |
+| backup wrappers | out of scope for `celladm` v1; no backup/restore feature parity target |
 
 ## 6. Configuration model under `/etc/cells`
 
@@ -98,8 +94,6 @@ admin edits /etc/cells/*.cell + optional hooks/assets
 /etc/cells/
   cells.d/
     <name>.cell
-  volumes.d/
-    <volume>.vol      (optional, if named volume registry is kept)
   defaults.conf       (global defaults)
   hooks/
     <name>/
@@ -143,7 +137,6 @@ admin edits /etc/cells/*.cell + optional hooks/assets
 
 Repeatable key:
 
-- `mount=volume:<name> <target> <ro|rw>`
 - `mount=host:<abs-path> <target> <ro|rw>`
 
 Validation invariants:
@@ -164,13 +157,9 @@ Validation invariants:
     root/                   # nullfs ro mount of base
     overlay/                # writable upper tree
     state/                  # generated metadata/hashes/runtime markers
-  volumes/<name>/
-/var/backups/cells/
-  overlays/
-  volumes/
 ```
 
-`celladm` MAY provide compatibility symlinks from legacy `/var/cellman/*` during migration phases, but `/var/cells/*` is the target namespace.
+No legacy `/var/cellman/*` compatibility links are provided.
 
 ## 8. Readonly-root + overlay lifecycle contract
 
@@ -191,7 +180,7 @@ Each generated `rc.d` script must implement the following contract itself.
    - tmpfs mount
    - `MAKEDEV std ptm`
    - ptyfs on `/dev/pts`
-7. Apply declared mounts (volumes/host) into `root/<target>`.
+7. Apply declared host mounts into `root/<target>`.
 8. Create cell via `cellctl create ... -n <name> <root>` when missing.
 9. Start supervised payload via `cellctl supervise ...`.
 10. Run optional healthcheck.
@@ -225,6 +214,7 @@ Equivalent to stop then start.
 - `celladm generate`:
   - generate/update `/etc/rc.d/cell_<name>` from configs
   - write generated header with source hash
+  - write directly into `/etc/rc.d` (no staging directory)
   - remove stale generated scripts for removed cells
 - `celladm bootstrap`:
   - ensure module activation policy (`secmodel_cell`)
@@ -272,69 +262,33 @@ Autostart intent from `.cell` is rendered to rc-compatible defaults:
 
 `celladm generate` owns regeneration and drift correction of generated rc artifacts.
 
-## 11. Compatibility and migration options
+## 11. Migration strategy (single-path hard switch)
 
-## 11.1 Option A: hard switch (big bang)
+Only one migration mode is supported.
 
-- remove `cellman` + `libcellman` from build/install sets
+- remove `cellman` + `libcellman` + `cellui` from build/install sets
 - migrate configs to `/etc/cells` before first reboot on new image
 - bootstrap with `celladm bootstrap && celladm generate`
+- boot and operate exclusively via generated per-cell rc services
 
-**Pros:** fastest simplification, no dual-control ambiguity.
-**Cons:** highest change risk; requires one-time migration discipline.
+No dual-stack, adapter mode, or compatibility bridge is supported.
 
-## 11.2 Option B: staged dual-run (recommended)
+## 12. Migration workflow
 
-Phase 1:
-
-- introduce `celladm` and `/etc/cells`
-- keep existing `cellman` binaries present but deprecated
-- provide one-way converter `celladm import-cellman` from Lua to `.cell`
-
-Phase 2:
-
-- switch boot to generated per-cell rc services
-- freeze `cellman` desired-state changes (read-only/deprecation warning)
-
-Phase 3:
-
-- remove `cellman`/`libcellman` and dependent packaging entries
-
-**Pros:** lower operational risk, supports incremental fleet migration.
-**Cons:** temporary duplicated control plane and support surface.
-
-## 11.3 Option C: adapter mode (short-lived bridge)
-
-- preserve old configs but transpile on each `celladm generate`
-- no manual `.cell` authoring initially
-
-**Pros:** migration speed for existing installs.
-**Cons:** prolongs parser/DSL complexity; weakens simplification goal.
-
-## 11.4 Recommendation
-
-Adopt **Option B**, with strict time-boxing for Phase 2/3.
-
-## 12. Migration workflow (recommended)
-
-1. Deploy image containing `celladm` + legacy stack.
-2. Run `celladm import-cellman` (one-time conversion).
-3. Review generated `.cell` and run `celladm validate`.
-4. Generate rc scripts via `celladm generate`.
-5. Stop global `cellman` service, start per-cell services.
-6. Reboot validation (boot-time start order, mounts, healthchecks).
-7. Remove legacy binaries/config paths in next release.
+1. Deploy image containing `celladm` and no `cellman`/`cellui` components.
+2. Ensure `/etc/cells/cells.d/*.cell` is present and validated (`celladm validate`).
+3. Generate rc scripts via `celladm generate` (directly into `/etc/rc.d`).
+4. Reboot validation (boot-time start order, mounts, healthchecks).
 
 ## 13. Rollback strategy
 
 If migration fails operationally:
 
 1. disable generated `cell_<name>` services
-2. re-enable legacy `cellman` rc flow
-3. keep `/var/cells` runtime data; do not destructive-clean overlays by default
-4. preserve conversion artifacts for postmortem
+2. keep `/var/cells` runtime data; do not destructive-clean overlays by default
+3. rollback by booting a previous system image/release artifact
 
-Rollback must be possible without reinstalling base sets.
+No in-place rollback to a legacy `cellman` control plane is supported.
 
 ## 14. Non-functional requirements
 
@@ -347,7 +301,6 @@ Rollback must be possible without reinstalling base sets.
 ## 15. Security and safety invariants
 
 - keep host-mount default deny
-- reject unsafe archive/restore target paths
 - enforce valid resource naming (`[A-Za-z0-9._-]`)
 - enforce mount target restrictions
 - avoid exposing host-global read interfaces to non-host cells (retain kernel policy)
@@ -359,21 +312,19 @@ Expected tree changes during implementation:
 - remove `cellman` entries from `usr.sbin/Makefile`, rc/defaults/mtree/set lists
 - add `celladm` binary, manpage, examples, and generated rc integration policy
 - update references in `doc/specs/cells/*`
-- resolve `cellui` dependency on `libcellman` (migrate/retire)
+- remove `cellui` from build/install/distribution sets
 
 ## 17. Open questions to resolve during implementation
 
-1. Should `celladm` own backup/restore commands in v1 or defer to v2?
-2. Should legacy `/var/cellman` paths be symlinked or migrated in-place?
-3. What is the long-term fate of `cellui` (port, freeze, or removal)?
-4. Should `celladm generate` write into `/etc/rc.d` directly or through a staging dir + install step?
-5. Which compatibility period is acceptable for dual-stack support?
+1. Which minimal read/status interface should `celladm` expose for operators (if any) beyond rc/service tooling?
+2. Is a one-time config conversion tool required in-tree, or is manual migration acceptable for the first rollout?
+3. Which release engineering gate verifies generated rc scripts in distribution sets?
 
 ## 18. Acceptance criteria
 
 The migration is complete when all are true:
 
-- no `cellman`/`libcellman` binaries or docs are shipped
+- no `cellman`/`libcellman`/`cellui` binaries or docs are shipped
 - cells are declared only via `/etc/cells/*.cell`
 - per-cell generated `rc.d` scripts are the only boot/manual lifecycle path
 - readonly-root + overlay lifecycle succeeds through generated services
