@@ -23,6 +23,9 @@ contributors should make changes when they extend it.
 - `06-kernel-audit-checklist.md`
   - Security and robustness review checklist for `secmodel_cell` and
     `cellctl` compatibility.
+- `07-celladm-migration-and-spec.md`
+  - Target architecture and migration specification to replace `cellman`/
+    `libcellman` with `celladm` while keeping `cellctl` + `secmodel_cell`.
 
 ## Scope and source of truth
 
