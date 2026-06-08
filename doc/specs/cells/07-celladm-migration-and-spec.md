@@ -137,14 +137,14 @@ admin edits /etc/cells/*.cell + optional hooks/assets
 
 Repeatable key:
 
-- `mount=host:<abs-path> <target> <ro|rw>`
+- `mount=<abs-path> <target> <ro|rw>`
 
 Validation invariants:
 
 - target must be absolute
 - target cannot be `/`, `/dev`, `/dev/*`, `/.overlay`, `/.overlay/*`
 - overlapping targets within one cell are rejected
-- host mounts require global `allow_host_mounts=yes`
+- source must be an absolute host path
 
 ## 7. Filesystem and runtime layout (new canonical paths)
 
@@ -180,7 +180,7 @@ Each generated `rc.d` script must implement the following contract itself.
    - tmpfs mount
    - `MAKEDEV std ptm`
    - ptyfs on `/dev/pts`
-7. Apply declared host mounts into `root/<target>`.
+7. Apply declared mounts into `root/<target>`.
 8. Create cell via `cellctl create ... -n <name> <root>` when missing.
 9. Start supervised payload via `cellctl supervise ...`.
 10. Run optional healthcheck.
