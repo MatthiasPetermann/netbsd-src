@@ -300,7 +300,6 @@ No in-place rollback to a legacy `cellman` control plane is supported.
 
 ## 15. Security and safety invariants
 
-- keep host-mount default deny
 - enforce valid resource naming (`[A-Za-z0-9._-]`)
 - enforce mount target restrictions
 - avoid exposing host-global read interfaces to non-host cells (retain kernel policy)
