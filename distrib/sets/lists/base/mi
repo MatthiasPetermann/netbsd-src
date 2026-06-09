@@ -1581,9 +1581,8 @@
 ./usr/sbin/isibootd				base-bootserver-bin
 ./usr/sbin/ispppcontrol				base-obsolete		obsolete
 ./usr/sbin/iwictl				base-sysutil-bin
+./usr/sbin/celladm				base-sysutil-bin
 ./usr/sbin/cellctl				base-sysutil-bin
-./usr/sbin/cellman				base-sysutil-bin
-./usr/sbin/cellui				base-sysutil-bin
 ./usr/sbin/kadmin				base-krb5-bin		kerberos
 ./usr/sbin/kcm					base-krb5-bin		kerberos
 ./usr/sbin/kdc					base-krb5-bin		kerberos

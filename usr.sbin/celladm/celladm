@@ -1,0 +1,665 @@
+#!/bin/sh
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+CELLADM_ETC=${CELLADM_ETC:-/etc/cells}
+CELLADM_CELLS_D=${CELLADM_CELLS_D:-${CELLADM_ETC}/cells.d}
+CELLADM_HOOKS_D=${CELLADM_HOOKS_D:-${CELLADM_ETC}/hooks}
+CELLADM_DEFAULTS=${CELLADM_DEFAULTS:-${CELLADM_ETC}/defaults.conf}
+CELLADM_VAR=${CELLADM_VAR:-/var/cells}
+
+DEFAULT_ROOT_BASE=
+DEFAULT_LOCAL_DEV=yes
+
+CELL_NAME=
+CELL_ROOT_BASE=
+CELL_AUTOSTART=
+CELL_COMMAND=
+CELL_PROFILE=
+CELL_RESERVED_PORTS=
+CELL_RLIMIT_NOFILE=
+CELL_RLIMIT_AS=
+CELL_RLIMIT_CORE=
+CELL_RUN_UID=
+CELL_RUN_GID=
+CELL_RUN_GROUPS=
+CELL_LOG_FACILITY=
+CELL_LOG_STDOUT_LEVEL=
+CELL_LOG_STDERR_LEVEL=
+CELL_LOG_TAG=
+CELL_REQUIRE=
+CELL_AFTER=
+CELL_BEFORE=
+CELL_HEALTHCHECK=
+CELL_LOCAL_DEV=
+CELL_MOUNTS=
+CELL_FILE=
+CELL_HASH=
+
+usage()
+{
+	echo "usage: celladm validate|generate|bootstrap|rootfs <name> prepare|verify|repair|list" >&2
+	exit 1
+}
+
+die()
+{
+	echo "celladm: $*" >&2
+	exit 1
+}
+
+trim()
+{
+	printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+is_valid_name()
+{
+	case "$1" in
+	''|*[!A-Za-z0-9._-]*) return 1 ;;
+	esac
+	return 0
+}
+
+is_abs_path()
+{
+	case "$1" in
+	/*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+mount_target_forbidden()
+{
+	case "$1" in
+	/|/dev|/dev/*|/.overlay|/.overlay/*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+ensure_dirs()
+{
+	mkdir -p "${CELLADM_ETC}" "${CELLADM_CELLS_D}" "${CELLADM_HOOKS_D}" || return 1
+	mkdir -p "${CELLADM_VAR}" "${CELLADM_VAR}/base" "${CELLADM_VAR}/releases" "${CELLADM_VAR}/cells" || return 1
+	return 0
+}
+
+load_defaults()
+{
+	DEFAULT_ROOT_BASE=
+	DEFAULT_LOCAL_DEV=yes
+	[ -f "${CELLADM_DEFAULTS}" ] || return 0
+
+	while IFS= read -r raw || [ -n "$raw" ]; do
+		line=$(trim "$raw")
+		[ -z "$line" ] && continue
+		case "$line" in
+		\#*) continue ;;
+		esac
+		key=$(trim "${line%%=*}")
+		val=$(trim "${line#*=}")
+		case "$key" in
+		root_base) DEFAULT_ROOT_BASE=$val ;;
+		local_dev)
+			case "$val" in
+			yes|no) DEFAULT_LOCAL_DEV=$val ;;
+			esac
+			;;
+		esac
+	done < "${CELLADM_DEFAULTS}"
+}
+
+reset_cell()
+{
+	CELL_NAME=
+	CELL_ROOT_BASE=
+	CELL_AUTOSTART=
+	CELL_COMMAND=
+	CELL_PROFILE=
+	CELL_RESERVED_PORTS=
+	CELL_RLIMIT_NOFILE=
+	CELL_RLIMIT_AS=
+	CELL_RLIMIT_CORE=
+	CELL_RUN_UID=
+	CELL_RUN_GID=
+	CELL_RUN_GROUPS=
+	CELL_LOG_FACILITY=
+	CELL_LOG_STDOUT_LEVEL=
+	CELL_LOG_STDERR_LEVEL=
+	CELL_LOG_TAG=
+	CELL_REQUIRE=
+	CELL_AFTER=
+	CELL_BEFORE=
+	CELL_HEALTHCHECK=
+	CELL_LOCAL_DEV=$DEFAULT_LOCAL_DEV
+	CELL_MOUNTS=
+	CELL_HASH=
+}
+
+mount_target_overlaps()
+{
+	new_target=$1
+	oldifs=$IFS
+	IFS='\n'
+	for m in $CELL_MOUNTS; do
+		tgt=$(printf '%s' "$m" | awk -F'|' '{print $2}')
+		case "$new_target" in
+		"$tgt"|"$tgt"/*) IFS=$oldifs; return 0 ;;
+		esac
+		case "$tgt" in
+		"$new_target"|"$new_target"/*) IFS=$oldifs; return 0 ;;
+		esac
+	done
+	IFS=$oldifs
+	return 1
+}
+
+parse_cell_file()
+{
+	f=$1
+	reset_cell
+	CELL_FILE=$f
+	stem=${f##*/}
+	stem=${stem%.cell}
+
+	while IFS= read -r raw || [ -n "$raw" ]; do
+		line=$(trim "$raw")
+		[ -z "$line" ] && continue
+		case "$line" in
+		\#*) continue ;;
+		esac
+		case "$line" in
+		*=*) ;;
+		*) die "$f:line:missing =" ;;
+		esac
+
+		key=$(trim "${line%%=*}")
+		val=$(trim "${line#*=}")
+		case "$key" in
+		name) CELL_NAME=$val ;;
+		root_base) CELL_ROOT_BASE=$val ;;
+		autostart) CELL_AUTOSTART=$val ;;
+		command) CELL_COMMAND=$val ;;
+		profile) CELL_PROFILE=$val ;;
+		reserved_ports) CELL_RESERVED_PORTS=$val ;;
+		rlimit_nofile) CELL_RLIMIT_NOFILE=$val ;;
+		rlimit_as) CELL_RLIMIT_AS=$val ;;
+		rlimit_core) CELL_RLIMIT_CORE=$val ;;
+		run_uid) CELL_RUN_UID=$val ;;
+		run_gid) CELL_RUN_GID=$val ;;
+		run_groups) CELL_RUN_GROUPS=$val ;;
+		log_facility) CELL_LOG_FACILITY=$val ;;
+		log_stdout_level) CELL_LOG_STDOUT_LEVEL=$val ;;
+		log_stderr_level) CELL_LOG_STDERR_LEVEL=$val ;;
+		log_tag) CELL_LOG_TAG=$val ;;
+		require) CELL_REQUIRE=$val ;;
+		after) CELL_AFTER=$val ;;
+		before) CELL_BEFORE=$val ;;
+		healthcheck) CELL_HEALTHCHECK=$val ;;
+		local_dev) CELL_LOCAL_DEV=$val ;;
+		mount)
+			set -- $val
+			[ $# -eq 3 ] || die "$f:mount:expected <abs-path> <target> <ro|rw>"
+			src=$1
+			tgt=$2
+			mode=$3
+			is_abs_path "$src" || die "$f:mount:source not absolute"
+			is_abs_path "$tgt" || die "$f:mount:target not absolute"
+			mount_target_forbidden "$tgt" && die "$f:mount:forbidden target $tgt"
+			case "$mode" in
+			ro|rw) ;;
+			*) die "$f:mount:mode must be ro|rw" ;;
+			esac
+			mount_target_overlaps "$tgt" && die "$f:mount:overlapping target $tgt"
+			if [ -n "$CELL_MOUNTS" ]; then
+				CELL_MOUNTS="${CELL_MOUNTS}
+${src}|${tgt}|${mode}"
+			else
+				CELL_MOUNTS="${src}|${tgt}|${mode}"
+			fi
+			;;
+		*) die "$f:$key:unknown key" ;;
+		esac
+	done < "$f"
+
+	[ -n "$CELL_NAME" ] || die "$f:name:required"
+	[ -n "$CELL_AUTOSTART" ] || die "$f:autostart:required"
+	[ -n "$CELL_COMMAND" ] || die "$f:command:required"
+	if [ -z "$CELL_ROOT_BASE" ]; then
+		CELL_ROOT_BASE=$DEFAULT_ROOT_BASE
+	fi
+	[ -n "$CELL_ROOT_BASE" ] || die "$f:root_base:required"
+	is_valid_name "$CELL_NAME" || die "$f:name:invalid"
+	[ "$CELL_NAME" = "$stem" ] || die "$f:name:must match filename stem"
+
+	case "$CELL_AUTOSTART" in
+	yes|no) ;;
+	*) die "$f:autostart:must be yes|no" ;;
+	esac
+	case "$CELL_LOCAL_DEV" in
+	yes|no) ;;
+	*) die "$f:local_dev:must be yes|no" ;;
+	esac
+	if [ -n "$CELL_PROFILE" ]; then
+		case "$CELL_PROFILE" in
+		low|medium|high) ;;
+		*) die "$f:profile:must be low|medium|high" ;;
+		esac
+	fi
+	if [ -n "$CELL_RUN_UID" ] || [ -n "$CELL_RUN_GID" ]; then
+		[ -n "$CELL_RUN_UID" ] || die "$f:run_uid:required with run_gid"
+		[ -n "$CELL_RUN_GID" ] || die "$f:run_gid:required with run_uid"
+	fi
+	if [ -n "$CELL_RUN_GROUPS" ]; then
+		[ -n "$CELL_RUN_UID" ] || die "$f:run_groups:requires run_uid"
+		[ -n "$CELL_RUN_GID" ] || die "$f:run_groups:requires run_gid"
+	fi
+
+	CELL_HASH=$(cksum "$f" | awk '{print $1 "-" $2}')
+}
+
+list_cells()
+{
+	for f in "${CELLADM_CELLS_D}"/*.cell; do
+		[ -f "$f" ] || continue
+		printf '%s\n' "$f"
+	done
+}
+
+validate_all()
+{
+	load_defaults
+	for f in $(list_cells); do
+		parse_cell_file "$f" || return 1
+	done
+	return 0
+}
+
+rc_safe_list()
+{
+	printf '%s' "$1" | tr ',' ' ' | awk '{
+		out="";
+		for (i = 1; i <= NF; i++) {
+			if ($i ~ /^[A-Za-z0-9._-]+$/) {
+				if (out == "") out = $i;
+				else out = out " " $i;
+			}
+		}
+		print out;
+	}'
+}
+
+generate_rc_for_cell()
+{
+	rcname="cell_${CELL_NAME}"
+	rcfile="/etc/rc.d/${rcname}"
+	require=$(rc_safe_list "$CELL_REQUIRE")
+	after=$(rc_safe_list "$CELL_AFTER")
+	before=$(rc_safe_list "$CELL_BEFORE")
+	if [ -n "$after" ]; then
+		if [ -n "$require" ]; then
+			require="${require} ${after}"
+		else
+			require=$after
+		fi
+	fi
+	if [ -z "$require" ]; then
+		require=NETWORKING
+	fi
+	autoval=NO
+	[ "$CELL_AUTOSTART" = "yes" ] && autoval=YES
+
+	cat > "$rcfile" <<EOF
+#!/bin/sh
+# generated-by: celladm
+# source: ${CELL_FILE}
+# source-hash: ${CELL_HASH}
+# REQUIRE: ${require}
+EOF
+	if [ -n "$before" ]; then
+		echo "# BEFORE: ${before}" >> "$rcfile" || die "write $rcfile"
+	fi
+	cat >> "$rcfile" <<EOF
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="${rcname}"
+rcvar=\$name
+required_files="${CELL_FILE}"
+command="/usr/sbin/celladm"
+start_cmd="${rcname}_start"
+stop_cmd="${rcname}_stop"
+status_cmd="${rcname}_status"
+
+${rcname}_start()
+{
+	"/usr/sbin/celladm" __service-start "${CELL_NAME}" "${CELL_FILE}"
+}
+
+${rcname}_stop()
+{
+	"/usr/sbin/celladm" __service-stop "${CELL_NAME}" "${CELL_FILE}"
+}
+
+${rcname}_status()
+{
+	"/usr/sbin/celladm" __service-status "${CELL_NAME}" "${CELL_FILE}"
+}
+
+load_rc_config \$name
+: \${${rcname}:=${autoval}}
+run_rc_command "\$1"
+EOF
+	chmod 0555 "$rcfile" || die "chmod $rcfile"
+}
+
+remove_stale_rc()
+{
+	for rc in /etc/rc.d/cell_*; do
+		[ -f "$rc" ] || continue
+		grep -q '^# generated-by: celladm$' "$rc" || continue
+		name=${rc##*/cell_}
+		[ -f "${CELLADM_CELLS_D}/${name}.cell" ] || rm -f "$rc" || die "remove $rc"
+	done
+}
+
+prepare_rootfs_layout()
+{
+	name=$1
+	parse_cell_file "${CELLADM_CELLS_D}/${name}.cell" || return 1
+	root="${CELLADM_VAR}/cells/${name}/root"
+	overlay="${CELLADM_VAR}/cells/${name}/overlay"
+	state="${CELLADM_VAR}/cells/${name}/state"
+	mkdir -p "$root" "$overlay" "$state" || return 1
+	for d in etc var tmp home root usr/pkg opt var/run var/log; do
+		mkdir -p "$overlay/$d" || return 1
+	done
+	chmod 01777 "$overlay/tmp" || return 1
+	return 0
+}
+
+verify_rootfs_layout()
+{
+	name=$1
+	root="${CELLADM_VAR}/cells/${name}/root"
+	overlay="${CELLADM_VAR}/cells/${name}/overlay"
+	state="${CELLADM_VAR}/cells/${name}/state"
+	[ -d "$root" ] || return 1
+	[ -d "$overlay" ] || return 1
+	[ -d "$state" ] || return 1
+	for d in etc var tmp home root usr/pkg opt var/run var/log; do
+		[ -d "$overlay/$d" ] || return 1
+	done
+	return 0
+}
+
+cell_lookup_id_by_name()
+{
+	name=$1
+	cellctl list -T -H 2>/dev/null | awk -v n="$name" '$2 == n { print $1; found=1; exit } END { if (!found) exit 1 }'
+}
+
+ensure_base_mounts()
+{
+	name=$1
+	root="${CELLADM_VAR}/cells/${name}/root"
+	overlay="${CELLADM_VAR}/cells/${name}/overlay"
+	parse_cell_file "${CELLADM_CELLS_D}/${name}.cell" || return 1
+	is_abs_path "$CELL_ROOT_BASE" || die "${CELL_FILE}:root_base:must be absolute"
+	[ -d "$CELL_ROOT_BASE" ] || die "${CELL_FILE}:root_base:not found: $CELL_ROOT_BASE"
+	mount | awk -v t="$root" '$3 == t { found=1 } END { if (!found) exit 1 }' >/dev/null 2>&1 || mount -t null -o ro "$CELL_ROOT_BASE" "$root" || return 1
+	mkdir -p "$root/.overlay" || return 1
+	mount | awk -v t="$root/.overlay" '$3 == t { found=1 } END { if (!found) exit 1 }' >/dev/null 2>&1 || mount -t null "$overlay" "$root/.overlay" || return 1
+	return 0
+}
+
+apply_declared_mounts()
+{
+	name=$1
+	root="${CELLADM_VAR}/cells/${name}/root"
+	parse_cell_file "${CELLADM_CELLS_D}/${name}.cell" || return 1
+	oldifs=$IFS
+	IFS='\n'
+	for m in $CELL_MOUNTS; do
+		src=$(printf '%s' "$m" | awk -F'|' '{print $1}')
+		tgt=$(printf '%s' "$m" | awk -F'|' '{print $2}')
+		mode=$(printf '%s' "$m" | awk -F'|' '{print $3}')
+		full="$root$tgt"
+		mkdir -p "$full" || { IFS=$oldifs; return 1; }
+		if ! mount | awk -v t="$full" '$3 == t { found=1 } END { if (!found) exit 1 }' >/dev/null 2>&1; then
+			if [ "$mode" = "ro" ]; then
+				mount -t null -o ro "$src" "$full" || { IFS=$oldifs; return 1; }
+			else
+				mount -t null "$src" "$full" || { IFS=$oldifs; return 1; }
+			fi
+		fi
+	done
+	IFS=$oldifs
+	return 0
+}
+
+setup_local_dev()
+{
+	name=$1
+	root="${CELLADM_VAR}/cells/${name}/root"
+	parse_cell_file "${CELLADM_CELLS_D}/${name}.cell" || return 1
+	[ "$CELL_LOCAL_DEV" = "yes" ] || return 0
+	mkdir -p "$root/dev" "$root/dev/pts" || return 1
+	if ! mount | awk -v t="$root/dev" '$3 == t { found=1 } END { if (!found) exit 1 }' >/dev/null 2>&1; then
+		mount -t tmpfs -o -s=8m tmpfs "$root/dev" || return 1
+	fi
+	if [ -x "$root/dev/MAKEDEV" ]; then
+		( cd "$root/dev" && ./MAKEDEV std ptm ) || return 1
+	fi
+	if ! mount | awk -v t="$root/dev/pts" '$3 == t { found=1 } END { if (!found) exit 1 }' >/dev/null 2>&1; then
+		mount -t ptyfs ptyfs "$root/dev/pts" || return 1
+	fi
+	return 0
+}
+
+ensure_cell_created()
+{
+	name=$1
+	root="${CELLADM_VAR}/cells/${name}/root"
+	parse_cell_file "${CELLADM_CELLS_D}/${name}.cell" || return 1
+	if cell_lookup_id_by_name "$name" >/dev/null 2>&1; then
+		return 0
+	fi
+	set -- cellctl create
+	[ -n "$CELL_PROFILE" ] && set -- "$@" -l "$CELL_PROFILE"
+	[ -n "$CELL_RESERVED_PORTS" ] && set -- "$@" -r "$CELL_RESERVED_PORTS"
+	[ -n "$CELL_RLIMIT_NOFILE" ] && set -- "$@" -N "$CELL_RLIMIT_NOFILE"
+	[ -n "$CELL_RLIMIT_AS" ] && set -- "$@" -A "$CELL_RLIMIT_AS"
+	[ -n "$CELL_RLIMIT_CORE" ] && set -- "$@" -C "$CELL_RLIMIT_CORE"
+	set -- "$@" -n "$name" "$root"
+	"$@" >/dev/null || return 1
+	return 0
+}
+
+supervise_start()
+{
+	name=$1
+	parse_cell_file "${CELLADM_CELLS_D}/${name}.cell" || return 1
+	id=$(cell_lookup_id_by_name "$name") || return 1
+	set -- cellctl supervise
+	[ -n "$CELL_LOG_FACILITY" ] && set -- "$@" -f "$CELL_LOG_FACILITY"
+	[ -n "$CELL_LOG_STDOUT_LEVEL" ] && set -- "$@" -o "$CELL_LOG_STDOUT_LEVEL"
+	[ -n "$CELL_LOG_STDERR_LEVEL" ] && set -- "$@" -e "$CELL_LOG_STDERR_LEVEL"
+	[ -n "$CELL_LOG_TAG" ] && set -- "$@" -t "$CELL_LOG_TAG"
+	if [ -n "$CELL_RUN_UID" ] || [ -n "$CELL_RUN_GID" ]; then
+		set -- "$@" -U "$CELL_RUN_UID" -G "$CELL_RUN_GID"
+		[ -n "$CELL_RUN_GROUPS" ] && set -- "$@" -g "$CELL_RUN_GROUPS"
+	fi
+	set -- "$@" "$id" /bin/sh -c "$CELL_COMMAND"
+	"$@" || return 1
+	return 0
+}
+
+run_hook()
+{
+	name=$1
+	hookname=$2
+	hook="${CELLADM_HOOKS_D}/${name}/${hookname}"
+	if [ -x "$hook" ]; then
+		"$hook" || return 1
+	fi
+	return 0
+}
+
+run_healthcheck()
+{
+	name=$1
+	parse_cell_file "${CELLADM_CELLS_D}/${name}.cell" || return 1
+	if [ -n "$CELL_HEALTHCHECK" ]; then
+		/bin/sh -c "$CELL_HEALTHCHECK" || return 1
+	fi
+	return 0
+}
+
+umount_under_root()
+{
+	name=$1
+	root="${CELLADM_VAR}/cells/${name}/root"
+	mount | awk -v r="$root" '$3 ~ "^" r { print $3 }' | awk '{ print length, $0 }' | sort -rn | awk '{ $1=""; sub(/^ /, ""); print }' | while IFS= read -r mp; do
+		[ -n "$mp" ] || continue
+		umount "$mp" >/dev/null 2>&1 || true
+	done
+}
+
+service_start()
+{
+	name=$1
+	[ -f "${CELLADM_CELLS_D}/${name}.cell" ] || die "missing ${CELLADM_CELLS_D}/${name}.cell"
+	run_hook "$name" pre-start || return 1
+	prepare_rootfs_layout "$name" || return 1
+	ensure_base_mounts "$name" || return 1
+	setup_local_dev "$name" || { umount_under_root "$name"; return 1; }
+	apply_declared_mounts "$name" || { umount_under_root "$name"; return 1; }
+	ensure_cell_created "$name" || { umount_under_root "$name"; return 1; }
+	supervise_start "$name" || {
+		cellctl destroy "$name" >/dev/null 2>&1 || true
+		umount_under_root "$name"
+		return 1
+	}
+	run_healthcheck "$name" || return 1
+	run_hook "$name" post-start || return 1
+	return 0
+}
+
+service_stop()
+{
+	name=$1
+	run_hook "$name" pre-stop || return 1
+	cellctl destroy "$name" >/dev/null 2>&1 || true
+	umount_under_root "$name"
+	run_hook "$name" post-stop || return 1
+	return 0
+}
+
+service_status()
+{
+	name=$1
+	cellctl list -T -H 2>/dev/null | awk -v n="$name" '$2 == n { print; found=1; exit } END { if (!found) exit 1 }'
+}
+
+cmd_validate()
+{
+	ensure_dirs || die "cannot create ${CELLADM_ETC}"
+	validate_all || return 1
+	return 0
+}
+
+cmd_generate()
+{
+	cmd_validate || return 1
+	for f in $(list_cells); do
+		parse_cell_file "$f" || return 1
+		generate_rc_for_cell || return 1
+	done
+	remove_stale_rc || return 1
+	return 0
+}
+
+cmd_bootstrap()
+{
+	ensure_dirs || die "failed to create base directories"
+	if ! sysctl -n security.models.cell.cell_list >/dev/null 2>&1; then
+		modload secmodel_cell >/dev/null 2>&1 || true
+	fi
+	if ! sysctl -n security.models.cell.cell_list >/dev/null 2>&1; then
+		die "secmodel_cell not available"
+	fi
+	return 0
+}
+
+cmd_rootfs()
+{
+	name=$1
+	action=$2
+	is_valid_name "$name" || die "invalid cell name"
+	case "$action" in
+	prepare) prepare_rootfs_layout "$name" || return 1 ;;
+	verify) verify_rootfs_layout "$name" || return 1 ;;
+	repair) prepare_rootfs_layout "$name" || return 1 ;;
+	*) usage ;;
+	esac
+	return 0
+}
+
+cmd_list()
+{
+	printf '%-24s %-9s %-8s %-8s\n' NAME AUTOSTART CID PROCS
+	for f in $(list_cells); do
+		parse_cell_file "$f" || return 1
+		line=$(cellctl list -T -H 2>/dev/null | awk -v n="$CELL_NAME" '$2 == n { print $1 " " $4; found=1; exit } END { if (!found) print "- -" }')
+		cid=$(printf '%s' "$line" | awk '{print $1}')
+		procs=$(printf '%s' "$line" | awk '{print $2}')
+		printf '%-24s %-9s %-8s %-8s\n' "$CELL_NAME" "$CELL_AUTOSTART" "$cid" "$procs"
+	done
+	return 0
+}
+
+main()
+{
+	cmd=$1
+	case "$cmd" in
+	validate)
+		[ $# -eq 1 ] || usage
+		cmd_validate
+		;;
+	generate)
+		[ $# -eq 1 ] || usage
+		cmd_generate
+		;;
+	bootstrap)
+		[ $# -eq 1 ] || usage
+		cmd_bootstrap
+		;;
+	rootfs)
+		[ $# -eq 3 ] || usage
+		cmd_rootfs "$2" "$3"
+		;;
+	list)
+		[ $# -eq 1 ] || usage
+		cmd_list
+		;;
+	__service-start)
+		[ $# -eq 3 ] || usage
+		service_start "$2"
+		;;
+	__service-stop)
+		[ $# -eq 3 ] || usage
+		service_stop "$2"
+		;;
+	__service-status)
+		[ $# -eq 3 ] || usage
+		service_status "$2"
+		;;
+	*)
+		usage
+		;;
+	esac
+}
+
+main "$@"

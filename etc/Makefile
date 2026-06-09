@@ -100,7 +100,7 @@ UTMPGRP= utmp
 BIN1+=	auto_master bootptab changelist csh.cshrc csh.login \
 	csh.logout daily daily.conf dm.conf envsys.conf floppytab ftpchroot \
 	ftpusers gettytab gpio.conf group hosts hosts.lpd inetd.conf \
-	cellman.conf locate.conf login.conf mailer.conf man.conf monthly monthly.conf \
+	cells/defaults.conf locate.conf login.conf mailer.conf man.conf monthly monthly.conf \
 	mrouted.conf named.conf netconfig networks newsyslog.conf \
 	nsswitch.conf ntp.conf passwd.conf pkgpath.conf phones printcap \
 	profile protocols rbootd.conf rc rc.conf rc.local rc.subr \
@@ -251,6 +251,8 @@ FILESMODE_aliases=	644
 CONFIGFILES+=		MAKEDEV.local
 FILESDIR_MAKEDEV.local=	/dev
 FILESMODE_MAKEDEV.local=${BINMODE}
+
+FILESDIR_defaults.conf=	/etc/cells
 
 CONFIGFILES+=		crontab
 FILESDIR_crontab=	/var/cron/tabs

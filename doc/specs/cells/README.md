@@ -33,8 +33,7 @@ The implementation described here is the combination of:
 
 - `sys/secmodel/cell/*` and `sys/sys/cell.h` (`secmodel_cell` kernel model)
 - `usr.sbin/cellctl/cellctl.c` (runtime control and counters)
-- `usr.sbin/cellman/*` (declarative control plane and apply engine)
-- `usr.sbin/cellui/*` (interactive terminal frontend)
+- `usr.sbin/celladm/*` (declarative host-side control plane)
 
-Desired state is authored in `/etc/cellman/*.lua`.
-Runtime state is materialized under `/var/cellman/*`.
+Desired state is authored in `/etc/cells/cells.d/*.cell`.
+Runtime state is materialized under `/var/cells/*`.

@@ -1,0 +1,80 @@
+.\" $NetBSD$
+.\"
+.Dd June 8, 2026
+.Dt CELLADM 8
+.Os
+.Sh NAME
+.Nm celladm
+.Nd validate and manage declarative cell configuration
+.Sh SYNOPSIS
+.Nm
+.Cm validate
+.Nm
+.Cm generate
+.Nm
+.Cm bootstrap
+.Nm
+.Cm rootfs
+.Ar name
+.Cm prepare | verify | repair
+.Nm
+.Cm list
+.Sh DESCRIPTION
+The
+.Nm
+utility manages declarative cell configuration under
+.Pa /etc/cells
+and runtime layout under
+.Pa /var/cells .
+It validates
+.Pa /etc/cells/cells.d/*.cell
+files, generates per-cell
+.Xr rc.d 8
+scripts in
+.Pa /etc/rc.d ,
+and prepares readonly-root and overlay runtime state used by
+.Xr cellctl 8
+and
+.Xr secmodel_cell 9 .
+.Pp
+The commands are as follows:
+.Bl -tag -width Ds
+.It Cm validate
+Parse and validate all
+.Pa .cell
+files.
+Unknown keys and invalid values are rejected.
+.It Cm generate
+Validate all cell definitions and generate
+.Pa /etc/rc.d/cell_<name>
+services.
+Stale generated services for removed cells are deleted.
+.It Cm bootstrap
+Ensure base directory layout and ensure
+.Nm secmodel_cell
+availability.
+.It Cm rootfs Ar name Cm prepare | verify | repair
+Manage per-cell rootfs overlay layout under
+.Pa /var/cells/cells/<name> .
+.It Cm list
+Show compact desired/runtime status for configured cells.
+.El
+.Sh FILES
+.Bl -tag -width /var/cells/cells/<name>/overlay -compact
+.It Pa /etc/cells/defaults.conf
+Global defaults.
+.It Pa /etc/cells/cells.d/*.cell
+Per-cell desired state.
+.It Pa /etc/cells/hooks/<name>/
+Optional lifecycle hooks.
+.It Pa /etc/rc.d/cell_<name>
+Generated per-cell services.
+.It Pa /var/cells/
+Runtime base/releases/cell state.
+.El
+.Sh SEE ALSO
+.Xr cellctl 8 ,
+.Xr rc 8 ,
+.Xr rc.conf 5 ,
+.Xr service 8 ,
+.Xr secmodel_cell 9

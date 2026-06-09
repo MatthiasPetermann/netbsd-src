@@ -1,0 +1,26 @@
+#!/bin/sh
+#	$NetBSD$
+#
+# PROVIDE: celladm
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+
+. /etc/rc.subr
+
+name="celladm"
+rcvar=$name
+command="/usr/sbin/celladm"
+start_cmd="${name}_start"
+stop_cmd=":"
+status_cmd=":"
+
+: ${celladm:=YES}
+
+celladm_start()
+{
+	"${command}" generate
+}
+
+load_rc_config $name
+run_rc_command "$1"

@@ -2095,7 +2095,6 @@
 ./usr/share/man/html5/capfile.html		man-sys-htmlman		html
 ./usr/share/man/html5/ccd.conf.html		man-sysutil-htmlman	html
 ./usr/share/man/html5/cdb.html			man-sys-htmlman		html
-./usr/share/man/html5/cellman-spec.html		man-sysutil-htmlman	html
 ./usr/share/man/html5/changelist.html		man-sys-htmlman		html
 ./usr/share/man/html5/cidr_table.html		man-postfix-htmlman	postfix,html
 ./usr/share/man/html5/core.html			man-sys-htmlman		html
@@ -2690,9 +2689,8 @@
 ./usr/share/man/html8/isibootd.html		man-bootserver-htmlman	html
 ./usr/share/man/html8/iteconfig.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/iwictl.html		man-sysutil-htmlman	html
+./usr/share/man/html8/celladm.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/cellctl.html		man-sysutil-htmlman	html
-./usr/share/man/html8/cellman.html		man-sysutil-htmlman	html
-./usr/share/man/html8/cellui.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/kadmin.html		man-krb5-htmlman	kerberos,html
 ./usr/share/man/html8/kadmind.html		man-krb5-htmlman	kerberos,html
 ./usr/share/man/html8/kcm.html			man-krb5-htmlman	kerberos,html

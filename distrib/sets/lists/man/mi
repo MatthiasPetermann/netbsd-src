@@ -5882,7 +5882,6 @@
 ./usr/share/man/man5/capfile.5			man-sys-man		.man
 ./usr/share/man/man5/ccd.conf.5			man-sysutil-man		.man
 ./usr/share/man/man5/cdb.5			man-sys-man		.man
-./usr/share/man/man5/cellman-spec.5		man-sysutil-man		.man
 ./usr/share/man/man5/changelist.5		man-sys-man		.man
 ./usr/share/man/man5/cidr_table.5		man-postfix-man		postfix,.man
 ./usr/share/man/man5/core.5			man-sys-man		.man
@@ -6584,9 +6583,8 @@
 ./usr/share/man/man8/ispppcontrol.8		man-obsolete		obsolete
 ./usr/share/man/man8/iteconfig.8		man-sysutil-man		.man
 ./usr/share/man/man8/iwictl.8			man-sysutil-man		.man
+./usr/share/man/man8/celladm.8			man-sysutil-man		.man
 ./usr/share/man/man8/cellctl.8			man-sysutil-man		.man
-./usr/share/man/man8/cellman.8			man-sysutil-man		.man
-./usr/share/man/man8/cellui.8			man-sysutil-man		.man
 ./usr/share/man/man8/kadmin.8			man-krb5-man		kerberos,.man
 ./usr/share/man/man8/kadmind.8			man-krb5-man		kerberos,.man
 ./usr/share/man/man8/kcm.8			man-krb5-man		kerberos,.man

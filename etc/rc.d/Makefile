@@ -1,5 +1,6 @@
 # $NetBSD: Makefile,v 1.119 2024/12/29 09:47:49 jmmv Exp $
 
+
 .include <bsd.own.mk>
 
 #
@@ -26,7 +27,7 @@ CONFIGFILES=\
 		hostapd httpd \
 		identd ifwatchd inetd ip6addrctl ipfilter ipfs ipmon ipnat \
 		ipsec irdaattach iscsi_target iscsid iscsid_volumes isibootd \
-		cellman \
+		celladm \
 		kdc \
 		ldconfig ldpd lvmlockdir local lpd lvm \
 		makemandb mdnsd mixerctl modules mopd motd mountall \
