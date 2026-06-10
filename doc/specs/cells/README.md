@@ -26,6 +26,9 @@ contributors should make changes when they extend it.
 - `07-celladm-migration-and-spec.md`
   - Target architecture and migration specification to replace `cellman`/
     `libcellman` with `celladm` while keeping `cellctl` + `secmodel_cell`.
+- `08-celladm-operations-tutorial.md`
+  - Hands-on tutorial for operators: disk layout, config parameters, bootstrap,
+    service lifecycle, and troubleshooting.
 
 ## Scope and source of truth
 
