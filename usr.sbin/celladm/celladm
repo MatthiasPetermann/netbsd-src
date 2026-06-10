@@ -42,7 +42,38 @@ CELL_HASH=
 
 usage()
 {
-	echo "usage: celladm validate|generate|bootstrap|rootfs <name> prepare|verify|repair|list" >&2
+	cat >&2 <<'EOF'
+celladm - manage NetBSD cell configuration and runtime artifacts
+
+Usage:
+  celladm validate
+      Validate all /etc/cells/cells.d/*.cell files.
+
+  celladm generate
+      Validate config and generate /etc/rc.d/cell_<name> services.
+
+  celladm bootstrap
+      Ensure secmodel_cell is available, fetch release sets, build base layer.
+
+  celladm rootfs <name> prepare
+  celladm rootfs <name> verify
+  celladm rootfs <name> repair
+      Manage per-cell runtime layout under /var/cells/cells/<name>/.
+
+  celladm list
+      Show configured cells with desired autostart and runtime state.
+
+  celladm help
+  celladm -h | --help
+      Show this help.
+
+Examples:
+  celladm validate
+  celladm bootstrap
+  celladm generate
+  service cell_web start
+  celladm rootfs web verify
+EOF
 	exit 1
 }
 
@@ -605,7 +636,19 @@ service_stop()
 {
 	name=$1
 	run_hook "$name" pre-stop || return 1
-	cellctl destroy "$name" >/dev/null 2>&1 || true
+
+	cid=$(cell_lookup_id_by_name "$name" 2>/dev/null || true)
+	if [ -n "$cid" ]; then
+		pids=$(ps -axo pid=,xcommand= | awk -v c="$cid" '$0 ~ /cellctl supervise cell=/ && $0 ~ ("cid=" c "$") { print $1 }')
+		if [ -n "$pids" ]; then
+			for pid in $pids; do
+				kill -TERM "$pid" >/dev/null 2>&1 || true
+			done
+			sleep 1
+		fi
+		cellctl destroy "$name" >/dev/null 2>&1 || true
+	fi
+
 	umount_under_root "$name"
 	run_hook "$name" post-stop || return 1
 	return 0
@@ -724,6 +767,9 @@ main()
 {
 	cmd=$1
 	case "$cmd" in
+	help|-h|--help)
+		usage
+		;;
 	validate)
 		[ $# -eq 1 ] || usage
 		cmd_validate
