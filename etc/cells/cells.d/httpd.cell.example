@@ -1,0 +1,14 @@
+name=httpd
+root_base=/var/cells/base/11.0_RC4-amd64
+autostart=yes
+profile=medium
+reserved_ports=8080
+local_dev=yes
+log_facility=local1
+log_stdout_level=info
+log_stderr_level=err
+log_tag=cell-httpd
+command=/usr/libexec/httpd -I 8080 -X -f -s /var/www/httpd
+mount=/var/www/httpd /var/www/httpd rw
+require=NETWORKING
+before=SERVERS
