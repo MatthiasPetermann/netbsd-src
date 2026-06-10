@@ -10,6 +10,10 @@ CELLADM_VAR=${CELLADM_VAR:-/var/cells}
 
 DEFAULT_ROOT_BASE=
 DEFAULT_LOCAL_DEV=yes
+DEFAULT_RELEASE=
+DEFAULT_MACHINE_ARCH=
+DEFAULT_NETBSD_MIRROR=
+DEFAULT_BOOTSTRAP_INCLUDE_XBASE=yes
 
 CELL_NAME=
 CELL_ROOT_BASE=
@@ -88,6 +92,10 @@ load_defaults()
 {
 	DEFAULT_ROOT_BASE=
 	DEFAULT_LOCAL_DEV=yes
+	DEFAULT_RELEASE=
+	DEFAULT_MACHINE_ARCH=
+	DEFAULT_NETBSD_MIRROR=
+	DEFAULT_BOOTSTRAP_INCLUDE_XBASE=yes
 	[ -f "${CELLADM_DEFAULTS}" ] || return 0
 
 	while IFS= read -r raw || [ -n "$raw" ]; do
@@ -103,6 +111,14 @@ load_defaults()
 		local_dev)
 			case "$val" in
 			yes|no) DEFAULT_LOCAL_DEV=$val ;;
+			esac
+			;;
+		release) DEFAULT_RELEASE=$val ;;
+		machine_arch) DEFAULT_MACHINE_ARCH=$val ;;
+		netbsd_mirror) DEFAULT_NETBSD_MIRROR=$val ;;
+		bootstrap_include_xbase)
+			case "$val" in
+			yes|no) DEFAULT_BOOTSTRAP_INCLUDE_XBASE=$val ;;
 			esac
 			;;
 		esac
@@ -256,6 +272,56 @@ ${src}|${tgt}|${mode}"
 	fi
 
 	CELL_HASH=$(cksum "$f" | awk '{print $1 "-" $2}')
+}
+
+command_exists()
+{
+	command -v "$1" >/dev/null 2>&1
+}
+
+require_fetch_tool()
+{
+	if command_exists ftp; then
+		echo ftp
+		return 0
+	fi
+	if command_exists curl; then
+		echo curl
+		return 0
+	fi
+	return 1
+}
+
+fetch_set()
+{
+	tool=$1
+	url=$2
+	out=$3
+	if [ "$tool" = "ftp" ]; then
+		ftp -V -o "$out" "$url"
+		return $?
+	fi
+	curl -fL -o "$out" "$url"
+}
+
+ensure_base_writable_links()
+{
+	base_layer=$1
+	[ -d "$base_layer" ] || return 1
+	mkdir -p "$base_layer/.overlay" "$base_layer/usr" || return 1
+	for p in etc var tmp home root usr/pkg opt .cshrc .profile; do
+		rm -rf "$base_layer/$p" || return 1
+	done
+	ln -sfn .overlay/etc "$base_layer/etc" || return 1
+	ln -sfn .overlay/var "$base_layer/var" || return 1
+	ln -sfn .overlay/tmp "$base_layer/tmp" || return 1
+	ln -sfn .overlay/home "$base_layer/home" || return 1
+	ln -sfn .overlay/root "$base_layer/root" || return 1
+	ln -sfn .overlay/.cshrc "$base_layer/.cshrc" || return 1
+	ln -sfn .overlay/.profile "$base_layer/.profile" || return 1
+	ln -sfn ../.overlay/usr/pkg "$base_layer/usr/pkg" || return 1
+	ln -sfn .overlay/opt "$base_layer/opt" || return 1
+	return 0
 }
 
 list_cells()
@@ -584,12 +650,58 @@ cmd_generate()
 cmd_bootstrap()
 {
 	ensure_dirs || die "failed to create base directories"
-	if ! sysctl -n security.models.cell.cell_list >/dev/null 2>&1; then
+	if ! /usr/sbin/cellctl list -T -H >/dev/null 2>&1; then
 		modload secmodel_cell >/dev/null 2>&1 || true
 	fi
-	if ! sysctl -n security.models.cell.cell_list >/dev/null 2>&1; then
-		die "secmodel_cell not available"
+	if ! /usr/sbin/cellctl list -T -H >/dev/null 2>&1; then
+		die "secmodel_cell not available (cellctl list failed)"
 	fi
+
+	load_defaults
+
+	release=$DEFAULT_RELEASE
+	arch=$DEFAULT_MACHINE_ARCH
+	if [ -z "$release" ] || [ -z "$arch" ]; then
+		set -- $(uname -r -m)
+		[ -z "$release" ] && release=$1
+		[ -z "$arch" ] && arch=$2
+	fi
+	[ -n "$release" ] || die "cannot determine release"
+	[ -n "$arch" ] || die "cannot determine machine_arch"
+
+	include_xbase=$DEFAULT_BOOTSTRAP_INCLUDE_XBASE
+	case "$include_xbase" in
+	yes|no) ;;
+	*) include_xbase=yes ;;
+	esac
+
+	mirror=${NETBSD_MIRROR:-$DEFAULT_NETBSD_MIRROR}
+	if [ -z "$mirror" ]; then
+		mirror="https://cdn.netbsd.org/pub/NetBSD/NetBSD-${release}/${arch}/binary/sets"
+	fi
+
+	set_dir="${CELLADM_VAR}/releases/${release}/${arch}"
+	base_set="$set_dir/base.tar.xz"
+	etc_set="$set_dir/etc.tar.xz"
+	xbase_set="$set_dir/xbase.tar.xz"
+	base_layer="${CELLADM_VAR}/base/${release}-${arch}"
+
+	mkdir -p "$set_dir" "$base_layer" || die "cannot create release/base dirs"
+
+	tool=$(require_fetch_tool) || die "need ftp(1) or curl(1) to fetch sets"
+	fetch_set "$tool" "$mirror/base.tar.xz" "$base_set" || die "fetch base.tar.xz failed"
+	fetch_set "$tool" "$mirror/etc.tar.xz" "$etc_set" || die "fetch etc.tar.xz failed"
+	if [ "$include_xbase" = "yes" ]; then
+		fetch_set "$tool" "$mirror/xbase.tar.xz" "$xbase_set" || die "fetch xbase.tar.xz failed"
+	fi
+
+	tar -xzp -f "$base_set" -C "$base_layer" || die "extract base.tar.xz failed"
+	tar -xzp -f "$etc_set" -C "$base_layer" || die "extract etc.tar.xz failed"
+	if [ "$include_xbase" = "yes" ]; then
+		tar -xzp -f "$xbase_set" -C "$base_layer" || die "extract xbase.tar.xz failed"
+	fi
+
+	ensure_base_writable_links "$base_layer" || die "writable-link shaping failed"
 	return 0
 }
 

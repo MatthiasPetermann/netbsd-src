@@ -50,9 +50,26 @@ Validate all cell definitions and generate
 services.
 Stale generated services for removed cells are deleted.
 .It Cm bootstrap
-Ensure base directory layout and ensure
+Ensure base directory layout, ensure
 .Nm secmodel_cell
-availability.
+availability, download release sets
+.Pq Pa base.tar.xz , Pa etc.tar.xz , optionally Pa xbase.tar.xz
+into
+.Pa /var/cells/releases/<release>/<arch> ,
+extract them into
+.Pa /var/cells/base/<release>-<arch> ,
+and apply writable-link base shaping.
+Release and architecture are taken from
+.Pa /etc/cells/defaults.conf
+.Pq Va release , Va machine_arch
+or auto-detected via
+.Xr uname 1 .
+The mirror is configured by
+.Va netbsd_mirror
+or environment
+.Va NETBSD_MIRROR ;
+default is
+.Dq Li https://cdn.netbsd.org/pub/NetBSD/NetBSD-${release}/${machine_arch}/binary/sets .
 .It Cm rootfs Ar name Cm prepare | verify | repair
 Manage per-cell rootfs overlay layout under
 .Pa /var/cells/cells/<name> .
