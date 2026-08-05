@@ -229,6 +229,22 @@ static bool secmodel_cell_is_sysctl_req_denied(enum kauth_system_req req) {
   }
 }
 
+/* Network actions outside ordinary socket use modify host-global state. */
+static bool secmodel_cell_network_action_denied(kauth_action_t action,
+                                                enum kauth_network_req req,
+                                                void *arg1) {
+  if (action == KAUTH_NETWORK_SOCKET) {
+    if (req == KAUTH_REQ_NETWORK_SOCKET_OPEN)
+      return (int)(uintptr_t)arg1 == PF_ROUTE ||
+             (int)(uintptr_t)arg1 == PF_OROUTE;
+    return req == KAUTH_REQ_NETWORK_SOCKET_RAWSOCK ||
+           req == KAUTH_REQ_NETWORK_SOCKET_SETPRIV ||
+           req == KAUTH_REQ_NETWORK_SOCKET_DROP;
+  }
+
+  return action != KAUTH_NETWORK_BIND;
+}
+
 /* System policy table.  Callbacks only turn a true result into an audit. */
 static bool secmodel_cell_system_denies(enum cell_policy_profile profile,
                                         kauth_action_t action,
@@ -268,17 +284,25 @@ int secmodel_cell_network_cb(kauth_cred_t cred, kauth_action_t action,
                              void *cookie, void *arg0, void *arg1, void *arg2,
                              void *arg3) {
   enum kauth_network_req req;
+  struct cell_config config;
   in_port_t lport;
   cellid_t id;
 
   (void)cookie;
-  (void)arg1;
   (void)arg3;
 
-  if (action != KAUTH_NETWORK_BIND)
+  req = (enum kauth_network_req)(uintptr_t)arg0;
+  if (action != KAUTH_NETWORK_BIND) {
+    if (!secmodel_cell_get_profile(cred, &config) ||
+        config.cc_profile == CELL_PROFILE_POLICY_LOW ||
+        !secmodel_cell_network_action_denied(action, req, arg1))
+      return KAUTH_RESULT_DEFER;
+    return secmodel_cell_deny_network(cred, action, (uintptr_t)req);
+  }
+
+  if (secmodel_cell_is_host_root(cred))
     return KAUTH_RESULT_DEFER;
 
-  req = (enum kauth_network_req)(uintptr_t)arg0;
   if (req != KAUTH_REQ_NETWORK_BIND_PORT &&
       req != KAUTH_REQ_NETWORK_BIND_PRIVPORT)
     return KAUTH_RESULT_DEFER;
@@ -304,7 +328,8 @@ int secmodel_cell_network_cb(kauth_cred_t cred, kauth_action_t action,
   }
   if (secmodel_cell_port_reserved_by_id(id, lport)) {
     mutex_exit(&cell_lock);
-    return KAUTH_RESULT_ALLOW;
+    /* Reservation isolates cells; normal privilege checks still apply. */
+    return KAUTH_RESULT_DEFER;
   }
   mutex_exit(&cell_lock);
 

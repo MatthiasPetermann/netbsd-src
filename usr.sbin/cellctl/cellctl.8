@@ -95,15 +95,21 @@ When a command accepts
 non-numeric targets must satisfy this name format.
 .Pp
 Cell roots must be non-empty paths of at most
-255 bytes and may not contain control characters.
+255 bytes, must be absolute paths naming an existing directory, and may not
+contain control characters.
 .Pp
 The commands are as follows:
 .Bl -tag -width Ds
 .It Cm create Op Fl l Ar profile Op Fl r Ar port[,port...] Op Fl N Ar nofile|unlimited Op Fl A Ar as|unlimited Op Fl C Ar core|unlimited Fl n Ar name Ar root
 Create a new cell id, assign it the unique
 .Ar name ,
-and store cell name and root metadata in the kernel cell model.
+and store the cell name and root path in the kernel cell model.
 This command only creates the cell and prints the resulting cell id.
+.Nm
+enters this root with
+.Xr chroot 2
+before entering the cell; the kernel rejects an attempt to enter a non-host
+cell from a process that is not already chrooted.
 .Pp
 The optional flags set isolation policy at creation time.
 .Bl -tag -width Ds
@@ -116,8 +122,16 @@ and
 .Dq high .
 The default is
 .Dq high .
+.Pp
+All profiles isolate cross-cell process operations and reserved ports.
+The low profile additionally denies private sysctls.  Medium also denies
+host administrative, mount-changing, sysctl-writing, device, machine-dependent,
+and host-global network operations.  High additionally denies
+.Dv SYSVIPC .
 .It Fl r Ar port[,port...]
 Reserve one or more listening ports for this cell.
+Reservations prevent other cells from binding the port; they do not grant
+permission to bind privileged ports.
 .It Fl N Ar nofile|unlimited
 Set
 .Dv RLIMIT_NOFILE

@@ -37,6 +37,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
+struct vnode;
+
 #include <secmodel/cell/cell.h>
 #include <secmodel/secmodel.h>
 
@@ -59,7 +61,8 @@ enum cell_policy_profile {
 
 /* Lifecycle state for create/enter/destroy transaction coordination. */
 enum cell_lifecycle_state {
-  CELL_STATE_ACTIVE = 0,
+  CELL_STATE_CREATING = 0,
+  CELL_STATE_ACTIVE,
   CELL_STATE_DESTROYING,
 };
 
@@ -77,6 +80,8 @@ struct cell_entry {
   char ce_name[CELL_NAME_MAX + 1];
   /* Configured root path metadata for userland tooling and reporting. */
   char ce_root[CELL_ROOT_MAX + 1];
+  /* Referenced vnode required as the process chroot before entry. */
+  struct vnode *ce_rootvp;
   /* Creation timestamp in monotonic nanoseconds since boot. */
   uint64_t ce_created_ns;
   /* System policy profile controlling kauth deny/defer behavior. */
@@ -170,6 +175,8 @@ int secmodel_cell_create(const struct cell_create *, const struct cell_config *,
                          cellid_t *);
 int secmodel_cell_destroy(cellid_t);
 int secmodel_cell_enter(struct lwp *, cellid_t);
+int secmodel_cell_activate(cellid_t);
+void secmodel_cell_abort_create(cellid_t);
 
 /* kauth listener callbacks registered at start time. */
 int secmodel_cell_system_cb(kauth_cred_t, kauth_action_t, void *, void *,

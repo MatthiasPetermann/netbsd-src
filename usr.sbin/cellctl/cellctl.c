@@ -702,7 +702,7 @@ static void cell_run_monitor_once(cellid_t id, const char *name, int outfd,
   struct timespec now;
   struct timespec shutdown_deadline;
   size_t outused, errused;
-  bool outopen, erropen;
+  bool child_exited, outopen, erropen;
   bool sent_sigterm, sent_sigkill;
   bool have_deadline;
   int flags;
@@ -729,14 +729,42 @@ static void cell_run_monitor_once(cellid_t id, const char *name, int outfd,
 
   outused = 0;
   errused = 0;
+  child_exited = false;
   outopen = true;
   erropen = true;
 
-  while (outopen || erropen) {
+  while (!child_exited || outopen || erropen) {
     struct pollfd pfd[2];
     int nfd, rv, i, timeout_ms;
 
-    if (monitor_shutdown_requested && !sent_sigterm) {
+    if (!child_exited) {
+      rv = waitpid(child, statusp, WNOHANG);
+      if (rv == child)
+        child_exited = true;
+      else if (rv == -1 && errno == ECHILD) {
+        warnx("child %jd was reaped unexpectedly", (intmax_t)child);
+        *statusp = SIGKILL;
+        child_exited = true;
+      } else if (rv == -1 && errno != EINTR) {
+        (void)kill(-child, SIGKILL);
+        err(1, "waitpid %jd", (intmax_t)child);
+      }
+    }
+
+    /* Do not signal a process group after reaping its leader: the id can reuse. */
+    if (child_exited && (outopen || erropen)) {
+      if (outopen) {
+        close(outfd);
+        outopen = false;
+      }
+      if (erropen) {
+        close(errfd);
+        erropen = false;
+      }
+      sent_sigkill = true;
+    }
+
+    if (monitor_shutdown_requested && !child_exited && !sent_sigterm) {
       if (kill(-child, SIGTERM) == -1 && errno != ESRCH)
         warn("kill(SIGTERM, -%jd)", (intmax_t)child);
       sent_sigterm = true;
@@ -761,6 +789,15 @@ static void cell_run_monitor_once(cellid_t id, const char *name, int outfd,
         if (kill(-child, SIGKILL) == -1 && errno != ESRCH)
           warn("kill(SIGKILL, -%jd)", (intmax_t)child);
         sent_sigkill = true;
+        /* Do not let an escaped descendant retain the supervisor forever. */
+        if (outopen) {
+          close(outfd);
+          outopen = false;
+        }
+        if (erropen) {
+          close(errfd);
+          erropen = false;
+        }
         timeout_ms = 0;
       } else {
         long sec, nsec;
@@ -791,12 +828,20 @@ static void cell_run_monitor_once(cellid_t id, const char *name, int outfd,
       nfd++;
     }
 
-    rv = poll(pfd, (nfds_t)nfd, timeout_ms);
+    rv = poll(nfd == 0 ? NULL : pfd, (nfds_t)nfd, timeout_ms);
     if (rv < 0) {
       if (errno == EINTR)
         continue;
       warn("poll");
-      break;
+      if (outopen) {
+        close(outfd);
+        outopen = false;
+      }
+      if (erropen) {
+        close(errfd);
+        erropen = false;
+      }
+      continue;
     }
     if (rv == 0)
       continue;
@@ -852,8 +897,6 @@ static void cell_run_monitor_once(cellid_t id, const char *name, int outfd,
     syslog(stderr_priority, "cell=%s cid=%" PRIu32 " stderr: %.*s", name, id,
            (int)errused, errline);
 
-  if (waitpid(child, statusp, 0) == -1 && errno != ECHILD)
-    warn("waitpid %jd", (intmax_t)child);
 }
 
 static void cell_supervise_loop(const struct cell_info *entry,
@@ -883,6 +926,11 @@ static void cell_supervise_loop(const struct cell_info *entry,
       sigaction(SIGINT, &sa, NULL) == -1 || sigaction(SIGQUIT, &sa, NULL) == -1)
     err(1, "sigaction");
 
+  /* A supervisor must reap its workload even if its parent ignored SIGCHLD. */
+  sa.sa_handler = SIG_DFL;
+  if (sigaction(SIGCHLD, &sa, NULL) == -1)
+    err(1, "sigaction SIGCHLD");
+
   /*
    * Keep supervise mode detached from caller terminal/session lifetime.
    * If started via rc(8), startup completion can trigger SIGHUP delivery
@@ -897,6 +945,7 @@ static void cell_supervise_loop(const struct cell_info *entry,
 
   for (;;) {
     int outpipe[2], errpipe[2], status;
+    struct cell_info current;
     struct timespec started, elapsed;
     pid_t child;
 
@@ -917,8 +966,8 @@ static void cell_supervise_loop(const struct cell_info *entry,
 
       close(outpipe[0]);
       close(errpipe[0]);
-      if (setsid() == -1)
-        err(1, "setsid");
+      if (setpgid(0, 0) == -1)
+        err(1, "setpgid");
       devnull = open(_PATH_DEVNULL, O_RDONLY);
       if (devnull == -1)
         err(1, "%s", _PATH_DEVNULL);
@@ -933,6 +982,10 @@ static void cell_supervise_loop(const struct cell_info *entry,
       apply_supervise_rlimits_or_die(entry);
       cell_exec(id, root, name, cmd, creds);
     }
+
+    /* Establish the group before the monitor can send it a shutdown signal. */
+    if (setpgid(child, child) == -1 && errno != EACCES && errno != ESRCH)
+      warn("setpgid %jd", (intmax_t)child);
 
     close(outpipe[1]);
     close(errpipe[1]);
@@ -953,6 +1006,13 @@ static void cell_supervise_loop(const struct cell_info *entry,
     if (monitor_shutdown_requested) {
       syslog(LOG_NOTICE, "cell=%s cid=%" PRIu32 " supervise shutdown requested",
              name, id);
+      break;
+    }
+
+    /* Do not restart a command for a cell that was removed while it ran. */
+    if (!cell_lookup_by_id(id, &current)) {
+      syslog(LOG_NOTICE, "cell=%s cid=%" PRIu32 " no longer exists", name,
+             id);
       break;
     }
 
@@ -1217,6 +1277,9 @@ static void parse_gid_list(const char *arg, gid_t **groups, size_t *ngroups) {
 
   if (arg == NULL || arg[0] == '\0')
     errx(1, "invalid supplementary gid list");
+  if (arg[0] == ',' || arg[strlen(arg) - 1] == ',' ||
+      strstr(arg, ",,") != NULL)
+    errx(1, "invalid supplementary gid list: %s", arg);
 
   list = strdup(arg);
   if (list == NULL)
@@ -1277,7 +1340,7 @@ static void validate_cell_name_or_die(const char *name) {
 static void validate_cell_root_or_die(const char *root) {
   size_t i;
 
-  if (root == NULL || root[0] == '\0' || strlen(root) > CELL_ROOT_MAX)
+  if (root == NULL || root[0] != '/' || strlen(root) > CELL_ROOT_MAX)
     errx(1, "invalid cell root");
   for (i = 0; root[i] != '\0'; i++) {
     unsigned char c = (unsigned char)root[i];

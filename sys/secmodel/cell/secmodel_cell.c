@@ -34,11 +34,13 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/callout.h>
 #include <sys/cell.h>
+#include <sys/filedesc.h>
 #include <sys/kauth.h>
 #include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/namei.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
@@ -46,6 +48,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/syslog.h>
 #include <sys/systm.h>
 #include <sys/timevar.h>
+#include <sys/vnode.h>
 
 #include <netinet/in.h>
 
@@ -498,7 +501,15 @@ int secmodel_cell_create(const struct cell_create *create,
   error = 0;
 
   secmodel_cell_init_entry(entry, create, config);
-  entry->ce_state = CELL_STATE_ACTIVE;
+  error = namei_simple_kernel(entry->ce_root, NSM_FOLLOW_NOEMULROOT,
+                              &entry->ce_rootvp);
+  if (error != 0)
+    goto out_free;
+  if (entry->ce_rootvp->v_type != VDIR) {
+    error = ENOTDIR;
+    goto out_free;
+  }
+  entry->ce_state = CELL_STATE_CREATING;
 
   mutex_enter(&cell_lock);
   if (create != NULL && create->cc_name[0] != '\0' &&
@@ -547,12 +558,50 @@ out_unlock:
   mutex_exit(&cell_lock);
 
   if (error != 0) {
+out_free:
+    if (entry->ce_rootvp != NULL)
+      vrele(entry->ce_rootvp);
     kmem_free(entry, sizeof(*entry));
     return error;
   }
 
   *idp = id;
   return 0;
+}
+
+/* Publish a created cell only after its id has been delivered to userland. */
+int secmodel_cell_activate(cellid_t id) {
+  struct cell_entry *entry;
+
+  mutex_enter(&cell_lock);
+  entry = secmodel_cell_lookup(id);
+  if (entry == NULL || entry->ce_state != CELL_STATE_CREATING) {
+    mutex_exit(&cell_lock);
+    return ENOENT;
+  }
+  secmodel_cell_set_state(entry, CELL_STATE_ACTIVE);
+  mutex_exit(&cell_lock);
+  return 0;
+}
+
+/* Remove an unpublished cell after its sysctl reply could not be copied out. */
+void secmodel_cell_abort_create(cellid_t id) {
+  struct cell_entry *entry;
+
+  mutex_enter(&cell_lock);
+  entry = secmodel_cell_lookup(id);
+  if (entry != NULL && entry->ce_state == CELL_STATE_CREATING) {
+    LIST_REMOVE(entry, ce_entry);
+    cell_list_seq++;
+  } else {
+    entry = NULL;
+  }
+  mutex_exit(&cell_lock);
+
+  if (entry != NULL) {
+    vrele(entry->ce_rootvp);
+    kmem_free(entry, sizeof(*entry));
+  }
 }
 
 /*
@@ -680,6 +729,7 @@ out_unlock:
   if (error != 0)
     return error;
 
+  vrele(entry->ce_rootvp);
   kmem_free(entry, sizeof(*entry));
   return 0;
 }
@@ -696,11 +746,13 @@ int secmodel_cell_enter(struct lwp *l, cellid_t id) {
   kauth_cred_t cred;
   struct cell_entry *entry;
   cellid_t cur;
+  bool root_locked;
   int error;
 
   p = l->l_proc;
   entry = NULL;
   error = 0;
+  root_locked = false;
 
   /*
    * Transaction model:
@@ -735,6 +787,12 @@ int secmodel_cell_enter(struct lwp *l, cellid_t id) {
       error = ENOENT;
       goto out;
     }
+    rw_enter(&p->p_cwdi->cwdi_lock, RW_READER);
+    root_locked = true;
+    if (p->p_cwdi->cwdi_rdir != entry->ce_rootvp) {
+      error = EPERM;
+      goto out;
+    }
   }
 
   {
@@ -745,11 +803,15 @@ int secmodel_cell_enter(struct lwp *l, cellid_t id) {
     secmodel_cell_cred_setid(ncred, id);
     proc_crmod_leave(ncred, cred, true);
   }
+  if (root_locked)
+    rw_exit(&p->p_cwdi->cwdi_lock);
   secmodel_cell_release_hold(entry);
 
   return 0;
 
 out:
+  if (root_locked)
+    rw_exit(&p->p_cwdi->cwdi_lock);
   proc_crmod_leave(cred, NULL, false);
   secmodel_cell_release_hold(entry);
   return error;
@@ -932,6 +994,7 @@ void secmodel_cell_stop(void) {
   mutex_enter(&cell_lock);
   while ((entry = LIST_FIRST(&cell_list)) != NULL) {
     LIST_REMOVE(entry, ce_entry);
+    vrele(entry->ce_rootvp);
     kmem_free(entry, sizeof(*entry));
   }
   mutex_exit(&cell_lock);

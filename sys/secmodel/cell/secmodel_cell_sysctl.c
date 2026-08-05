@@ -226,7 +226,8 @@ static int secmodel_cell_sysctl_create(SYSCTLFN_ARGS) {
   if (error != 0)
     return error;
 
-  if (create.cc_name[0] == '\0' || create.cc_root[0] == '\0')
+  if (create.cc_name[0] == '\0' || create.cc_root[0] == '\0' ||
+      create.cc_root[0] != '/')
     return EINVAL;
   error = secmodel_cell_validate_name(create.cc_name, sizeof(create.cc_name));
   if (error != 0)
@@ -245,9 +246,13 @@ static int secmodel_cell_sysctl_create(SYSCTLFN_ARGS) {
   *oldlenp = sizeof(create);
   error = sysctl_copyout(l, &create, oldp, sizeof(create));
   if (error != 0) {
-    (void)secmodel_cell_destroy(id);
+    secmodel_cell_abort_create(id);
     return error;
   }
+
+  error = secmodel_cell_activate(id);
+  if (error != 0)
+    return error;
 
   log(LOG_INFO,
       "secmodel_cell: created cell id=%u name=\"%s\" root=\"%s\" "
