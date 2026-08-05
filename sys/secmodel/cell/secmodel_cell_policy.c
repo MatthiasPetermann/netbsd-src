@@ -52,7 +52,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
  *
  * Scope       LOW                    MEDIUM                 HIGH
  * process     cross-cell targets     cross-cell targets      cross-cell targets
- * network     reserved-port nonowner reserved-port nonowner  reserved-port nonowner
+ * network     reserved-port nonowner LOW + host-global net   MEDIUM + host-global net
  * system      private sysctls        LOW + host admin,       MEDIUM + SYSVIPC
  *                                     mounts, sysctl writes
  * device      defer                  deny all                deny all
@@ -88,10 +88,12 @@ static int secmodel_cell_deny_process(kauth_cred_t cred,
                                   cred, action, req);
 }
 
-static int secmodel_cell_deny_system(kauth_cred_t cred, kauth_action_t action,
-                                     uintptr_t req) {
-  return secmodel_cell_deny_event(&cell_deny_system, CELL_DENY_SCOPE_SYSTEM,
-                                  cred, action, req);
+static int secmodel_cell_deny_host_global(kauth_cred_t cred,
+                                          kauth_action_t action,
+                                          uintptr_t req) {
+  return secmodel_cell_deny_event(&cell_deny_host_global,
+                                  CELL_DENY_SCOPE_HOST_GLOBAL, cred, action,
+                                  req);
 }
 
 static int secmodel_cell_deny_network(kauth_cred_t cred,
@@ -144,9 +146,9 @@ static int secmodel_cell_host_global_cb(kauth_cred_t cred,
     return KAUTH_RESULT_DEFER;
   case CELL_PROFILE_POLICY_MEDIUM:
   case CELL_PROFILE_POLICY_HIGH:
-    return secmodel_cell_deny_system(cred, action, 0);
+    return secmodel_cell_deny_host_global(cred, action, 0);
   default:
-    return secmodel_cell_deny_system(cred, action, 0);
+    return secmodel_cell_deny_host_global(cred, action, 0);
   }
 }
 
@@ -360,7 +362,7 @@ int secmodel_cell_system_cb(kauth_cred_t cred, kauth_action_t action,
   if (!secmodel_cell_system_denies(config.cc_profile, action, req))
     return KAUTH_RESULT_DEFER;
 
-  return secmodel_cell_deny_system(cred, action, (uintptr_t)req);
+  return secmodel_cell_deny_host_global(cred, action, (uintptr_t)req);
 }
 
 /*

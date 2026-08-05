@@ -105,7 +105,7 @@ static cellid_t cell_next_id = 1;
 uint64_t cell_list_seq;
 /* Deny counters exported internally for per-scope policy accounting. */
 uint64_t cell_deny_process;
-uint64_t cell_deny_system;
+uint64_t cell_deny_host_global;
 uint64_t cell_deny_network;
 static struct callout cell_cpu_account_ch;
 static kmutex_t cell_deny_log_lock;
@@ -116,7 +116,7 @@ struct cell_deny_log_state {
 };
 static struct cell_deny_log_state cell_deny_log[] = {
     [CELL_DENY_SCOPE_PROCESS] = {.cds_name = "process"},
-    [CELL_DENY_SCOPE_SYSTEM] = {.cds_name = "system"},
+    [CELL_DENY_SCOPE_HOST_GLOBAL] = {.cds_name = "host-global"},
     [CELL_DENY_SCOPE_NETWORK] = {.cds_name = "network"},
 };
 static const struct timeval cell_deny_log_interval = {1, 0};
@@ -152,6 +152,8 @@ static void secmodel_cell_set_state(struct cell_entry *,
 static void secmodel_cell_init_entry(struct cell_entry *,
                                      const struct cell_create *,
                                      const struct cell_config *);
+static void secmodel_cell_unlisten(void);
+static void secmodel_cell_free_entries(void);
 
 void secmodel_cell_assert_cell_lock_held(void) {
 
@@ -193,6 +195,54 @@ static void secmodel_cell_release_hold(struct cell_entry *entry) {
   mutex_exit(&cell_lock);
 }
 
+/* Listeners may be partially initialized; teardown is therefore idempotent. */
+static void secmodel_cell_unlisten(void) {
+  if (l_process != NULL) {
+    kauth_unlisten_scope(l_process);
+    l_process = NULL;
+  }
+  if (l_cred != NULL) {
+    kauth_unlisten_scope(l_cred);
+    l_cred = NULL;
+  }
+  if (l_system != NULL) {
+    kauth_unlisten_scope(l_system);
+    l_system = NULL;
+  }
+  if (l_network != NULL) {
+    kauth_unlisten_scope(l_network);
+    l_network = NULL;
+  }
+  if (l_machdep != NULL) {
+    kauth_unlisten_scope(l_machdep);
+    l_machdep = NULL;
+  }
+  if (l_device != NULL) {
+    kauth_unlisten_scope(l_device);
+    l_device = NULL;
+  }
+}
+
+/* Detach under cell_lock, then release vnodes and memory without the lock. */
+static void secmodel_cell_free_entries(void) {
+  struct cell_list_head entries;
+  struct cell_entry *entry;
+
+  LIST_INIT(&entries);
+  mutex_enter(&cell_lock);
+  while ((entry = LIST_FIRST(&cell_list)) != NULL) {
+    LIST_REMOVE(entry, ce_entry);
+    LIST_INSERT_HEAD(&entries, entry, ce_entry);
+  }
+  mutex_exit(&cell_lock);
+
+  while ((entry = LIST_FIRST(&entries)) != NULL) {
+    LIST_REMOVE(entry, ce_entry);
+    vrele(entry->ce_rootvp);
+    kmem_free(entry, sizeof(*entry));
+  }
+}
+
 /*
  * Membership scan for one cell id.
  * Caller holds proc_lock.
@@ -226,28 +276,24 @@ static void secmodel_cell_init_entry(struct cell_entry *entry,
                                      const struct cell_config *config) {
 
   KASSERT(entry != NULL);
+  KASSERT(create != NULL);
+  KASSERT(config != NULL);
 
-  if (create != NULL) {
-    entry->ce_create_flags = create->cc_flags;
-    strlcpy(entry->ce_name, create->cc_name, sizeof(entry->ce_name));
-    strlcpy(entry->ce_root, create->cc_root, sizeof(entry->ce_root));
-    if ((create->cc_flags & CELL_CREATE_PORTS) != 0) {
-      entry->ce_nports = create->cc_nports;
-      memcpy(entry->ce_ports, create->cc_ports,
-             entry->ce_nports * sizeof(entry->ce_ports[0]));
-    }
-    if ((create->cc_flags & CELL_CREATE_RLIMIT_NOFILE) != 0)
-      entry->ce_rlimit_nofile = create->cc_rlimit_nofile;
-    if ((create->cc_flags & CELL_CREATE_RLIMIT_AS) != 0)
-      entry->ce_rlimit_as = create->cc_rlimit_as;
-    if ((create->cc_flags & CELL_CREATE_RLIMIT_CORE) != 0)
-      entry->ce_rlimit_core = create->cc_rlimit_core;
+  entry->ce_create_flags = create->cc_flags;
+  strlcpy(entry->ce_name, create->cc_name, sizeof(entry->ce_name));
+  strlcpy(entry->ce_root, create->cc_root, sizeof(entry->ce_root));
+  if ((create->cc_flags & CELL_CREATE_PORTS) != 0) {
+    entry->ce_nports = create->cc_nports;
+    memcpy(entry->ce_ports, create->cc_ports,
+           entry->ce_nports * sizeof(entry->ce_ports[0]));
   }
-
-  if (config != NULL)
-    entry->ce_profile = config->cc_profile;
-  else
-    entry->ce_profile = CELL_PROFILE_POLICY_HIGH;
+  if ((create->cc_flags & CELL_CREATE_RLIMIT_NOFILE) != 0)
+    entry->ce_rlimit_nofile = create->cc_rlimit_nofile;
+  if ((create->cc_flags & CELL_CREATE_RLIMIT_AS) != 0)
+    entry->ce_rlimit_as = create->cc_rlimit_as;
+  if ((create->cc_flags & CELL_CREATE_RLIMIT_CORE) != 0)
+    entry->ce_rlimit_core = create->cc_rlimit_core;
+  entry->ce_profile = config->cc_profile;
 }
 
 /*
@@ -494,7 +540,7 @@ int secmodel_cell_create(const struct cell_create *create,
   cellid_t id;
   int error;
 
-  if (idp == NULL)
+  if (create == NULL || config == NULL || idp == NULL)
     return EINVAL;
 
   entry = kmem_zalloc(sizeof(*entry), KM_SLEEP);
@@ -829,7 +875,7 @@ void secmodel_cell_deny_audit(enum cell_deny_scope scope, kauth_cred_t cred,
   id = CELLID_HOST;
   euid = (uid_t)-1;
   if ((unsigned)scope >= __arraycount(cell_deny_log))
-    scope = CELL_DENY_SCOPE_SYSTEM;
+    scope = CELL_DENY_SCOPE_HOST_GLOBAL;
   rl = &cell_deny_log[scope];
 
   if (cred != NULL) {
@@ -867,7 +913,7 @@ int secmodel_cell_init(void) {
   cell_next_id = 1;
   cell_list_seq = 0;
   cell_deny_process = 0;
-  cell_deny_system = 0;
+  cell_deny_host_global = 0;
   cell_deny_network = 0;
   for (i = 0; i < __arraycount(cell_deny_log); i++) {
     cell_deny_log[i].cds_last.tv_sec = 0;
@@ -928,31 +974,7 @@ int secmodel_cell_start(void) {
   return 0;
 
 fail:
-  if (l_process != NULL) {
-    kauth_unlisten_scope(l_process);
-    l_process = NULL;
-  }
-  if (l_cred != NULL) {
-    kauth_unlisten_scope(l_cred);
-    l_cred = NULL;
-  }
-  if (l_system != NULL) {
-    kauth_unlisten_scope(l_system);
-    l_system = NULL;
-  }
-  if (l_network != NULL) {
-    kauth_unlisten_scope(l_network);
-    l_network = NULL;
-  }
-  if (l_machdep != NULL) {
-    kauth_unlisten_scope(l_machdep);
-    l_machdep = NULL;
-  }
-  if (l_device != NULL) {
-    kauth_unlisten_scope(l_device);
-    l_device = NULL;
-  }
-
+  secmodel_cell_unlisten();
   return ENOMEM;
 }
 
@@ -960,44 +982,13 @@ fail:
  * Unregister listeners and clean up cell data.
  */
 void secmodel_cell_stop(void) {
-  struct cell_entry *entry;
-
-  if (l_process != NULL) {
-    kauth_unlisten_scope(l_process);
-    l_process = NULL;
-  }
-  if (l_cred != NULL) {
-    kauth_unlisten_scope(l_cred);
-    l_cred = NULL;
-  }
-  if (l_system != NULL) {
-    kauth_unlisten_scope(l_system);
-    l_system = NULL;
-  }
-  if (l_network != NULL) {
-    kauth_unlisten_scope(l_network);
-    l_network = NULL;
-  }
-  if (l_machdep != NULL) {
-    kauth_unlisten_scope(l_machdep);
-    l_machdep = NULL;
-  }
-  if (l_device != NULL) {
-    kauth_unlisten_scope(l_device);
-    l_device = NULL;
-  }
+  secmodel_cell_unlisten();
   callout_halt(&cell_cpu_account_ch, NULL);
   callout_destroy(&cell_cpu_account_ch);
   kauth_deregister_key(cell_key);
   cell_key = NULL;
 
-  mutex_enter(&cell_lock);
-  while ((entry = LIST_FIRST(&cell_list)) != NULL) {
-    LIST_REMOVE(entry, ce_entry);
-    vrele(entry->ce_rootvp);
-    kmem_free(entry, sizeof(*entry));
-  }
-  mutex_exit(&cell_lock);
+  secmodel_cell_free_entries();
   mutex_destroy(&cell_deny_log_lock);
   mutex_destroy(&cell_lock);
 }

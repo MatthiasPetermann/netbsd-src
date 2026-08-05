@@ -29,13 +29,18 @@
 .Os
 .Sh NAME
 .Nm secmodel_cell
-.Nd cell security model with kauth isolation and snapshot telemetry
+.Nd credential-scoped kauth policy domain with snapshot telemetry
 .Sh DESCRIPTION
 .Nm
 implements a cell-oriented security model on top of
 .Xr kauth 9 .
 Processes are associated with a cell identifier stored in credential-specific
 state.
+.Nm
+is a policy-domain mechanism, not a container, jail, or namespace facility.
+It constrains selected cross-cell process operations and selected host-global
+privileges, but does not virtualize process identifiers, users, mounts,
+filesystems, network stacks, interfaces, routes, IPC objects, or resources.
 Host root
 .Pq effective uid 0 in cell id 0
 is privileged to manage cell membership and cell definitions.
@@ -51,7 +56,8 @@ The following nodes are created under
 .Bl -tag -width create
 .It Va id
 Read the current process cell id, or write a cell id to request entry to that
-cell.
+cell.  Entry requires host root and a process already chrooted to the exact
+root directory configured for that cell.
 .It Va create
 Create a new cell id.
 The write side accepts a
@@ -64,8 +70,9 @@ Select one of the supported policy profiles
 .Pq low, medium, high .
 .It Dv CELL_CREATE_PORTS
 Reserve one or more listening ports for this cell.
-When at least one cell reserves a port, bind attempts for that port are
-allowed only from members of the cell that reserved it.
+When at least one cell reserves a port, bind attempts for that port are denied
+to non-owning credentials, except host root.  Reservations do not grant
+permission to bind privileged ports.
 .It Dv CELL_CREATE_RLIMIT_NOFILE
 Store an optional supervise-time
 .Dv RLIMIT_NOFILE
@@ -91,6 +98,14 @@ Access is restricted to host credentials
 including unprivileged host users.
 Access from non-host cells is denied, including cell-local root.
 .El
+.Sh LIMITATIONS AND NON-GOALS
+.Nm
+does not implement Linux-style namespaces or complete containment.
+In particular, the chroot performed by
+.Xr cellctl 8
+is an operational launch convention and not a virtual filesystem or a security
+boundary for untrusted root.  Deploy untrusted workloads in a virtual machine
+or another isolation mechanism that provides a complete kernel boundary.
 .Sh SNAPSHOT METRICS DESIGN
 .Nm
 exports periodic snapshot metrics per cell

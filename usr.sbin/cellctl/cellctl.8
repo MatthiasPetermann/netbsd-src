@@ -75,7 +75,10 @@
 The
 .Nm
 utility manages cells provided by the secmodel cell security model.
-Cells are process groups identified by a cell id.
+Cells are credential-scoped policy domains identified by a cell id.  They are
+not containers, jails, or namespaces: they do not virtualize host processes,
+users, mounts, filesystems, network stacks, interfaces, routes, IPC, or
+resources.
 Processes in a cell can only signal or see other processes with the same
 cell id, while the host root user (cell id 0) can access all processes.
 Read-only listing commands
@@ -110,6 +113,8 @@ enters this root with
 .Xr chroot 2
 before entering the cell; the kernel rejects an attempt to enter a non-host
 cell from a process that is not already chrooted.
+This chroot is a controlled launch convention, not a complete containment
+boundary for untrusted root workloads.
 .Pp
 The optional flags set isolation policy at creation time.
 .Bl -tag -width Ds

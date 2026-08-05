@@ -54,7 +54,9 @@ typedef uint32_t cellid_t;
 #define CELL_RLIMIT_INFINITY ((uint64_t)~0ULL)
 
 /*
- * Userland-to-kernel payload for creating a cell and optional policy settings.
+ * Userland-to-kernel payload for creating a credential-scoped policy domain.
+ * cc_root identifies the launch root that cellctl(8) must chroot(2) into before
+ * it can assign membership; it does not create a filesystem namespace.
  */
 struct cell_create {
   uint32_t cc_flags;

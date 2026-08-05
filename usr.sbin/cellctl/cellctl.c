@@ -609,9 +609,12 @@ static void cell_exec(cellid_t id, const char *root, const char *name,
 
   /*
    * Execution order matters:
-   * 1) enter cell filesystem view via chroot
-   * 2) switch cell membership in kernel via sysctl
-   * 3) exec workload/shell with both constraints in effect
+   * 1) establish the configured chroot launch root,
+   * 2) bind the process to the matching kernel policy domain,
+   * 3) close inherited host descriptors and execute the workload.
+   *
+   * The root is intentionally a controlled launch convention, not a
+   * filesystem namespace or a complete containment boundary.
    */
   if (chdir(root) == -1 || chroot(".") == -1)
     err(1, "%s", root);

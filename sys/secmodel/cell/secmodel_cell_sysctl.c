@@ -277,7 +277,7 @@ static int secmodel_cell_sysctl_destroy(SYSCTLFN_ARGS) {
   if (!secmodel_cell_is_host_root(l->l_cred))
     return EPERM;
 
-  if (newlen < sizeof(id))
+  if (newlen != sizeof(id))
     return EINVAL;
 
   error = sysctl_copyin(l, newp, &id, sizeof(id));

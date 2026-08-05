@@ -37,11 +37,10 @@
 /*
  * Public module identity + lifecycle API for secmodel_cell.
  *
- * Runtime model summary:
- * - Every credential carries one cell id (CELLID_HOST == 0 for host context).
- * - kauth(9) listeners use that id to enforce process/system/network policy.
- * - Host root (euid 0 in host cell) is intentionally exempt to preserve
- *   administrative control and recovery paths.
+ * A cell is a credential-scoped kauth(9) policy domain.  It constrains
+ * selected cross-cell operations and host-global privileges; it does not
+ * virtualize host resources and is not a container, jail, or namespace.
+ * Host root (euid 0 in cell id 0) remains exempt for administration/recovery.
  *
  * This header stays intentionally small and stable because userland tooling
  * (for example cellctl via sysctl tree naming) depends on a predictable module

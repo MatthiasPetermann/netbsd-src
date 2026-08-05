@@ -69,7 +69,7 @@ enum cell_lifecycle_state {
 /* Scope tags for deny accounting/logging. */
 enum cell_deny_scope {
   CELL_DENY_SCOPE_PROCESS = 0,
-  CELL_DENY_SCOPE_SYSTEM,
+  CELL_DENY_SCOPE_HOST_GLOBAL,
   CELL_DENY_SCOPE_NETWORK,
 };
 
@@ -140,7 +140,7 @@ extern secmodel_t cell_sm;
 extern kauth_key_t cell_key;
 extern uint64_t cell_list_seq;
 extern uint64_t cell_deny_process;
-extern uint64_t cell_deny_system;
+extern uint64_t cell_deny_host_global;
 extern uint64_t cell_deny_network;
 
 /* Lock assertion helper used across all cell implementation units. */
