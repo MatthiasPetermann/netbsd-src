@@ -357,6 +357,8 @@
 ./usr/libdata/debug/@MODULEDIR@/secmodel_bsd44/secmodel_bsd44.kmod.debug	modules-base-kernel	kmod,debug
 ./usr/libdata/debug/@MODULEDIR@/secmodel_extensions		modules-base-kernel	kmod,debug
 ./usr/libdata/debug/@MODULEDIR@/secmodel_extensions/secmodel_extensions.kmod.debug	modules-base-kernel	kmod,debug
+./usr/libdata/debug/@MODULEDIR@/secmodel_cell			modules-base-kernel	kmod,debug
+./usr/libdata/debug/@MODULEDIR@/secmodel_cell/secmodel_cell.kmod.debug	modules-base-kernel	kmod,debug
 ./usr/libdata/debug/@MODULEDIR@/secmodel_overlay			modules-base-kernel	kmod,debug
 ./usr/libdata/debug/@MODULEDIR@/secmodel_overlay/secmodel_overlay.kmod.debug	modules-base-kernel	kmod,debug
 ./usr/libdata/debug/@MODULEDIR@/securelevel			modules-base-kernel	kmod,debug

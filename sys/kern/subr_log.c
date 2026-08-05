@@ -141,13 +141,13 @@ loginit(void)
 	    logsoftintr, NULL);
 
 	sysctl_createv(NULL, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
+		       CTLFLAG_PERMANENT|CTLFLAG_PRIVATE,
 		       CTLTYPE_INT, "msgbufsize",
 		       SYSCTL_DESCR("Size of the kernel message buffer"),
 		       sysctl_msgbuf, 0, NULL, 0,
 		       CTL_KERN, KERN_MSGBUFSIZE, CTL_EOL);
 	sysctl_createv(NULL, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
+		       CTLFLAG_PERMANENT|CTLFLAG_PRIVATE,
 		       CTLTYPE_INT, "msgbuf",
 		       SYSCTL_DESCR("Kernel message buffer"),
 		       sysctl_msgbuf, 0, NULL, 0,

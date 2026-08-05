@@ -1,0 +1,13 @@
+# $NetBSD$
+
+defflag secmodel_cell
+
+# secmodel_cell module compilation units:
+# - state engine / lifecycle: secmodel_cell.c
+# - module load/unload glue: secmodel_cell_module.c
+# - kauth policy callbacks: secmodel_cell_policy.c
+# - sysctl management ABI: secmodel_cell_sysctl.c
+file	secmodel/cell/secmodel_cell.c	secmodel_cell
+file	secmodel/cell/secmodel_cell_module.c	secmodel_cell
+file	secmodel/cell/secmodel_cell_policy.c	secmodel_cell
+file	secmodel/cell/secmodel_cell_sysctl.c	secmodel_cell

@@ -13,6 +13,7 @@ SUBDIR=	ac accton acpitools altq apm apmd arp autofs \
 	hdaudioctl \
 	i2cscan ifwatchd inetd installboot intrctl iopctl iostat ipwctl irdaattach \
 	isibootd iteconfig iwictl \
+	cellctl \
 	kgmon \
 	lastlogin ldpd link lockstat lpr \
 	mailwrapper makefs map-mbone mdconfig memswitch mlxctl mmcformat \
