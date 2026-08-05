@@ -94,6 +94,9 @@ When a command accepts
 .Ar cell-id | name ,
 non-numeric targets must satisfy this name format.
 .Pp
+Cell roots must be non-empty paths of at most
+255 bytes and may not contain control characters.
+.Pp
 The commands are as follows:
 .Bl -tag -width Ds
 .It Cm create Op Fl l Ar profile Op Fl r Ar port[,port...] Op Fl N Ar nofile|unlimited Op Fl A Ar as|unlimited Op Fl C Ar core|unlimited Fl n Ar name Ar root

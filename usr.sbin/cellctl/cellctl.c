@@ -82,6 +82,7 @@ static int parse_log_facility(const char *);
 static int parse_log_level(const char *);
 static int parse_log_level_arg(const char *);
 static void validate_cell_name_or_die(const char *);
+static void validate_cell_root_or_die(const char *);
 static uint32_t parse_profile(const char *);
 static void parse_port_list(struct cell_create *, const char *);
 static uid_t parse_uid_arg(const char *);
@@ -265,27 +266,32 @@ static struct cell_info *cell_fetch_list(size_t *countp) {
    * Two-pass sysctl pattern: first query required length, then allocate and
    * fetch the current cell table snapshot.
    */
-  len = 0;
-  if (sysctlbyname("security.models.cell.list", NULL, &len, NULL, 0) == -1)
-    err(1, "list cells");
+  for (;;) {
+    len = 0;
+    if (sysctlbyname("security.models.cell.list", NULL, &len, NULL, 0) == -1)
+      err(1, "list cells");
 
-  if (len == 0) {
-    *countp = 0;
-    return NULL;
+    if (len == 0) {
+      *countp = 0;
+      return NULL;
+    }
+    if (len % sizeof(*entries) != 0)
+      errx(1, "unexpected cell list length");
+
+    entries = calloc(1, len);
+    if (entries == NULL)
+      err(1, "calloc");
+
+    if (sysctlbyname("security.models.cell.list", entries, &len, NULL, 0) == 0) {
+      *countp = len / sizeof(*entries);
+      return entries;
+    }
+    if (errno != ENOMEM) {
+      free(entries);
+      err(1, "list cells");
+    }
+    free(entries);
   }
-
-  if (len % sizeof(*entries) != 0)
-    errx(1, "unexpected cell list length");
-
-  entries = calloc(1, len);
-  if (entries == NULL)
-    err(1, "calloc");
-
-  if (sysctlbyname("security.models.cell.list", entries, &len, NULL, 0) == -1)
-    err(1, "list cells");
-
-  *countp = len / sizeof(*entries);
-  return entries;
 }
 
 static cellid_t cell_create(const struct cell_create *create) {
@@ -614,6 +620,8 @@ static void cell_exec(cellid_t id, const char *root, const char *name,
     err(1, "/");
 
   cell_enter(id);
+  /* A chroot does not constrain descriptors inherited from the host. */
+  closefrom(STDERR_FILENO + 1);
 
   if (creds != NULL && creds->enabled) {
     if (creds->ngroups > (size_t)INT_MAX)
@@ -1045,6 +1053,7 @@ static void cell_spawn_detached(const struct cell_info *entry,
       err(1, "dup2");
     if (devnull > STDERR_FILENO)
       close(devnull);
+    closefrom(STDERR_FILENO + 1);
     cell_supervise_loop(&entry_copy, logtag, cmd, facility, stdout_priority,
                         stderr_priority, &creds_copy);
   }
@@ -1128,6 +1137,10 @@ static uint32_t parse_profile(const char *arg) {
 static void parse_port_list(struct cell_create *create, const char *arg) {
   char *list, *tok, *sp;
   unsigned long port;
+
+  if (arg == NULL || arg[0] == '\0' || arg[0] == ',' ||
+      arg[strlen(arg) - 1] == ',' || strstr(arg, ",,") != NULL)
+    errx(1, "invalid reserved port list");
 
   list = strdup(arg);
   if (list == NULL)
@@ -1261,6 +1274,19 @@ static void validate_cell_name_or_die(const char *name) {
   }
 }
 
+static void validate_cell_root_or_die(const char *root) {
+  size_t i;
+
+  if (root == NULL || root[0] == '\0' || strlen(root) > CELL_ROOT_MAX)
+    errx(1, "invalid cell root");
+  for (i = 0; root[i] != '\0'; i++) {
+    unsigned char c = (unsigned char)root[i];
+
+    if (c < 0x20 || c == 0x7f)
+      errx(1, "invalid cell root");
+  }
+}
+
 static cellid_t resolve_cell_target(const char *arg, struct cell_info *ji) {
   uintmax_t num;
 
@@ -1335,8 +1361,9 @@ int main(int argc, char *argv[]) {
       errx(1, "name already exists: %s", name);
 
     root = argv[optind];
-    sanitize_field(name, create.cc_name, sizeof(create.cc_name));
-    sanitize_field(root, create.cc_root, sizeof(create.cc_root));
+    validate_cell_root_or_die(root);
+    strlcpy(create.cc_name, name, sizeof(create.cc_name));
+    strlcpy(create.cc_root, root, sizeof(create.cc_root));
     id = cell_create(&create);
     printf("cell %" PRIu32 "\n", id);
     return 0;

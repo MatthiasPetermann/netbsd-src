@@ -176,6 +176,10 @@ int secmodel_cell_system_cb(kauth_cred_t, kauth_action_t, void *, void *,
                             void *, void *, void *);
 int secmodel_cell_network_cb(kauth_cred_t, kauth_action_t, void *, void *,
                              void *, void *, void *);
+int secmodel_cell_machdep_cb(kauth_cred_t, kauth_action_t, void *, void *,
+                             void *, void *, void *);
+int secmodel_cell_device_cb(kauth_cred_t, kauth_action_t, void *, void *,
+                            void *, void *, void *);
 int secmodel_cell_process_cb(kauth_cred_t, kauth_action_t, void *, void *,
                              void *, void *, void *);
 int secmodel_cell_cred_cb(kauth_cred_t, kauth_action_t, void *, void *, void *,

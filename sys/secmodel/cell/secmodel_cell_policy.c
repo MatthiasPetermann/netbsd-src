@@ -41,14 +41,24 @@ __KERNEL_RCSID(0, "$NetBSD$");
 /*
  * Policy layer overview:
  *
- * This file is intentionally decision-focused. It does not mutate membership or
- * lifecycle state; it only evaluates kauth requests using:
- * - credential cell id from secmodel_cell.c
- * - normalized cell profile/config from secmodel_cell.c
- * - static deny matrices in this file.
+ * This file is intentionally decision-focused.  Each callback follows the
+ * same order: identify the caller's cell, evaluate its scope-specific rule,
+ * then audit a denial.  It does not mutate membership or lifecycle state.
  *
  * Any destroy/enter race safety is handled in the state engine
  * (secmodel_cell.c). Here we only allow/deny/defer.
+ *
+ * Profile matrix ("deny" means this model returns KAUTH_RESULT_DENY):
+ *
+ * Scope       LOW                    MEDIUM                 HIGH
+ * process     cross-cell targets     cross-cell targets      cross-cell targets
+ * network     reserved-port nonowner reserved-port nonowner  reserved-port nonowner
+ * system      private sysctls        LOW + host admin,       MEDIUM + SYSVIPC
+ *                                     mounts, sysctl writes
+ * device      defer                  deny all                deny all
+ * machdep     defer                  deny all                deny all
+ *
+ * All unlisted operations defer to the other installed security models.
  */
 
 /*
@@ -63,6 +73,33 @@ static int secmodel_cell_deny_event(uint64_t *counter,
   return KAUTH_RESULT_DENY;
 }
 
+/* Return false for host credentials and cells being destroyed. */
+static bool secmodel_cell_get_profile(kauth_cred_t cred,
+                                      struct cell_config *config) {
+  if (secmodel_cell_is_host_cred(cred))
+    return false;
+
+  return secmodel_cell_get_config(secmodel_cell_cred_id(cred), config);
+}
+
+static int secmodel_cell_deny_process(kauth_cred_t cred,
+                                      kauth_action_t action, uintptr_t req) {
+  return secmodel_cell_deny_event(&cell_deny_process, CELL_DENY_SCOPE_PROCESS,
+                                  cred, action, req);
+}
+
+static int secmodel_cell_deny_system(kauth_cred_t cred, kauth_action_t action,
+                                     uintptr_t req) {
+  return secmodel_cell_deny_event(&cell_deny_system, CELL_DENY_SCOPE_SYSTEM,
+                                  cred, action, req);
+}
+
+static int secmodel_cell_deny_network(kauth_cred_t cred,
+                                      kauth_action_t action, uintptr_t req) {
+  return secmodel_cell_deny_event(&cell_deny_network, CELL_DENY_SCOPE_NETWORK,
+                                  cred, action, req);
+}
+
 /*
  * Process actions whose target process must stay cell-local.
  *
@@ -72,15 +109,67 @@ static bool secmodel_cell_is_process_scoped_action(kauth_action_t action) {
   switch (action) {
   case KAUTH_PROCESS_CANSEE:
   case KAUTH_PROCESS_CORENAME:
+  case KAUTH_PROCESS_KEVENT_FILTER:
   case KAUTH_PROCESS_KTRACE:
+  case KAUTH_PROCESS_NICE:
   case KAUTH_PROCESS_PROCFS:
   case KAUTH_PROCESS_PTRACE:
   case KAUTH_PROCESS_RLIMIT:
+  case KAUTH_PROCESS_SCHEDULER_GETAFFINITY:
+  case KAUTH_PROCESS_SCHEDULER_SETAFFINITY:
+  case KAUTH_PROCESS_SCHEDULER_GETPARAM:
+  case KAUTH_PROCESS_SCHEDULER_SETPARAM:
+  case KAUTH_PROCESS_SETID:
   case KAUTH_PROCESS_SIGNAL:
+  case KAUTH_PROCESS_STOPFLAG:
     return true;
   default:
     return false;
   }
+}
+
+/*
+ * Device and machine-dependent operations affect global host state.  They
+ * have no cell-local resource namespace, so they cannot be safely delegated.
+ */
+static int secmodel_cell_host_global_cb(kauth_cred_t cred,
+                                        kauth_action_t action) {
+  struct cell_config config;
+
+  if (!secmodel_cell_get_profile(cred, &config))
+    return KAUTH_RESULT_DEFER;
+
+  switch (config.cc_profile) {
+  case CELL_PROFILE_POLICY_LOW:
+    return KAUTH_RESULT_DEFER;
+  case CELL_PROFILE_POLICY_MEDIUM:
+  case CELL_PROFILE_POLICY_HIGH:
+    return secmodel_cell_deny_system(cred, action, 0);
+  default:
+    return secmodel_cell_deny_system(cred, action, 0);
+  }
+}
+
+int secmodel_cell_machdep_cb(kauth_cred_t cred, kauth_action_t action,
+                             void *cookie, void *arg0, void *arg1, void *arg2,
+                             void *arg3) {
+  (void)cookie;
+  (void)arg0;
+  (void)arg1;
+  (void)arg2;
+  (void)arg3;
+  return secmodel_cell_host_global_cb(cred, action);
+}
+
+int secmodel_cell_device_cb(kauth_cred_t cred, kauth_action_t action,
+                            void *cookie, void *arg0, void *arg1, void *arg2,
+                            void *arg3) {
+  (void)cookie;
+  (void)arg0;
+  (void)arg1;
+  (void)arg2;
+  (void)arg3;
+  return secmodel_cell_host_global_cb(cred, action);
 }
 
 /*
@@ -140,6 +229,38 @@ static bool secmodel_cell_is_sysctl_req_denied(enum kauth_system_req req) {
   }
 }
 
+/* System policy table.  Callbacks only turn a true result into an audit. */
+static bool secmodel_cell_system_denies(enum cell_policy_profile profile,
+                                        kauth_action_t action,
+                                        enum kauth_system_req req) {
+  bool is_private_sysctl;
+  bool is_host_admin;
+  bool is_mount_change;
+  bool is_sysctl_write;
+
+  is_private_sysctl =
+      action == KAUTH_SYSTEM_SYSCTL && req == KAUTH_REQ_SYSTEM_SYSCTL_PRVT;
+  is_host_admin = secmodel_cell_system_action_always_denied(action);
+  is_mount_change =
+      action == KAUTH_SYSTEM_MOUNT && secmodel_cell_is_mount_req_denied(req);
+  is_sysctl_write =
+      action == KAUTH_SYSTEM_SYSCTL && secmodel_cell_is_sysctl_req_denied(req);
+
+  switch (profile) {
+  case CELL_PROFILE_POLICY_LOW:
+    return is_private_sysctl;
+  case CELL_PROFILE_POLICY_MEDIUM:
+    return is_private_sysctl || is_host_admin || is_mount_change ||
+           is_sysctl_write;
+  case CELL_PROFILE_POLICY_HIGH:
+    return is_private_sysctl || is_host_admin || is_mount_change ||
+           is_sysctl_write || action == KAUTH_SYSTEM_SYSVIPC;
+  default:
+    /* Invalid profiles are rejected at create time; fail closed if corrupted. */
+    return true;
+  }
+}
+
 /*
  * kauth(9) listener for network scope.
  */
@@ -187,8 +308,7 @@ int secmodel_cell_network_cb(kauth_cred_t cred, kauth_action_t action,
   }
   mutex_exit(&cell_lock);
 
-  return secmodel_cell_deny_event(&cell_deny_network, CELL_DENY_SCOPE_NETWORK,
-                                  cred, action, (uintptr_t)req);
+  return secmodel_cell_deny_network(cred, action, (uintptr_t)req);
 }
 
 /*
@@ -208,65 +328,14 @@ int secmodel_cell_system_cb(kauth_cred_t cred, kauth_action_t action,
   (void)arg2;
   (void)arg3;
 
-  if (secmodel_cell_is_host_root(cred))
-    return KAUTH_RESULT_DEFER;
-
-  if (secmodel_cell_cred_id(cred) == CELLID_HOST)
-    return KAUTH_RESULT_DEFER;
-
-  if (!secmodel_cell_get_config(secmodel_cell_cred_id(cred), &config))
+  if (!secmodel_cell_get_profile(cred, &config))
     return KAUTH_RESULT_DEFER;
 
   req = (enum kauth_system_req)(uintptr_t)arg0;
-
-  /*
-   * Always deny private sysctl reads from cell context, regardless of
-   * policy profile. This keeps private nodes (for example kern.msgbuf)
-   * inaccessible to celled credentials.
-   */
-  if (action == KAUTH_SYSTEM_SYSCTL && req == KAUTH_REQ_SYSTEM_SYSCTL_PRVT)
-    return secmodel_cell_deny_event(&cell_deny_system, CELL_DENY_SCOPE_SYSTEM,
-                                    cred, action, (uintptr_t)req);
-
-  /*
-   * Profile handling strategy:
-   * - LOW: mostly defer, only absolute cell invariants are enforced.
-   * - MEDIUM/HIGH: progressively deny broader host-admin capabilities.
-   *
-   * Why defer: secmodel_cell should compose with other security models instead
-   * of claiming all decisions unconditionally.
-   */
-  if (config.cc_profile == CELL_PROFILE_POLICY_LOW)
+  if (!secmodel_cell_system_denies(config.cc_profile, action, req))
     return KAUTH_RESULT_DEFER;
 
-  if (secmodel_cell_system_action_always_denied(action))
-    return secmodel_cell_deny_event(&cell_deny_system, CELL_DENY_SCOPE_SYSTEM,
-                                    cred, action, (uintptr_t)req);
-
-  switch (action) {
-  case KAUTH_SYSTEM_MOUNT:
-    if (secmodel_cell_is_mount_req_denied(req))
-      return secmodel_cell_deny_event(&cell_deny_system,
-                                      CELL_DENY_SCOPE_SYSTEM, cred, action,
-                                      (uintptr_t)req);
-    return KAUTH_RESULT_DEFER;
-
-  case KAUTH_SYSTEM_SYSVIPC:
-    if (config.cc_profile == CELL_PROFILE_POLICY_MEDIUM)
-      return KAUTH_RESULT_DEFER;
-    return secmodel_cell_deny_event(&cell_deny_system, CELL_DENY_SCOPE_SYSTEM,
-                                    cred, action, (uintptr_t)req);
-
-  case KAUTH_SYSTEM_SYSCTL:
-    if (secmodel_cell_is_sysctl_req_denied(req))
-      return secmodel_cell_deny_event(&cell_deny_system,
-                                      CELL_DENY_SCOPE_SYSTEM, cred, action,
-                                      (uintptr_t)req);
-    return KAUTH_RESULT_DEFER;
-
-  default:
-    return KAUTH_RESULT_DEFER;
-  }
+  return secmodel_cell_deny_system(cred, action, (uintptr_t)req);
 }
 
 /*
@@ -290,9 +359,7 @@ int secmodel_cell_process_cb(kauth_cred_t cred, kauth_action_t action,
   if (p == NULL || p->p_cred == NULL)
     return KAUTH_RESULT_DEFER;
   if (!secmodel_cell_match(cred, p))
-    return secmodel_cell_deny_event(&cell_deny_process,
-                                    CELL_DENY_SCOPE_PROCESS, cred, action,
-                                    (uintptr_t)arg1);
+    return secmodel_cell_deny_process(cred, action, (uintptr_t)arg1);
 
   return KAUTH_RESULT_DEFER;
 }

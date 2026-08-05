@@ -61,6 +61,8 @@ static kauth_listener_t l_process;
 static kauth_listener_t l_cred;
 static kauth_listener_t l_system;
 static kauth_listener_t l_network;
+static kauth_listener_t l_machdep;
+static kauth_listener_t l_device;
 
 /*
  * Big picture for newcomers:
@@ -103,6 +105,7 @@ uint64_t cell_deny_process;
 uint64_t cell_deny_system;
 uint64_t cell_deny_network;
 static struct callout cell_cpu_account_ch;
+static kmutex_t cell_deny_log_lock;
 /* Per-scope, rate-limited deny logging state. */
 struct cell_deny_log_state {
   const char *cds_name;
@@ -776,12 +779,14 @@ void secmodel_cell_deny_audit(enum cell_deny_scope scope, kauth_cred_t cred,
    * One rate limiter per scope prevents noisy network denies from suppressing
    * process/system deny visibility.
    */
+  mutex_enter(&cell_deny_log_lock);
   if (ratecheck(&rl->cds_last, &cell_deny_log_interval))
     log(LOG_NOTICE,
         "secmodel_cell: deny scope=%s cell=%u euid=%u action=%llu req=%llu\n",
         rl->cds_name != NULL ? rl->cds_name : "?", (unsigned)id,
         (unsigned)euid,
         (unsigned long long)(uintptr_t)action, (unsigned long long)req);
+  mutex_exit(&cell_deny_log_lock);
 }
 
 /*
@@ -795,6 +800,8 @@ int secmodel_cell_init(void) {
   l_cred = NULL;
   l_system = NULL;
   l_network = NULL;
+  l_machdep = NULL;
+  l_device = NULL;
   cell_next_id = 1;
   cell_list_seq = 0;
   cell_deny_process = 0;
@@ -806,6 +813,7 @@ int secmodel_cell_init(void) {
   }
 
   mutex_init(&cell_lock, MUTEX_DEFAULT, IPL_NONE);
+  mutex_init(&cell_deny_log_lock, MUTEX_DEFAULT, IPL_NONE);
   callout_init(&cell_cpu_account_ch, CALLOUT_MPSAFE);
   callout_setfunc(&cell_cpu_account_ch, secmodel_cell_cpu_account_tick, NULL);
 
@@ -813,6 +821,7 @@ int secmodel_cell_init(void) {
   if (error != 0) {
     printf("secmodel_cell: unable to register kauth key\n");
     callout_destroy(&cell_cpu_account_ch);
+    mutex_destroy(&cell_deny_log_lock);
     mutex_destroy(&cell_lock);
     return error;
   }
@@ -843,6 +852,16 @@ int secmodel_cell_start(void) {
   if (l_network == NULL)
     goto fail;
 
+  l_machdep =
+      kauth_listen_scope(KAUTH_SCOPE_MACHDEP, secmodel_cell_machdep_cb, NULL);
+  if (l_machdep == NULL)
+    goto fail;
+
+  l_device =
+      kauth_listen_scope(KAUTH_SCOPE_DEVICE, secmodel_cell_device_cb, NULL);
+  if (l_device == NULL)
+    goto fail;
+
   callout_schedule(&cell_cpu_account_ch, hz);
   return 0;
 
@@ -862,6 +881,14 @@ fail:
   if (l_network != NULL) {
     kauth_unlisten_scope(l_network);
     l_network = NULL;
+  }
+  if (l_machdep != NULL) {
+    kauth_unlisten_scope(l_machdep);
+    l_machdep = NULL;
+  }
+  if (l_device != NULL) {
+    kauth_unlisten_scope(l_device);
+    l_device = NULL;
   }
 
   return ENOMEM;
@@ -889,6 +916,14 @@ void secmodel_cell_stop(void) {
     kauth_unlisten_scope(l_network);
     l_network = NULL;
   }
+  if (l_machdep != NULL) {
+    kauth_unlisten_scope(l_machdep);
+    l_machdep = NULL;
+  }
+  if (l_device != NULL) {
+    kauth_unlisten_scope(l_device);
+    l_device = NULL;
+  }
   callout_halt(&cell_cpu_account_ch, NULL);
   callout_destroy(&cell_cpu_account_ch);
   kauth_deregister_key(cell_key);
@@ -900,5 +935,6 @@ void secmodel_cell_stop(void) {
     kmem_free(entry, sizeof(*entry));
   }
   mutex_exit(&cell_lock);
+  mutex_destroy(&cell_deny_log_lock);
   mutex_destroy(&cell_lock);
 }

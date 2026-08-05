@@ -146,12 +146,37 @@ static int secmodel_cell_build_config(const struct cell_create *create,
  * not read beyond the payload.
  */
 static int secmodel_cell_validate_text_field(const char *s, size_t n) {
+  size_t len;
+  size_t i;
+
   if (s == NULL || n == 0)
     return EINVAL;
-  if (memchr(s, '\0', n) == NULL)
+  len = strnlen(s, n);
+  if (len == n)
     return EINVAL;
-  if (memchr(s, '\n', n) != NULL)
+
+  for (i = 0; i < len; i++) {
+    if ((unsigned char)s[i] < 0x20 || (unsigned char)s[i] == 0x7f)
+      return EINVAL;
+  }
+
+  return 0;
+}
+
+static int secmodel_cell_validate_name(const char *name, size_t n) {
+  size_t i;
+  size_t len;
+
+  if (secmodel_cell_validate_text_field(name, n) != 0)
     return EINVAL;
+  len = strnlen(name, n);
+  for (i = 0; i < len; i++) {
+    if (!((name[i] >= 'a' && name[i] <= 'z') ||
+          (name[i] >= 'A' && name[i] <= 'Z') ||
+          (name[i] >= '0' && name[i] <= '9') || name[i] == '.' ||
+          name[i] == '_' || name[i] == '-'))
+      return EINVAL;
+  }
 
   return 0;
 }
@@ -173,6 +198,10 @@ static int secmodel_cell_sysctl_create(SYSCTLFN_ARGS) {
 
   if (!secmodel_cell_is_host_root(l->l_cred))
     return EPERM;
+
+  /* Creation returns an id; never commit state if it cannot be returned. */
+  if (oldp == NULL || *oldlenp < sizeof(create))
+    return ENOMEM;
 
   if (newlen != sizeof(create))
     return EINVAL;
@@ -199,8 +228,7 @@ static int secmodel_cell_sysctl_create(SYSCTLFN_ARGS) {
 
   if (create.cc_name[0] == '\0' || create.cc_root[0] == '\0')
     return EINVAL;
-  error = secmodel_cell_validate_text_field(create.cc_name,
-                                            sizeof(create.cc_name));
+  error = secmodel_cell_validate_name(create.cc_name, sizeof(create.cc_name));
   if (error != 0)
     return error;
   error = secmodel_cell_validate_text_field(create.cc_root,
@@ -213,22 +241,20 @@ static int secmodel_cell_sysctl_create(SYSCTLFN_ARGS) {
   if (error != 0)
     return error;
 
+  create.cc_id = id;
+  *oldlenp = sizeof(create);
+  error = sysctl_copyout(l, &create, oldp, sizeof(create));
+  if (error != 0) {
+    (void)secmodel_cell_destroy(id);
+    return error;
+  }
+
   log(LOG_INFO,
       "secmodel_cell: created cell id=%u name=\"%s\" root=\"%s\" "
       "profile=%u by pid=%d euid=%u\n",
       id, create.cc_name, create.cc_root, (unsigned)config.cc_profile,
       l->l_proc->p_pid, kauth_cred_geteuid(l->l_cred));
-  create.cc_id = id;
-  if (oldp == NULL) {
-    *oldlenp = sizeof(create);
-    return 0;
-  }
-
-  if (*oldlenp < sizeof(create))
-    return ENOMEM;
-
-  *oldlenp = sizeof(create);
-  return sysctl_copyout(l, &create, oldp, sizeof(create));
+  return 0;
 }
 
 /*
